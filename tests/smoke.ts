@@ -74,7 +74,13 @@ export async function smoke() {
     assert(
       JSON.stringify(tools.tools.map((tool) => tool.name).sort()) ===
         JSON.stringify(
-          ["get_item", "get_sources", "get_status", "get_story_group", "search_items"].sort(),
+          [
+            "get_item",
+            "get_sources",
+            "get_status",
+            "get_story_group",
+            "search_items",
+          ].sort(),
         ),
       "Expected all five read-only MCP tools",
     );
