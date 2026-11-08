@@ -559,3 +559,53 @@ test("correction extraction uses the source that supplied that generation", asyn
   expect(s.getItem(item.id)!.references).toHaveLength(2);
   s.close();
 });
+
+test("cross-feed URL alias deduplicates a URL-less native item after link correction", () => {
+  const store = new Store(":memory:");
+  const a = store.addSource("https://a.test/rss");
+  const b = store.addSource("https://b.test/rss");
+  const ingest = (source: string, candidate: { nativeId: string; title: string; text: string; url?: string }, at: number) => {
+    store.enqueueDue(at, true);
+    for (let job = store.claim(at); job; job = store.claim(at)) {
+      expect(store.complete(job, { items: job.source_id === source ? [candidate] : [] }, at + 1)).toBe(true);
+    }
+  };
+  ingest(a.id, { nativeId: "local-guid", title: "Story", text: "initial text" }, 1);
+  const original = store.search("initial")[0]!.id;
+  ingest(a.id, { nativeId: "local-guid", title: "Story", text: "updated text", url: "https://example.test/story?utm_source=x" }, 5);
+  ingest(b.id, { nativeId: "different-guid", title: "Story", text: "updated text", url: "https://example.test/story" }, 10);
+  const item = store.search("updated")[0]!;
+  expect(item.id).toBe(original);
+  expect(store.search("updated")).toHaveLength(1);
+  expect(store.getItem(original)!.references).toHaveLength(2);
+  expect(store.getItem(original)!.content_versions.length).toBeGreaterThanOrEqual(3);
+  expect(store.sqlite.query("SELECT count(*) AS n FROM item_url_aliases").get()).toEqual({ n: 1 });
+  store.close();
+});
+
+test("URL alias reconciliation preserves both existing item IDs, history and generations", () => {
+  const store = new Store(":memory:");
+  const a = store.addSource("https://a.test/rss");
+  const b = store.addSource("https://b.test/rss");
+  const ingest = (source: string, candidate: { nativeId: string; title: string; text: string; url?: string }, at: number) => {
+    store.enqueueDue(at, true);
+    for (let job = store.claim(at); job; job = store.claim(at)) {
+      store.complete(job, { items: job.source_id === source ? [candidate] : [] }, at + 1);
+    }
+  };
+  ingest(a.id, { nativeId: "a", title: "Story", text: "first body" }, 1);
+  const nativeId = store.search("first")[0]!.id;
+  ingest(b.id, { nativeId: "b", title: "Story", text: "second body", url: "https://example.test/story" }, 5);
+  const urlId = store.search("second")[0]!.id;
+  expect(nativeId).not.toBe(urlId);
+  ingest(a.id, { nativeId: "a", title: "Story", text: "corrected body", url: "https://example.test/story" }, 10);
+  const item = store.getItem(urlId)!;
+  expect(store.getItem(nativeId)?.id).toBe(urlId);
+  expect(item.references).toHaveLength(2);
+  expect(item.content_versions.length).toBeGreaterThanOrEqual(3);
+  expect(new Set(item.processing.filter(x => x.stage === "extract").map(x => x.generation)).size).toBeGreaterThanOrEqual(2);
+  expect(store.search("corrected")).toHaveLength(1);
+  expect(store.sqlite.query("SELECT count(*) AS n FROM items").get()).toEqual({ n: 1 });
+  expect(store.sqlite.query("PRAGMA foreign_key_check").all()).toHaveLength(0);
+  store.close();
+});
