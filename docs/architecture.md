@@ -49,7 +49,7 @@ Tested Bun 1.4.4 with exact dependency versions in `package.json` and `bun.lock`
 - **M2:** full-text extraction, versioned editorial/interest profiles, structured summaries, deterministic scores and explanations, event grouping, replay evaluation fixtures and draft digest queries.
 - **M3:** verified/persisted Resend webhook events, asynchronous Receiving API retrieval, reconciliation, newsletter fan-out, immutable editions and idempotent delivery at 06:00 Europe/London.
 - **M4:** budgeted search discovery, GitHub/HN, explicit feedback and quality evaluation. Track useful discoveries beyond subscriptions, top-result precision, redundancy, latency and cost.
-- **M5:** optional permitted browser extraction, historical tracking, alerts and measured retrieval improvements.
+- **M5:** optional permitted browser extraction, historical tracking, alerts, measured retrieval improvements and opt-in recommendations of valuable new sources.
 
 MCP mutations, browser automation, AI calls, embeddings, outbound email and interest inference are absent from M1.
 
