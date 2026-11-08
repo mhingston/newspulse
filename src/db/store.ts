@@ -718,6 +718,9 @@ export class Store {
           .get(key)!;
     if (url) this.canonicalOwner(url, item.id);
     this.sqlite
+      .query("UPDATE items SET published_at=coalesce(published_at,?) WHERE id=?")
+      .run(candidate.publishedAt ?? null, item.id);
+    this.sqlite
       .query(
         "INSERT INTO item_sources(item_id,source_id,native_id,url,parent_item_id) VALUES(?,?,?,?,?)",
       )
