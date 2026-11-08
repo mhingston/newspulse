@@ -1,0 +1,27 @@
+services:
+  newspulse:
+    build: .
+    init: true
+    restart: unless-stopped
+    ports:
+      - "127.0.0.1:3000:3000"
+    environment:
+      MCP_TOKEN: ${MCP_TOKEN:?Set a random token of at least 24 characters}
+      ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
+      ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+    volumes:
+      - newspulse-data:/app/data
+    healthcheck:
+      test:
+        [
+          "CMD",
+          "bun",
+          "-e",
+          "const r=await fetch('http://localhost:3000/health',{headers:{authorization:'Bearer '+process.env.MCP_TOKEN}});process.exit(r.ok?0:1)",
+        ]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+    stop_grace_period: 45s
+volumes:
+  newspulse-data:
