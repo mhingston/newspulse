@@ -110,12 +110,12 @@ export class ProfileStore {
       .map((row) => profileSchema.parse(JSON.parse(row.document)));
   }
   activeInterests(now = Date.now()): Interest[] {
-    const latest = new Map<string, Profile>();
-    for (const p of this.export()) latest.set(`${p.kind}:${p.id}`, p);
-    return [...latest.values()].filter(
-      (p): p is Interest =>
-        p.kind === "interest" &&
-        (p.lifetime === "persistent" || p.expiresAt! > now),
-    );
+    return this.db
+      .query<{ document: string }, []>(
+        "SELECT p.document FROM profiles p WHERE p.kind='interest' AND p.version=(SELECT max(q.version) FROM profiles q WHERE q.kind=p.kind AND q.id=p.id) ORDER BY p.id",
+      )
+      .all()
+      .map((row) => interestSchema.parse(JSON.parse(row.document)))
+      .filter((p) => p.lifetime === "persistent" || p.expiresAt! > now);
   }
 }

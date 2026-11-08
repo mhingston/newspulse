@@ -192,3 +192,21 @@ test("export can be restored after more than 1000 historical versions", () => {
     restored.close();
   }
 });
+
+test("active-interest lookup reads only latest interest documents", () => {
+  const db = new Store(":memory:");
+  try {
+    const profiles = new ProfileStore(db.sqlite);
+    profiles.import([interest, editorial]);
+    const current = { ...interest, version: 2, description: "Current" };
+    profiles.import([current]);
+    db.sqlite
+      .query(
+        "UPDATE profiles SET document='invalid historical JSON' WHERE (kind='interest' AND version=1) OR kind='editorial'",
+      )
+      .run();
+    expect(profiles.activeInterests(1000)).toEqual([current]);
+  } finally {
+    db.close();
+  }
+});
