@@ -16,9 +16,15 @@ export interface PollState {
 export interface PollResult extends PollState {
   items: Candidate[];
   notModified?: boolean;
+  entryCount?: number;
+  truncated?: boolean;
 }
 export interface SourceAdapter {
-  poll(url: string, state: PollState): Promise<PollResult>;
+  poll(
+    url: string,
+    state: PollState,
+    limits?: { maxEntries: number; maxBytes: number },
+  ): Promise<PollResult>;
 }
 export function resolvedUrl(value: string, base?: string): string {
   const u = new URL(value, base);

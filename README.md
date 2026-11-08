@@ -22,6 +22,12 @@ bun run cli import-opml /path/to/miniflux.opml
 # Alternatively:
 bun run cli add-source https://bun.com/rss.xml 'Bun' 1800
 bun run cli poll --force
+bun run cli list-sources
+# Use an ID from list-sources; settings are per feed.
+bun run cli update-source SOURCE_ID 'title=New title' poll-seconds=3600 max-entries=500 max-bytes=5000000
+bun run cli disable-source SOURCE_ID
+bun run cli enable-source SOURCE_ID
+bun run cli remove-source SOURCE_ID
 bun run cli search 'TypeScript'
 bun start
 ```
@@ -96,7 +102,11 @@ Backup destinations must not already exist. Back up regularly and copy snapshots
 
 Logs are JSON on stderr with source ID, outcome, item count, attempt and duration. `get_status` / `cli status` report source errors, poll queue totals and processing job counts grouped by stage and state. `get_item` reports processing attempts, retry deadlines and errors for each generation. Extraction runs automatically; analysis is optional and scoring remains pending until implemented. HTTP `/health` requires the bearer token. SQLite uses WAL, 5-second busy timeout and short transactions. Job leases expire after 60 seconds; retry backoff starts at 30 seconds, max five attempts per poll cycle. Reclaimed jobs and repeat polling are idempotent.
 
-If a feed fails, inspect `last_error`, check its URL and network access, and allow the persisted retry. A terminally failed polling cycle is retried as a new cycle when that source is next due. No public endpoint changes subscriptions. Poll intervals and source enablement currently require local database maintenance; source-management commands can follow later.
+If a feed fails, inspect `last_error`, check its URL and network access, and allow the persisted retry. A terminally failed polling cycle is retried as a new cycle when that source is next due. No public endpoint changes subscriptions. Disabling or removing a source cancels pending polls and fences any in-flight poll; network work already started may finish, but its results cannot be committed. Removal hides the subscription and retains its source record, item references and history. Re-adding the same URL restores it; importing an already disabled feed leaves it disabled.
+
+Feed limits default to 1,000 entries and 5,000,000 bytes per response; permitted ranges are 1–10,000 entries and 1–20,000,000 bytes. `get_status` and CLI `status` include the latest entry count and truncation flag, retained across a 304 response. A truncated feed may omit older entries; increase the budget where appropriate. Changing either feed budget clears validators, cancels any active poll and schedules a fresh fetch. Changing an interval schedules the next poll from the last successful poll or immediately if overdue. Original and resolved URLs remain in references. When a known source-native entry changes, its title and latest observed non-empty text become current and searchable; prior observed titles, bodies and source URLs remain in `get_item.content_versions`, and a new fenced extraction generation invalidates downstream work for that item. Frozen editions are not modified. Cross-source content observations are retained individually; this is not an assertion that one publisher's correction applies to another publisher's copy. Back up before upgrading; restore a pre-upgrade backup to a new stopped database path to roll back.
+
+Content versions marked `backfilled` represent the item text present at upgrade time, copied for each existing source reference; earlier source-specific bodies were not retained and cannot be reconstructed.
 
 ## Validate
 

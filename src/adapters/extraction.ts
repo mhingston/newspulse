@@ -298,7 +298,7 @@ export function extractionHandler(
 ): import("../worker").ProcessingHandler {
   return async (job, signal) => {
     const item = store.getItem(job.item_id);
-    if (!item?.url)
+    if (!item)
       return {
         status: "unavailable",
         result: JSON.stringify({
@@ -309,11 +309,26 @@ export function extractionHandler(
         }),
       };
     const references = item.references as {
+      source_id: string;
       url: string | null;
       feed_url: string;
     }[];
-    const entry = references.find((entry) => entry.url) ?? references[0];
-    const reference = entry?.url ?? item.url;
+    const entry = job.origin_source_id
+      ? references.find((entry) => entry.source_id === job.origin_source_id)
+      : (references.find((entry) => entry.url) ?? references[0]);
+    const reference = job.origin_source_id
+      ? job.origin_url
+      : (entry?.url ?? item.url);
+    if (!reference)
+      return {
+        status: "unavailable",
+        result: JSON.stringify({
+          status: "unavailable",
+          reason: "No public URL",
+          method: "http",
+          at: Date.now(),
+        }),
+      };
     const trustedOrigin =
       entry &&
       trustedFeeds.includes(entry.feed_url) &&
