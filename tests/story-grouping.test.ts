@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { readFileSync } from "node:fs";
 import {
   planStories,
   STORY_RULE_VERSION,
@@ -76,4 +77,45 @@ test("replay and arrival order produce stable partitions and canonical group key
   const other = planStories([c, a, b]);
   expect(one).toEqual(other);
   expect(planStories([c, a, b])).toEqual(other);
+});
+
+test("recorded evaluation fixture distinguishes developments and historical links", () => {
+  const fixture = JSON.parse(
+    readFileSync(new URL("./fixtures/evaluation.json", import.meta.url), "utf8"),
+  ) as {
+    story_evaluation: {
+      cases: {
+        id: string;
+        title: string;
+        day: number;
+        development: string;
+        follows?: string;
+      }[];
+    };
+  };
+  const cases = fixture.story_evaluation.cases;
+  const input = cases.map((entry) => item(entry.id, entry.title, entry.day));
+  const plan = planStories(input);
+  const developmentById = new Map(
+    cases.map((entry) => [entry.id, entry.development]),
+  );
+  for (const group of plan.groups) {
+    const labels = group.members.map((member) =>
+      developmentById.get(member.itemId),
+    );
+    expect(new Set(labels).size).toBe(1);
+  }
+  expect(plan.groups).toHaveLength(4);
+  const release = plan.groups.find((group) =>
+    group.members.some((member) => member.itemId === "atlas-release"),
+  )!;
+  const recall = plan.groups.find((group) =>
+    group.members.some((member) => member.itemId === "atlas-recall"),
+  )!;
+  expect(plan.relations).toContainEqual(
+    expect.objectContaining({
+      olderGroupId: release.id,
+      newerGroupId: recall.id,
+    }),
+  );
 });
