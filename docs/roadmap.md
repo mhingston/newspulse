@@ -61,7 +61,7 @@ These implement the handoff's requirement to **evaluate and selectively introduc
 | [#29](https://github.com/mhingston/newspulse/issues/29) | [M5] Evaluate retrieval gaps before adding embeddings or advanced search  |
 | [#30](https://github.com/mhingston/newspulse/issues/30) | [M5] Evaluate optional stdio MCP transport and client interoperability    |
 | [#31](https://github.com/mhingston/newspulse/issues/31) | [M5] Evaluate an optional discovery-focused web interface                 |
-| [#33](https://github.com/mhingston/newspulse/issues/33) | [M5] Evaluate opt-in recommendations of valuable new sources                |
+| [#33](https://github.com/mhingston/newspulse/issues/33) | [M5] Evaluate opt-in recommendations of valuable new sources              |
 
 ## Requirement coverage
 
