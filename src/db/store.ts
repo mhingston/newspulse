@@ -1,4 +1,5 @@
 import { Database } from "bun:sqlite";
+import { StoryStore } from "./story-store";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { mkdirSync } from "node:fs";
@@ -31,7 +32,7 @@ export interface Job {
   attempts: number;
   lease_token: string;
 }
-export type ProcessingStage = "extract" | "analyse" | "score";
+export type ProcessingStage = "extract" | "analyse" | "score" | "group";
 export interface ProcessingJob {
   id: string;
   item_id: string;
@@ -66,6 +67,7 @@ export interface Item {
 }
 export class Store {
   readonly sqlite: Database;
+  readonly stories: StoryStore;
   constructor(path: string) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.sqlite = new Database(path, { create: true, strict: true });
@@ -77,6 +79,7 @@ export class Store {
         new URL("../../drizzle", import.meta.url),
       ),
     });
+    this.stories = new StoryStore(this.sqlite);
   }
   close() {
     this.sqlite.close();
@@ -271,6 +274,17 @@ export class Store {
       })
       .immediate();
   }
+  private markGroupingDirty(itemId: string, now: number): void {
+    const last = this.sqlite
+      .query<{ generation: number; status: string }, [string]>(
+        "SELECT generation,status FROM processing_jobs WHERE stage='group' AND item_id=? ORDER BY generation DESC LIMIT 1",
+      )
+      .get(itemId);
+    // A pending job will see the latest snapshot. If a job is already running,
+    // a new generation ensures that an intervening correction is replayed.
+    if (last?.status === "pending") return;
+    this.enqueueProcessing("group", itemId, now, (last?.generation ?? 0) + 1);
+  }
   enqueueProcessing(
     stage: ProcessingStage,
     itemId: string,
@@ -340,6 +354,7 @@ export class Store {
       extract: "extracted",
       analyse: "analysed",
       score: "scored",
+      group: "grouped",
     } as const;
     if (status !== expected[job.stage] && status !== "unavailable")
       throw new Error("Invalid processing transition");
@@ -360,6 +375,7 @@ export class Store {
             job.generation,
           ).changes;
         if (!changed) return false;
+        if (job.stage === "group") return true;
         const latest = this.sqlite
           .query<{ n: number }, [string]>(
             "SELECT max(generation) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
@@ -375,6 +391,7 @@ export class Store {
             : job.stage === "analyse"
               ? "score"
               : null;
+        if (job.stage === "extract") this.markGroupingDirty(job.item_id, now);
         if (next && (status !== "unavailable" || job.stage === "extract"))
           this.enqueueProcessing(
             next,
@@ -557,6 +574,14 @@ export class Store {
     this.sqlite
       .query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?")
       .run(winner, loser);
+    // Preserve the membership trail when an exact-identity alias is reconciled.
+    // The former ID remains resolvable through item_redirects.
+    this.sqlite
+      .query("UPDATE story_memberships SET ended_at=coalesce(ended_at,?) WHERE item_id=?")
+      .run(Date.now(), loser);
+    this.sqlite
+      .query("UPDATE story_memberships SET item_id=?,original_item_id=coalesce(original_item_id,?) WHERE item_id=?")
+      .run(winner, loser, loser);
     this.sqlite
       .query("UPDATE item_redirects SET item_id=? WHERE item_id=?")
       .run(winner, loser);
@@ -693,6 +718,8 @@ export class Store {
         );
       } else this.enqueueProcessing("extract", prior.item_id, now);
       this.insertChildren(candidate, sourceId, now, prior.item_id);
+      if (changed || (owner && owner !== previousRef?.item_id))
+        this.markGroupingDirty(prior.item_id, now);
       return prior.item_id;
     }
     const key = identity(candidate, sourceId);
@@ -786,6 +813,7 @@ export class Store {
       candidate.sourceUrl ?? candidate.url ?? null,
     );
     this.insertChildren(candidate, sourceId, now, item.id);
+    this.markGroupingDirty(item.id, now);
     return item.id;
   }
   private insertChildren(
@@ -1028,9 +1056,21 @@ export class Store {
         if (job.status === "pending" && job.attempts > 0) return "retryable";
         return job.status;
       })(),
+      story: this.stories.forItem(id),
       content_kind: analysis
         ? "untrusted_source_and_generated_content"
         : "untrusted_source_content",
+    };
+  }
+  getStoryGroup(id: string) {
+    const group = this.stories.group(id);
+    if (!group) return null;
+    return {
+      ...group,
+      members: group.members.map((member) => ({
+        ...member,
+        item: this.getItem(member.item_id),
+      })),
     };
   }
   status() {
@@ -1054,6 +1094,7 @@ export class Store {
         .all(),
       items: this.sqlite.query("SELECT count(*) AS count FROM items").get(),
       milestone: "M2-in-progress",
+      grouping: this.stories.status(),
       ai: "optional",
       analyses: this.sqlite
         .query("SELECT count(*) AS count FROM analyses")

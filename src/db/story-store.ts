@@ -205,7 +205,10 @@ export class StoryStore {
       )
       .all();
     const key = (older: string, newer: string) => older + "\n" + newer;
-    const next = new Map(
+    const next = new Map<
+      string,
+      StoryPlan["relations"][number] & { evidence: string }
+    >(
       plan.relations.map((relation) => [
         key(relation.olderGroupId, relation.newerGroupId),
         {

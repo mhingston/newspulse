@@ -163,7 +163,7 @@ function sameDevelopment(
     return null;
   if (
     shared.length < 2 ||
-    shared.length / Math.max(leftTerms.length, rightTerms.length) < 0.6
+    shared.length / Math.max(leftTerms.length, rightTerms.length) < 0.7
   )
     return null;
   return {

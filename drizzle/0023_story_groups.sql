@@ -37,3 +37,7 @@ CREATE TABLE story_grouping_state (
   fingerprint text NOT NULL,
   updated_at integer NOT NULL
 );
+--> statement-breakpoint
+INSERT INTO processing_jobs(id,stage,item_id,generation,available_at,created_at)
+SELECT 'story-backfill-' || lower(hex(randomblob(12))), 'group', i.id, 1, 0, 0
+FROM items i ORDER BY i.identity LIMIT 1;

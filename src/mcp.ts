@@ -54,6 +54,21 @@ export function createMcp(store: Store): McpServer {
     },
   );
   server.registerTool(
+    "get_story_group",
+    {
+      description:
+        "Retrieve a specific development and every original article, citation, analysis and audited membership, including links to later developments.",
+      inputSchema: { id: z.string() },
+      annotations,
+    },
+    async ({ id }) => {
+      const group = store.getStoryGroup(id);
+      return group
+        ? response(group)
+        : { ...response({ error: "Story group not found" }), isError: true };
+    },
+  );
+  server.registerTool(
     "get_sources",
     { description: "List RSS subscriptions and polling health.", annotations },
     async () => response(store.sources()),

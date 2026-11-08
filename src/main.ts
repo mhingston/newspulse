@@ -33,6 +33,11 @@ const scheduler = schedule(
   store,
   new Worker(store, new RssAdapter()),
   new ProcessingWorker(store, {
+    group: async () => {
+      const result = store.stories.reconcile();
+      if (result.stale) throw new Error("Story inputs changed during grouping");
+      return { status: "grouped", result: JSON.stringify(result) };
+    },
     analyse: analysis
       ? analysisHandler(
           store,
