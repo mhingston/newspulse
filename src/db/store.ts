@@ -42,6 +42,16 @@ export interface ProcessingJob {
   origin_source_id: string | null;
   origin_url: string | null;
 }
+export interface AnalysisRecord {
+  inputHash: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  profiles: unknown[];
+  analysis: { summary: string };
+  usage: unknown;
+  cost: number | null;
+}
 export interface Item {
   id: string;
   identity: string;
@@ -51,6 +61,8 @@ export interface Item {
   ingested_at: number;
   status: string;
   text?: string;
+  snippet_provenance?: string;
+  analysis_status?: string;
 }
 export class Store {
   readonly sqlite: Database;
@@ -363,7 +375,7 @@ export class Store {
             : job.stage === "analyse"
               ? "score"
               : null;
-        if (next && status !== "unavailable")
+        if (next && (status !== "unavailable" || job.stage === "extract"))
           this.enqueueProcessing(
             next,
             job.item_id,
@@ -371,6 +383,96 @@ export class Store {
             job.generation,
             job.origin_source_id,
             job.origin_url,
+          );
+        return true;
+      })
+      .immediate();
+  }
+  retryFailedAnalysis(itemId: string, now = Date.now()): boolean {
+    return (
+      this.sqlite
+        .query(
+          `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
+      WHERE item_id=? AND stage='analyse' AND status='failed' AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=? AND stage='extract')`,
+        )
+        .run(now, itemId, itemId).changes === 1
+    );
+  }
+  requestReanalysis(itemId: string, now = Date.now()): boolean {
+    return this.sqlite
+      .transaction(() => {
+        const previous = this.sqlite
+          .query<
+            { generation: number; result: string | null; outcome: string },
+            [string]
+          >(
+            "SELECT generation,result,outcome FROM processing_jobs WHERE item_id=? AND stage='extract' AND status='done' AND outcome IN ('extracted','unavailable') ORDER BY generation DESC LIMIT 1",
+          )
+          .get(itemId);
+        if (!previous) return false;
+        const newest = this.sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT max(generation) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+          )
+          .get(itemId);
+        if (newest?.n !== previous.generation) return false;
+        const completed = this.sqlite
+          .query(
+            "SELECT 1 FROM processing_jobs WHERE item_id=? AND stage='analyse' AND generation=? AND status='done'",
+          )
+          .get(itemId, previous.generation);
+        if (!completed) return false;
+        const generation = previous.generation + 1;
+        this.sqlite
+          .query(
+            "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,attempts,available_at,created_at,result) VALUES(?,?,'extract',?,'done',?,0,?,?,?)",
+          )
+          .run(
+            crypto.randomUUID(),
+            itemId,
+            generation,
+            previous.outcome,
+            now,
+            now,
+            previous.result,
+          );
+        this.sqlite
+          .query("UPDATE items SET status='extracted' WHERE id=?")
+          .run(itemId);
+        this.enqueueProcessing("analyse", itemId, now, generation);
+        return true;
+      })
+      .immediate();
+  }
+  completeAnalysis(
+    job: ProcessingJob,
+    record: AnalysisRecord,
+    now = Date.now(),
+  ): boolean {
+    if (job.stage !== "analyse") throw new Error("Expected analysis job");
+    return this.sqlite
+      .transaction(() => {
+        if (
+          !this.completeProcessing(job, "analysed", now, JSON.stringify(record))
+        )
+          return false;
+        this.sqlite
+          .query(
+            "INSERT OR IGNORE INTO analyses(id,item_id,generation,input_hash,provider,model,prompt_version,profiles,result,usage,cost,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            crypto.randomUUID(),
+            job.item_id,
+            job.generation,
+            record.inputHash,
+            record.provider,
+            record.model,
+            record.promptVersion,
+            JSON.stringify(record.profiles),
+            JSON.stringify(record.analysis),
+            JSON.stringify(record.usage),
+            record.cost,
+            now,
           );
         return true;
       })
@@ -780,7 +882,9 @@ export class Store {
           number,
         ]
       >(
-        `SELECT i.*,snippet(items_fts,1,'','', ' … ',32) AS text
+        `SELECT i.*,snippet(items_fts,1,'','', ' … ',32) AS text,
+      CASE WHEN EXISTS(SELECT 1 FROM analyses a WHERE a.item_id=i.id AND a.generation=(SELECT max(p.generation) FROM processing_jobs p WHERE p.item_id=i.id AND p.stage='extract')) THEN 'source_and_model_summary' ELSE 'source_content' END AS snippet_provenance,
+      coalesce((SELECT CASE WHEN j.status='done' AND j.outcome='unavailable' THEN 'unavailable' WHEN j.status='done' THEN 'analysed' WHEN j.status='pending' AND j.attempts>0 THEN 'retryable' ELSE j.status END FROM processing_jobs j WHERE j.item_id=i.id AND j.stage='analyse' AND j.generation=(SELECT max(p.generation) FROM processing_jobs p WHERE p.item_id=i.id AND p.stage='extract')), 'pending') AS analysis_status
       FROM items_fts JOIN items i ON i.rowid=items_fts.rowid WHERE items_fts MATCH ?
       AND (? IS NULL OR EXISTS(SELECT 1 FROM item_sources r WHERE r.item_id=i.id AND r.source_id=?))
       AND (? IS NULL OR i.ingested_at>=?) ORDER BY bm25(items_fts),i.id LIMIT ? OFFSET ?`,
@@ -807,6 +911,32 @@ export class Store {
       )
       .get(id);
     if (!item) return null;
+    const analysisRow = this.sqlite
+      .query<
+        {
+          provider: string;
+          model: string;
+          prompt_version: string;
+          input_hash: string;
+          profiles: string;
+          result: string;
+          usage: string | null;
+          cost: number | null;
+          created_at: number;
+        },
+        [string]
+      >(
+        "SELECT provider,model,prompt_version,input_hash,profiles,result,usage,cost,created_at FROM analyses WHERE item_id=? AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=analyses.item_id AND stage='extract') ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(id);
+    const analysis = analysisRow
+      ? {
+          ...analysisRow,
+          profiles: JSON.parse(analysisRow.profiles),
+          result: JSON.parse(analysisRow.result) as { summary: string },
+          usage: analysisRow.usage ? JSON.parse(analysisRow.usage) : null,
+        }
+      : null;
     return {
       ...item,
       references: this.sqlite
@@ -856,9 +986,26 @@ export class Store {
           return null;
         }
       })(),
-      summary: null,
-      analysis_status: "not_implemented",
-      content_kind: "untrusted_source_content",
+      analysis,
+      summary: analysis?.result.summary ?? null,
+      analysis_status: (() => {
+        const job = this.sqlite
+          .query<
+            { status: string; outcome: string | null; attempts: number },
+            [string, string]
+          >(
+            "SELECT status,outcome,attempts FROM processing_jobs WHERE item_id=? AND stage='analyse' AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=? AND stage='extract')",
+          )
+          .get(id, id);
+        if (!job) return "pending";
+        if (job.status === "done")
+          return job.outcome === "unavailable" ? "unavailable" : "analysed";
+        if (job.status === "pending" && job.attempts > 0) return "retryable";
+        return job.status;
+      })(),
+      content_kind: analysis
+        ? "untrusted_source_and_generated_content"
+        : "untrusted_source_content",
     };
   }
   status() {
@@ -881,8 +1028,16 @@ export class Store {
         )
         .all(),
       items: this.sqlite.query("SELECT count(*) AS count FROM items").get(),
-      milestone: "M1",
-      ai: "not_enabled",
+      milestone: "M2-in-progress",
+      ai: "optional",
+      analyses: this.sqlite
+        .query("SELECT count(*) AS count FROM analyses")
+        .get(),
+      analysis_envelope_breach: !!this.sqlite
+        .query(
+          "SELECT 1 FROM analysis_control WHERE id=1 AND envelope_breach=1",
+        )
+        .get(),
     };
   }
   backup(path: string): void {
