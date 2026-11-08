@@ -1,0 +1,71 @@
+[
+  {
+    "kind": "editorial",
+    "id": "technical",
+    "version": 1,
+    "description": "Technical articles",
+    "contentTypes": ["technical_article"],
+    "criteria": [
+      { "dimension": "technical_depth", "weight": 1 },
+      { "dimension": "evidence", "weight": 1 }
+    ],
+    "presentation": ["methods", "limitations"]
+  },
+  {
+    "kind": "editorial",
+    "id": "papers",
+    "version": 1,
+    "description": "Research papers",
+    "contentTypes": ["paper"],
+    "criteria": [
+      { "dimension": "evidence", "weight": 1 },
+      { "dimension": "novelty", "weight": 1 }
+    ],
+    "presentation": ["methods", "limitations"]
+  },
+  {
+    "kind": "editorial",
+    "id": "releases",
+    "version": 1,
+    "description": "Releases",
+    "contentTypes": ["release"],
+    "criteria": [{ "dimension": "practical_impact", "weight": 1 }],
+    "presentation": ["changes", "compatibility"]
+  },
+  {
+    "kind": "editorial",
+    "id": "news",
+    "version": 1,
+    "description": "News",
+    "contentTypes": ["news"],
+    "criteria": [
+      { "dimension": "significance", "weight": 1 },
+      { "dimension": "evidence", "weight": 1 }
+    ],
+    "presentation": ["facts", "uncertainty"]
+  },
+  {
+    "kind": "editorial",
+    "id": "essays",
+    "version": 1,
+    "description": "Essays",
+    "contentTypes": ["essay"],
+    "criteria": [
+      { "dimension": "insight", "weight": 1 },
+      { "dimension": "evidence", "weight": 1 }
+    ],
+    "presentation": ["thesis", "counterarguments"]
+  },
+  {
+    "kind": "editorial",
+    "id": "discussions",
+    "version": 1,
+    "description": "Discussions",
+    "contentTypes": ["discussion"],
+    "criteria": [
+      { "dimension": "insight", "weight": 1 },
+      { "dimension": "diversity", "weight": 1 }
+    ],
+    "presentation": ["viewpoints", "uncertainty"]
+  }
+]

@@ -111,3 +111,40 @@ The smoke test uses local RSS/Atom HTTP fixtures, imports OPML, ingests duplicat
 Feed decoding follows [RFC 7303 §3.2](https://www.rfc-editor.org/rfc/rfc7303#section-3.2): BOM first, then HTTP charset, then XML declaration/autodetection, defaulting to UTF-8. UTF-16LE/BE and legacy encodings supported by Bun's TextDecoder are covered; unsupported encodings (including UTF-32) and invalid bytes produce explicit feed-health errors instead of silent replacement characters.
 
 See [architecture and roadmap](docs/architecture.md) for the initial schema, reference-project findings, compatibility evidence, defaults and limitations. M1 searches feed-provided content only; full article fetching, semantic deduplication, editorial ranking and proactive discoveries are not available yet. This release has no relevance-quality baseline: those evaluations require the M2 scoring pipeline and representative labeled data.
+
+### Interest and editorial profiles
+
+Profiles are explicitly configured; no example interests are activated automatically.
+Create a JSON array such as the following, then import it using `bun run cli import-profiles profiles.json`. Edit the file with the same ID and incremented version to update it; versions are immutable and consecutive. `bun run cli list-profiles` lists all versions and `bun run cli export-profiles > profiles.json` exports their full history. Imports are transactional and reject unknown fields, including credentials. Back up the database before upgrading or changing configuration.
+
+```json
+[
+  {
+    "kind": "interest",
+    "id": "example-robotics",
+    "version": 1,
+    "description": "Example only",
+    "entities": ["robots"],
+    "keywords": ["robotics"],
+    "priority": 3,
+    "positive": ["research"],
+    "negative": ["advertising"],
+    "queries": ["robotics research"],
+    "lifetime": "persistent",
+    "feedbackRefs": []
+  },
+  {
+    "kind": "editorial",
+    "id": "paper",
+    "version": 1,
+    "description": "Evaluate papers",
+    "contentTypes": ["paper"],
+    "criteria": [{ "dimension": "evidence", "weight": 1 }],
+    "presentation": ["methods"]
+  }
+]
+```
+
+Priority ranges from 1 to 5. A temporary interest requires `expiresAt`, an epoch millisecond timestamp; at and after expiry it is excluded from active interests while historical versions remain available. Persistent interests omit `expiresAt`. Editorial criteria are separate from interests. Query scheduling, feedback records and analysis references are implemented in later milestones; `feedbackRefs` contains explicit external identifiers and does not infer feedback from reading behavior. No discovery is scheduled by profile import alone.
+
+Optional, deterministic starting editorial criteria for six content types are in `examples/editorial-profiles.json`; import them explicitly if useful. They are configuration for later scoring, not claims that scoring is implemented.

@@ -116,3 +116,14 @@ export const processingJobs = sqliteTable(
     ),
   ],
 );
+
+export const profiles = sqliteTable(
+  "profiles",
+  {
+    kind: text().notNull(),
+    id: text().notNull(),
+    version: integer().notNull(),
+    document: text().notNull(),
+  },
+  (t) => [uniqueIndex("profile_version_unique").on(t.kind, t.id, t.version)],
+);
