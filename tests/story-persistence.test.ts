@@ -269,6 +269,39 @@ test("populated pre-story schema upgrades without touching analysis, FTS, or bac
   }
 });
 
+
+test("pending grouping job sees corrections after a clean snapshot was cached", () => {
+  const store = new Store(":memory:");
+  try {
+    ingest(store, "https://feed-one.example/rss", [
+      candidate("a", "Acme releases Atlas 2 robotics model"),
+      candidate("b", "Atlas 2 robotics model launched by Acme"),
+    ]);
+    expect(store.stories.reconcile().groups).toBe(1);
+    expect(store.stories.reconcile().changed).toBe(false);
+    const initialGroup = current(store)[0]!.group_id;
+    ingest(
+      store,
+      "https://feed-one.example/rss",
+      [candidate("b", "Acme releases Orion 3 robotics model")],
+      start + 6000,
+    );
+    // The original grouping job can still be pending; it must nevertheless
+    // invalidate the cached snapshot and split corrected coverage.
+    expect(store.stories.reconcile().changed).toBe(true);
+    expect(new Set(current(store).map((row) => row.group_id)).size).toBe(2);
+    const history = store.sqlite
+      .query<{ group_id: string; ended_at: number | null }, [string]>(
+        "SELECT group_id,ended_at FROM story_memberships WHERE group_id=? ORDER BY id",
+      )
+      .all(initialGroup);
+    expect(history.some((row) => row.ended_at !== null)).toBe(true);
+    expect(store.stories.reconcile().changed).toBe(false);
+  } finally {
+    store.close();
+  }
+});
+
 test("MCP retrieves both grouped and individual original references", async () => {
   const store = new Store(":memory:");
   ingest(store, "https://feed-one.example/rss", [
