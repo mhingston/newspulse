@@ -103,98 +103,100 @@ export class StoryStore {
     if (prior?.fingerprint === fingerprint)
       return { changed: false, groups: 0, members: 0 };
     const plan = planStories(inputs);
-    return this.sqlite.transaction(() => {
-      if (hash([STORY_RULE_VERSION, this.inputs()]) !== fingerprint)
-        return {
-          changed: false,
-          stale: true,
-          groups: 0,
-          members: 0,
-        };
-      const current = this.sqlite
-        .query<CurrentMembership, []>(
-          "SELECT item_id,group_id,evidence,rule_version FROM story_memberships WHERE ended_at IS NULL",
-        )
-        .all();
-      const target = new Map<
-        string,
-        { groupId: string; evidence: string; version: string }
-      >();
-      for (const group of plan.groups) {
-        this.sqlite
-          .query(
-            "INSERT INTO story_groups(id,first_seen) VALUES(?,?) " +
-              "ON CONFLICT(id) DO UPDATE SET retired_at=NULL",
+    return this.sqlite
+      .transaction(() => {
+        if (hash([STORY_RULE_VERSION, this.inputs()]) !== fingerprint)
+          return {
+            changed: false,
+            stale: true,
+            groups: 0,
+            members: 0,
+          };
+        const current = this.sqlite
+          .query<CurrentMembership, []>(
+            "SELECT item_id,group_id,evidence,rule_version FROM story_memberships WHERE ended_at IS NULL",
           )
-          .run(group.id, now);
-        for (const member of group.members)
-          target.set(member.itemId, {
-            groupId: group.id,
-            evidence: JSON.stringify(member.evidence),
-            version: plan.version,
-          });
-      }
-
-      // Close old rows first to honour the single-current-membership index.
-      for (const row of current) {
-        const next = target.get(row.item_id);
-        if (
-          !next ||
-          next.groupId !== row.group_id ||
-          next.evidence !== row.evidence ||
-          next.version !== row.rule_version
-        )
+          .all();
+        const target = new Map<
+          string,
+          { groupId: string; evidence: string; version: string }
+        >();
+        for (const group of plan.groups) {
           this.sqlite
             .query(
-              "UPDATE story_memberships SET ended_at=? WHERE item_id=? AND ended_at IS NULL",
+              "INSERT INTO story_groups(id,first_seen) VALUES(?,?) " +
+                "ON CONFLICT(id) DO UPDATE SET retired_at=NULL",
             )
-            .run(now, row.item_id);
-      }
-      const unchanged = new Set(
-        current
-          .filter((row) => {
-            const next = target.get(row.item_id);
-            return (
-              next?.groupId === row.group_id &&
-              next.evidence === row.evidence &&
-              next.version === row.rule_version
-            );
-          })
-          .map((row) => row.item_id),
-      );
-      for (const [itemId, next] of target) {
-        if (unchanged.has(itemId)) continue;
+            .run(group.id, now);
+          for (const member of group.members)
+            target.set(member.itemId, {
+              groupId: group.id,
+              evidence: JSON.stringify(member.evidence),
+              version: plan.version,
+            });
+        }
+
+        // Close old rows first to honour the single-current-membership index.
+        for (const row of current) {
+          const next = target.get(row.item_id);
+          if (
+            !next ||
+            next.groupId !== row.group_id ||
+            next.evidence !== row.evidence ||
+            next.version !== row.rule_version
+          )
+            this.sqlite
+              .query(
+                "UPDATE story_memberships SET ended_at=? WHERE item_id=? AND ended_at IS NULL",
+              )
+              .run(now, row.item_id);
+        }
+        const unchanged = new Set(
+          current
+            .filter((row) => {
+              const next = target.get(row.item_id);
+              return (
+                next?.groupId === row.group_id &&
+                next.evidence === row.evidence &&
+                next.version === row.rule_version
+              );
+            })
+            .map((row) => row.item_id),
+        );
+        for (const [itemId, next] of target) {
+          if (unchanged.has(itemId)) continue;
+          this.sqlite
+            .query(
+              "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES(?,?,?,?,?)",
+            )
+            .run(next.groupId, itemId, next.evidence, next.version, now);
+        }
+        const groupIds = new Set(plan.groups.map((group) => group.id));
+        const existingGroups = this.sqlite
+          .query<{ id: string }, []>(
+            "SELECT id FROM story_groups WHERE retired_at IS NULL",
+          )
+          .all();
+        for (const group of existingGroups)
+          if (!groupIds.has(group.id))
+            this.sqlite
+              .query("UPDATE story_groups SET retired_at=? WHERE id=?")
+              .run(now, group.id);
+
+        this.reconcileRelations(plan, now);
         this.sqlite
           .query(
-            "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES(?,?,?,?,?)",
+            "INSERT INTO story_grouping_state(id,fingerprint,updated_at) VALUES(1,?,?) " +
+              "ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,updated_at=excluded.updated_at",
           )
-          .run(next.groupId, itemId, next.evidence, next.version, now);
-      }
-      const groupIds = new Set(plan.groups.map((group) => group.id));
-      const existingGroups = this.sqlite
-        .query<{ id: string }, []>(
-          "SELECT id FROM story_groups WHERE retired_at IS NULL",
-        )
-        .all();
-      for (const group of existingGroups)
-        if (!groupIds.has(group.id))
-          this.sqlite
-            .query("UPDATE story_groups SET retired_at=? WHERE id=?")
-            .run(now, group.id);
-
-      this.reconcileRelations(plan, now);
-      this.sqlite
-        .query(
-          "INSERT INTO story_grouping_state(id,fingerprint,updated_at) VALUES(1,?,?) " +
-            "ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,updated_at=excluded.updated_at",
-        )
-        .run(fingerprint, now);
-      return {
-        changed: true,
-        groups: plan.groups.length,
-        members: target.size,
-      };
-    }).immediate();
+          .run(fingerprint, now);
+        return {
+          changed: true,
+          groups: plan.groups.length,
+          members: target.size,
+        };
+      })
+      .immediate();
   }
 
   private reconcileRelations(plan: StoryPlan, now: number): void {

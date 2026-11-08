@@ -230,8 +230,12 @@ export const storyMemberships = sqliteTable(
   "story_memberships",
   {
     id: integer().primaryKey({ autoIncrement: true }),
-    groupId: text("group_id").notNull().references(() => storyGroups.id),
-    itemId: text("item_id").notNull().references(() => items.id),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => storyGroups.id),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
     originalItemId: text("original_item_id"),
     evidence: text().notNull(),
     ruleVersion: text("rule_version").notNull(),
@@ -239,7 +243,9 @@ export const storyMemberships = sqliteTable(
     endedAt: integer("ended_at"),
   },
   (t) => [
-    uniqueIndex("story_current_member").on(t.itemId).where(sql`ended_at IS NULL`),
+    uniqueIndex("story_current_member")
+      .on(t.itemId)
+      .where(sql`ended_at IS NULL`),
     index("story_members_group").on(t.groupId, t.endedAt),
   ],
 );
@@ -247,8 +253,12 @@ export const storyRelations = sqliteTable(
   "story_relations",
   {
     id: integer().primaryKey({ autoIncrement: true }),
-    olderGroupId: text("older_group_id").notNull().references(() => storyGroups.id),
-    newerGroupId: text("newer_group_id").notNull().references(() => storyGroups.id),
+    olderGroupId: text("older_group_id")
+      .notNull()
+      .references(() => storyGroups.id),
+    newerGroupId: text("newer_group_id")
+      .notNull()
+      .references(() => storyGroups.id),
     reason: text().notNull(),
     evidence: text().notNull(),
     ruleVersion: text("rule_version").notNull(),
@@ -256,7 +266,9 @@ export const storyRelations = sqliteTable(
     endedAt: integer("ended_at"),
   },
   (t) => [
-    uniqueIndex("story_current_relation").on(t.olderGroupId, t.newerGroupId).where(sql`ended_at IS NULL`),
+    uniqueIndex("story_current_relation")
+      .on(t.olderGroupId, t.newerGroupId)
+      .where(sql`ended_at IS NULL`),
   ],
 );
 export const storyGroupingState = sqliteTable("story_grouping_state", {

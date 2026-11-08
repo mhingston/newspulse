@@ -52,7 +52,7 @@ Use versioned recorded evaluation data, offline score replay, source-linked outp
 
 ## D13 — Story groups are explainable and independent of item identity
 
-A specific-development group is a *relationship* among canonical items, not a replacement for any item or original source citation. Prefer deterministic, negative-tested lexical, entity, version, temporal and content-hash evidence to an unmeasured semantic model. Persist the rule version and explicit membership evidence. Corrections end memberships and retain their audit trail; a later substantive update is a distinct group with an optional directional historical link. Reconciliation runs through durable processing jobs and avoids paid analysis. Snapshot-wide calculation is the initial implementation, not an indefinitely accepted scalability guarantee. No vector store, mandatory model, external queue or publisher rewrite is justified by #6.
+A specific-development group is a _relationship_ among canonical items, not a replacement for any item or original source citation. Prefer deterministic, negative-tested lexical, entity, version, temporal and content-hash evidence to an unmeasured semantic model. Persist the rule version and explicit membership evidence. Corrections end memberships and retain their audit trail; a later substantive update is a distinct group with an optional directional historical link. Reconciliation runs through durable processing jobs and avoids paid analysis. Snapshot-wide calculation is the initial implementation, not an indefinitely accepted scalability guarantee. No vector store, mandatory model, external queue or publisher rewrite is justified by #6.
 
 ## Updating decisions
 

@@ -38,13 +38,35 @@ const verbs: Record<string, string[]> = {
     "ships",
     "shipped",
   ],
-  recall: ["recall", "recalls", "recalled", "withdraw", "withdraws", "withdrawn"],
+  recall: [
+    "recall",
+    "recalls",
+    "recalled",
+    "withdraw",
+    "withdraws",
+    "withdrawn",
+  ],
   funding: ["funding", "funded", "raises", "raised", "investment", "invests"],
-  acquisition: ["acquire", "acquires", "acquired", "buy", "buys", "bought", "merger"],
+  acquisition: [
+    "acquire",
+    "acquires",
+    "acquired",
+    "buy",
+    "buys",
+    "bought",
+    "merger",
+  ],
   outage: ["outage", "offline", "down", "disruption", "disrupted", "restored"],
   lawsuit: ["lawsuit", "sues", "sued", "litigation", "court", "ruling"],
   approval: ["approved", "approval", "authorised", "authorized", "cleared"],
-  security: ["breach", "breached", "hack", "hacked", "exploit", "vulnerability"],
+  security: [
+    "breach",
+    "breached",
+    "hack",
+    "hacked",
+    "exploit",
+    "vulnerability",
+  ],
   retirement: ["retire", "retires", "retired", "shutdown", "discontinued"],
 };
 const actions = new Map(
@@ -178,10 +200,7 @@ function sameDevelopment(
     canonicalUrl: right.url,
   };
 }
-function followUp(
-  earlier: StoryInput,
-  later: StoryInput,
-): string[] | null {
+function followUp(earlier: StoryInput, later: StoryInput): string[] | null {
   const gap = at(later) - at(earlier);
   if (gap < 4 * DAY || gap > 90 * DAY) return null;
   const olderTerms = terms(earlier.title);
@@ -195,10 +214,8 @@ function followUp(
   )
     return null;
   const overlap = common(olderTerms, newerTerms);
-  return (
-    overlap.length >= 2 &&
+  return overlap.length >= 2 &&
     overlap.length / Math.max(olderTerms.length, newerTerms.length) >= 0.7
-  )
     ? overlap
     : null;
 }
@@ -244,8 +261,12 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
       const right = groups[j]!;
       const older = left.firstAt <= right.firstAt ? left : right;
       const newer = older === left ? right : left;
-      const first = ordered.find((item) => item.id === older.members[0]!.itemId)!;
-      const next = ordered.find((item) => item.id === newer.members[0]!.itemId)!;
+      const first = ordered.find(
+        (item) => item.id === older.members[0]!.itemId,
+      )!;
+      const next = ordered.find(
+        (item) => item.id === newer.members[0]!.itemId,
+      )!;
       const shared = followUp(first, next);
       if (shared)
         relations.push({

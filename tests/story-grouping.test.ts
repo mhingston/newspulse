@@ -1,13 +1,12 @@
 import { expect, test } from "bun:test";
-import { planStories, STORY_RULE_VERSION, type StoryInput } from "../src/story-grouping";
+import {
+  planStories,
+  STORY_RULE_VERSION,
+  type StoryInput,
+} from "../src/story-grouping";
 
 const date = Date.UTC(2026, 10, 1);
-function item(
-  key: string,
-  title: string,
-  days = 0,
-  body = "",
-): StoryInput {
+function item(key: string, title: string, days = 0, body = ""): StoryInput {
   return {
     id: key,
     identity: "url:https://example.com/" + key,
@@ -19,8 +18,13 @@ function item(
   };
 }
 function partition(input: StoryInput[]) {
-  return planStories(input).groups
-    .map((g) => g.members.map((m) => m.itemId).sort().join(","))
+  return planStories(input)
+    .groups.map((g) =>
+      g.members
+        .map((m) => m.itemId)
+        .sort()
+        .join(","),
+    )
     .sort();
 }
 test("specific release coverage groups without losing member identities", () => {
@@ -30,14 +34,22 @@ test("specific release coverage groups without losing member identities", () => 
   const plan = planStories([b, c, a]);
   expect(plan.version).toBe(STORY_RULE_VERSION);
   expect(partition([a, b, c])).toEqual(["a,b", "c"]);
-  expect(plan.groups.find((g) => g.members.length === 2)?.members[1]?.evidence.reason).toBe("specific_event");
+  expect(
+    plan.groups.find((g) => g.members.length === 2)?.members[1]?.evidence
+      .reason,
+  ).toBe("specific_event");
 });
 test("same long syndicated text groups regardless of headline and publication order", () => {
-  const content = "The research team published its benchmark methodology, hardware latency measurements, evaluation harness, reproducible weights and licensing details. ".repeat(2);
+  const content =
+    "The research team published its benchmark methodology, hardware latency measurements, evaluation harness, reproducible weights and licensing details. ".repeat(
+      2,
+    );
   const a = item("a", "Acme releases Atlas 2", 0, content);
   const b = item("b", "Independent report on the new model", 8, content);
   expect(partition([a, b])).toEqual(["a,b"]);
-  expect(planStories([a, b]).groups[0]?.members[1]?.evidence.reason).toBe("syndicated_content");
+  expect(planStories([a, b]).groups[0]?.members[1]?.evidence.reason).toBe(
+    "syndicated_content",
+  );
 });
 test("broad topic and distinct versions never merge as a specific event", () => {
   const a = item("a", "Acme releases Atlas 2 robotics model");

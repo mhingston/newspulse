@@ -93,9 +93,7 @@ test("cross-source coverage forms a group without collapsing any source or analy
     expect(result).toMatchObject({ changed: true, groups: 1, members: 2 });
     const group = store.getStoryGroup(current(store)[0]!.group_id)!;
     expect(group.members).toHaveLength(2);
-    expect(group.members.map((m) => m.item!.references.length)).toEqual([
-      1, 1,
-    ]);
+    expect(group.members.map((m) => m.item!.references.length)).toEqual([1, 1]);
     for (const member of group.members) {
       expect(store.getItem(member.item_id)!.references).toHaveLength(1);
       expect(store.getItem(member.item_id)!.story.current).not.toBeNull();
@@ -155,7 +153,9 @@ test("arrival order, repeated grouping and historical follow-ups stay stable", (
       ingest(store, "https://feed-one.example/rss", order);
       store.stories.reconcile();
       const groups = store.sqlite
-        .query<{ id: string }, []>("SELECT id FROM story_groups WHERE retired_at IS NULL ORDER BY id")
+        .query<{ id: string }, []>(
+          "SELECT id FROM story_groups WHERE retired_at IS NULL ORDER BY id",
+        )
         .all();
       const relations = store.sqlite
         .query<{ older_group_id: string; newer_group_id: string }, []>(
@@ -165,9 +165,13 @@ test("arrival order, repeated grouping and historical follow-ups stay stable", (
       results.push({ groups, relations });
       expect(groups).toHaveLength(3);
       expect(relations).toHaveLength(1);
-      const count = store.sqlite.query("SELECT count(*) AS n FROM story_memberships").get();
+      const count = store.sqlite
+        .query("SELECT count(*) AS n FROM story_memberships")
+        .get();
       store.stories.reconcile();
-      expect(store.sqlite.query("SELECT count(*) AS n FROM story_memberships").get()).toEqual(count);
+      expect(
+        store.sqlite.query("SELECT count(*) AS n FROM story_memberships").get(),
+      ).toEqual(count);
     } finally {
       store.close();
     }
@@ -193,7 +197,9 @@ test("grouping stage retries with fences and does not re-run derived analysis", 
       }),
     });
     // The reclaimed job is already leased: finish it, then verify no new work.
-    expect(store.completeProcessing(newJob, "grouped", start + 61004)).toBe(true);
+    expect(store.completeProcessing(newJob, "grouped", start + 61004)).toBe(
+      true,
+    );
     expect(store.stories.reconcile().changed).toBe(true);
     expect(await worker.drain("group", 1)).toBe(0);
     expect(
@@ -210,7 +216,9 @@ test("populated pre-story schema upgrades without touching analysis, FTS, or bac
   const oldMigrations = join(dir, "old-migrations");
   const backup = join(dir, "restored.sqlite");
   mkdirSync(join(oldMigrations, "meta"), { recursive: true });
-  const currentMigrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
+  const currentMigrations = fileURLToPath(
+    new URL("../drizzle/", import.meta.url),
+  );
   for (const file of readdirSync(currentMigrations))
     if (file.endsWith(".sql") && !file.startsWith("0023_"))
       copyFileSync(join(currentMigrations, file), join(oldMigrations, file));
@@ -239,15 +247,21 @@ test("populated pre-story schema upgrades without touching analysis, FTS, or bac
     store = new Store(path);
     expect(store.search("persistent")).toHaveLength(1);
     expect(store.search("insight")).toHaveLength(1);
-    expect(store.getItem("item")!.analysis?.result.summary).toBe("preserved model insight");
-    expect((store.getItem("item")!.references[0]! as { url: string }).url).toBe("https://articles.example/old#original");
+    expect(store.getItem("item")!.analysis?.result.summary).toBe(
+      "preserved model insight",
+    );
+    expect((store.getItem("item")!.references[0]! as { url: string }).url).toBe(
+      "https://articles.example/old#original",
+    );
     expect(store.claimProcessing("group", Date.now())?.item_id).toBe("item");
     store.stories.reconcile();
     store.backup(backup);
     restored = new Store(backup);
     expect(restored.getItem("item")!.story.current?.group_id).toBeDefined();
     expect(restored.search("insight")).toHaveLength(1);
-    expect(restored.sqlite.query("PRAGMA integrity_check").get()).toEqual({ integrity_check: "ok" });
+    expect(restored.sqlite.query("PRAGMA integrity_check").get()).toEqual({
+      integrity_check: "ok",
+    });
   } finally {
     store?.close();
     restored?.close();
@@ -289,7 +303,9 @@ test("MCP retrieves both grouped and individual original references", async () =
       (response.content as { text: string }[])[0]!.text,
     ) as { members: { item: { references: unknown[] }; item_id: string }[] };
     expect(group.members).toHaveLength(2);
-    expect(group.members.every((member) => member.item.references.length === 1)).toBe(true);
+    expect(
+      group.members.every((member) => member.item.references.length === 1),
+    ).toBe(true);
     for (const member of group.members) {
       const detail = await client.callTool({
         name: "get_item",

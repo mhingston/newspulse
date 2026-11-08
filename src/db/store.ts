@@ -577,10 +577,14 @@ export class Store {
     // Preserve the membership trail when an exact-identity alias is reconciled.
     // The former ID remains resolvable through item_redirects.
     this.sqlite
-      .query("UPDATE story_memberships SET ended_at=coalesce(ended_at,?) WHERE item_id=?")
+      .query(
+        "UPDATE story_memberships SET ended_at=coalesce(ended_at,?) WHERE item_id=?",
+      )
       .run(Date.now(), loser);
     this.sqlite
-      .query("UPDATE story_memberships SET item_id=?,original_item_id=coalesce(original_item_id,?) WHERE item_id=?")
+      .query(
+        "UPDATE story_memberships SET item_id=?,original_item_id=coalesce(original_item_id,?) WHERE item_id=?",
+      )
       .run(winner, loser, loser);
     this.sqlite
       .query("UPDATE item_redirects SET item_id=? WHERE item_id=?")
