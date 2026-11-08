@@ -25,7 +25,7 @@ type Resolver = (host: string) => Promise<string[]>;
 type Reply = {
   status: number;
   headers: Record<string, string | undefined>;
-  body: string;
+  body: string | Uint8Array;
 };
 type Transport = (
   url: URL,
@@ -88,7 +88,7 @@ export const pinnedTransport: Transport = (url, address, signal) =>
               "content-type": response.headers["content-type"],
               location: response.headers.location,
             },
-            body: Buffer.concat(chunks).toString("utf8"),
+            body: Buffer.concat(chunks),
           }),
         );
       },
@@ -100,7 +100,10 @@ export const pinnedTransport: Transport = (url, address, signal) =>
     request.end();
   });
 async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
-  if (signal.aborted) throw new Error("Request aborted");
+  if (signal.aborted) {
+    void work.catch(() => {});
+    throw new Error("Request aborted");
+  }
   return new Promise((resolve, reject) => {
     const abort = () => reject(new Error("Request aborted"));
     signal.addEventListener("abort", abort, { once: true });
@@ -115,6 +118,34 @@ async function abortable<T>(work: Promise<T>, signal: AbortSignal): Promise<T> {
       },
     );
   });
+}
+function decodeBody(
+  body: string | Uint8Array,
+  contentType: string,
+  html: boolean,
+): string {
+  if (typeof body === "string") return body;
+  let encoding: string | undefined;
+  if (body[0] === 0xef && body[1] === 0xbb && body[2] === 0xbf)
+    encoding = "utf-8";
+  else if (body[0] === 0xff && body[1] === 0xfe) encoding = "utf-16le";
+  else if (body[0] === 0xfe && body[1] === 0xff) encoding = "utf-16be";
+  else encoding = /charset\s*=\s*["']?([^\s;"']+)/i.exec(contentType)?.[1];
+  if (!encoding && html) {
+    const prefix = new TextDecoder("windows-1252").decode(
+      body.subarray(0, 1024),
+    );
+    encoding = /<meta\b[^>]*\bcharset\s*=\s*["']?([^\s;"'/>]+)/i.exec(
+      prefix,
+    )?.[1];
+  }
+  try {
+    return new TextDecoder(encoding ?? "utf-8", { fatal: true }).decode(body);
+  } catch {
+    throw new PermanentExtractionError(
+      `Unsupported or invalid encoding: ${encoding ?? "utf-8"}`,
+    );
+  }
 }
 class RetryableExtractionError extends Error {}
 export class HttpContentExtractor implements ContentExtractor {
@@ -191,14 +222,28 @@ export class HttpContentExtractor implements ContentExtractor {
           ?.toLowerCase();
         if (type !== "text/html" && type !== "text/plain")
           throw new Error("Unsupported content type");
-        let text = response.body;
+        let text = decodeBody(
+          response.body,
+          response.headers["content-type"] ?? "",
+          type === "text/html",
+        );
+        let interstitial = false;
         if (type === "text/html") {
-          const { document } = parseHTML(response.body);
+          const { document } = parseHTML(text);
+          const article = document.querySelector("article,main");
+          const originalText = document.body?.textContent ?? "";
+          interstitial =
+            !article &&
+            /\b(verify you are human|subscribe to continue|complete the captcha)\b/i.test(
+              originalText,
+            );
           for (const node of document.querySelectorAll(
-            "script,style,nav,header,footer,aside,form,iframe",
+            "script,style,nav,aside,form,iframe",
           ))
             node.remove();
-          const root = document.querySelector("article,main") ?? document.body;
+          for (const node of document.querySelectorAll("header,footer"))
+            if (!article?.contains(node)) node.remove();
+          const root = article ?? document.body;
           const read = (node: Node): string => {
             if (node.nodeType === 3) return node.textContent ?? "";
             const body = Array.from(node.childNodes, read).join("");
@@ -217,7 +262,10 @@ export class HttpContentExtractor implements ContentExtractor {
           .trim();
         if (
           !text ||
-          /\b(captcha|verify you are human|subscribe to continue)\b/i.test(text)
+          interstitial ||
+          /^(subscribe to continue|verify you are human|complete the captcha)[.!\s]*$/i.test(
+            text,
+          )
         )
           throw new Error("Page unavailable");
         return {

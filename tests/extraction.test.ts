@@ -270,7 +270,9 @@ test("transport connects to the validated address while retaining the original h
       new URL(`http://unresolvable.invalid:${server.port}/`),
       "127.0.0.1",
     );
-    expect(response.body).toBe(`unresolvable.invalid:${server.port}`);
+    expect(new TextDecoder().decode(response.body as Uint8Array)).toBe(
+      `unresolvable.invalid:${server.port}`,
+    );
   } finally {
     server.stop(true);
   }
@@ -487,4 +489,115 @@ test("preserves code indentation and paragraph boundaries", async () => {
   const result = await extractor.extract("https://example.com/");
   expect(result.text).toContain("Heading\n");
   expect(result.text).toContain("\n  call();\n");
+});
+
+test("decodes declared charsets and rejects malformed or unsupported bytes", async () => {
+  const resolver = async () => ["93.184.216.34"];
+  const page = new HttpContentExtractor(resolver, async () => ({
+    status: 200,
+    headers: { "content-type": "text/html; charset=windows-1252" },
+    body: Uint8Array.from([
+      ...Buffer.from("<article>caf"),
+      0xe9,
+      ...Buffer.from("</article>"),
+    ]),
+  }));
+  expect((await page.extract("https://example.com")).text).toBe("café");
+  const invalid = new HttpContentExtractor(resolver, async () => ({
+    status: 200,
+    headers: { "content-type": "text/plain; charset=utf-8" },
+    body: Uint8Array.from([0xff]),
+  }));
+  expect((await invalid.extract("https://example.com")).status).toBe(
+    "unavailable",
+  );
+  const unknown = new HttpContentExtractor(resolver, async () => ({
+    status: 200,
+    headers: { "content-type": "text/plain; charset=unknown-charset" },
+    body: Uint8Array.from([65]),
+  }));
+  expect((await unknown.extract("https://example.com")).status).toBe(
+    "unavailable",
+  );
+});
+
+test("preserves article headers and footers while stripping site boilerplate", async () => {
+  const extractor = new HttpContentExtractor(
+    async () => ["93.184.216.34"],
+    async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: "<html><body><header>Site menu</header><article><header><h1>Article heading</h1><p>By author</p></header><p>Body</p><footer>Sources</footer></article><footer>Site footer</footer></body></html>",
+    }),
+  );
+  const result = await extractor.extract("https://example.com");
+  expect(result.text).toContain("Article heading");
+  expect(result.text).toContain("Sources");
+  expect(result.text).not.toContain("Site menu");
+});
+
+test("allows articles about CAPTCHA while rejecting blocking interstitials", async () => {
+  const page = new HttpContentExtractor(
+    async () => ["93.184.216.34"],
+    async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: "<article><h1>Building CAPTCHA</h1><p>Use a captcha variable in your code.</p></article>",
+    }),
+  );
+  expect((await page.extract("https://example.com")).status).toBe("extracted");
+  const blocked = new HttpContentExtractor(
+    async () => ["93.184.216.34"],
+    async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: "<html><body><form>Verify you are human to continue</form></body></html>",
+    }),
+  );
+  expect((await blocked.extract("https://example.com")).status).toBe(
+    "unavailable",
+  );
+});
+
+test("a pre-aborted signal observes an already rejected transport promise", async () => {
+  const errors: unknown[] = [];
+  const listener = (error: unknown) => {
+    errors.push(error);
+  };
+  process.on("unhandledRejection", listener);
+  try {
+    const page = new HttpContentExtractor(
+      async () => ["93.184.216.34"],
+      () => Promise.reject(new Error("aborted transport")),
+    );
+    const controller = new AbortController();
+    controller.abort();
+    expect(
+      (await page.extract("http://93.184.216.34", controller.signal)).status,
+    ).toBe("unavailable");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(errors).toEqual([]);
+  } finally {
+    process.off("unhandledRejection", listener);
+  }
+});
+
+test("HTML meta charset is recognized and BOM overrides conflicting headers", async () => {
+  const resolver = async () => ["93.184.216.34"];
+  const meta = new HttpContentExtractor(resolver, async () => ({
+    status: 200,
+    headers: { "content-type": "text/html" },
+    body: Uint8Array.from([
+      ...Buffer.from('<meta charset="windows-1252"><article>caf'),
+      0xe9,
+      ...Buffer.from("</article>"),
+    ]),
+  }));
+  expect((await meta.extract("https://example.com")).text).toBe("café");
+  const bom = new HttpContentExtractor(resolver, async () => ({
+    status: 200,
+    headers: { "content-type": "text/plain; charset=windows-1252" },
+    body: Uint8Array.from([0xef, 0xbb, 0xbf, ...Buffer.from("café")]),
+  }));
+  expect((await bom.extract("https://example.com")).text).toBe("café");
 });
