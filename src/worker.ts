@@ -100,7 +100,11 @@ export function schedule(
 export type ProcessingHandler = (
   job: import("./db/store").ProcessingJob,
   signal: AbortSignal,
-) => Promise<{ status: string; result?: string }>;
+) => Promise<{
+  status: string;
+  result?: string;
+  analysisRecord?: import("./db/store").AnalysisRecord;
+}>;
 export class ProcessingWorker {
   private inFlight = new Set<string>();
   constructor(
@@ -145,12 +149,15 @@ export class ProcessingWorker {
             }, this.timeoutMs);
           }),
         ]);
-        this.store.completeProcessing(
-          job,
-          output.status,
-          Date.now(),
-          output.result ?? null,
-        );
+        if (output.analysisRecord)
+          this.store.completeAnalysis(job, output.analysisRecord);
+        else
+          this.store.completeProcessing(
+            job,
+            output.status,
+            Date.now(),
+            output.result ?? null,
+          );
       } catch (error) {
         this.store.failProcessing(
           job,

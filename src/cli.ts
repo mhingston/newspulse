@@ -1,3 +1,5 @@
+import { acquireAnalysisLock } from "./analysis-lock";
+import { AnalysisBudget } from "./analysis-budget";
 import { ProfileStore } from "./profiles";
 import { Store } from "./db/store";
 import { parseOpml, exportOpml } from "./adapters/opml";
@@ -41,6 +43,11 @@ async function main() {
     console.log(`Restored to ${path}`);
     return;
   }
+  const analysisLock =
+    command === "analysis-reconcile" ||
+    command === "analysis-acknowledge-envelope"
+      ? acquireAnalysisLock(path)
+      : null;
   const store = new Store(path);
   try {
     switch (command) {
@@ -59,6 +66,55 @@ async function main() {
           JSON.stringify(new ProfileStore(store.sqlite).export(), null, 2),
         );
         break;
+      case "analysis-reservations":
+        console.log(
+          JSON.stringify(
+            store.sqlite
+              .query(
+                "SELECT key,tokens,micros,status FROM analysis_reservations ORDER BY key",
+              )
+              .all(),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "analysis-retry":
+        if (!store.retryFailedAnalysis(required(0, "item ID")))
+          throw new Error("No failed current analysis job found");
+        console.log("Failed analysis requeued");
+        break;
+      case "analysis-reanalyse":
+        if (!store.requestReanalysis(required(0, "item ID")))
+          throw new Error("Item is not eligible for reanalysis");
+        console.log("Reanalysis queued");
+        break;
+      case "analysis-reconcile": {
+        const budget = new AnalysisBudget(store.sqlite, {
+          maxTokens: 1,
+          maxMicros: 1,
+          maxConcurrent: 1,
+        });
+        if (!budget.reconcile(required(0, "reservation key")))
+          throw new Error("Reserved attempt not found");
+        console.log(
+          "Reservation reconciled; worst-case spend remains charged to the budget",
+        );
+        break;
+      }
+      case "analysis-acknowledge-envelope": {
+        const budget = new AnalysisBudget(store.sqlite, {
+          maxTokens: 1,
+          maxMicros: 1,
+          maxConcurrent: 1,
+        });
+        if (!budget.acknowledgeEnvelopeBreach())
+          throw new Error("No envelope breach pending review");
+        console.log(
+          "Envelope breach acknowledged; verify provider limits and budget configuration before restarting",
+        );
+        break;
+      }
       case "init":
         console.log("Database migrated");
         break;
@@ -112,11 +168,12 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <init|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
     store.close();
+    analysisLock?.close();
   }
 }
 main().catch((e) => {

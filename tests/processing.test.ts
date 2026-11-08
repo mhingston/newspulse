@@ -239,7 +239,7 @@ test("rejects invalid stage transitions and records unavailable work", () => {
   expect(() => store.completeProcessing(job, "available", 4)).toThrow();
   expect(store.completeProcessing(job, "unavailable", 4)).toBe(true);
   expect(store.getItem(job.item_id)?.status).toBe("unavailable");
-  expect(store.claimProcessing("analyse", 5)).toBeNull();
+  expect(store.claimProcessing("analyse", 5)?.item_id).toBe(job.item_id);
   store.close();
 });
 

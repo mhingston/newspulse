@@ -109,6 +109,14 @@ export class ProfileStore {
       .all()
       .map((row) => profileSchema.parse(JSON.parse(row.document)));
   }
+  latestEditorial(): z.infer<typeof editorialSchema>[] {
+    return this.db
+      .query<{ document: string }, []>(
+        "SELECT p.document FROM profiles p WHERE p.kind='editorial' AND p.version=(SELECT max(q.version) FROM profiles q WHERE q.kind=p.kind AND q.id=p.id) ORDER BY p.id",
+      )
+      .all()
+      .map((row) => editorialSchema.parse(JSON.parse(row.document)));
+  }
   activeInterests(now = Date.now()): Interest[] {
     return this.db
       .query<{ document: string }, []>(
