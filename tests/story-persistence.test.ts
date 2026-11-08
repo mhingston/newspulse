@@ -40,9 +40,13 @@ function ingest(
   const s = store.addSource(source);
   store.enqueueDue(now, true);
   // All calls in this file use a fresh or already-completed source poll.
-  const job = store.claim(now)!;
-  expect(job.source_id).toBe(s.id);
-  expect(store.complete(job, { items }, now + 1)).toBe(true);
+  let job = store.claim(now);
+  while (job && job.source_id !== s.id) {
+    expect(store.complete(job, { items: [] }, now + 1)).toBe(true);
+    job = store.claim(now);
+  }
+  expect(job?.source_id).toBe(s.id);
+  expect(store.complete(job!, { items }, now + 1)).toBe(true);
 }
 function current(store: Store) {
   return store.sqlite
@@ -138,7 +142,7 @@ test("arrival order, repeated grouping and historical follow-ups stay stable", (
         .all();
       results.push({ groups, relations });
       expect(groups).toHaveLength(3);
-      expect(relations.length).toBeGreaterThan(0);
+      expect(relations).toHaveLength(1);
       const count = store.sqlite.query("SELECT count(*) AS n FROM story_memberships").get();
       store.stories.reconcile();
       expect(store.sqlite.query("SELECT count(*) AS n FROM story_memberships").get()).toEqual(count);
@@ -155,10 +159,10 @@ test("grouping stage retries with fences and does not re-run derived analysis", 
     ingest(store, "https://feed-one.example/rss", [
       candidate("a", "Acme releases Atlas 2 robotics model"),
     ]);
-    const old = store.claimProcessing("group", start + 1000)!;
+    const old = store.claimProcessing("group", start + 1002)!;
     expect(old).not.toBeNull();
-    expect(store.completeProcessing(old, "grouped", start + 61001)).toBe(false);
-    const newJob = store.claimProcessing("group", start + 61001)!;
+    expect(store.completeProcessing(old, "grouped", start + 61003)).toBe(false);
+    const newJob = store.claimProcessing("group", start + 61003)!;
     expect(newJob).not.toBeNull();
     const worker = new ProcessingWorker(store, {
       group: async () => ({
@@ -167,7 +171,7 @@ test("grouping stage retries with fences and does not re-run derived analysis", 
       }),
     });
     // The reclaimed job is already leased: finish it, then verify no new work.
-    expect(store.completeProcessing(newJob, "grouped", start + 61002)).toBe(true);
+    expect(store.completeProcessing(newJob, "grouped", start + 61004)).toBe(true);
     expect(store.stories.reconcile().changed).toBe(true);
     expect(await worker.drain("group", 1)).toBe(0);
     expect(

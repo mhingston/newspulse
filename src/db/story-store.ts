@@ -264,7 +264,12 @@ export class StoryStore {
       )
       .all(itemId);
     return {
-      current: rows.find((row) => row.ended_at === null) ?? null,
+      current: (() => {
+        const active = rows.find((row) => row.ended_at === null);
+        return active
+          ? { ...active, evidence: JSON.parse(active.evidence) as unknown }
+          : null;
+      })(),
       history: rows.map((row) => ({
         ...row,
         evidence: JSON.parse(row.evidence) as unknown,

@@ -128,7 +128,10 @@ function common(a: string[], b: string[]): string[] {
 function contentHash(item: StoryInput): string | null {
   const normalized = item.text.replace(/\s+/g, " ").trim().toLowerCase();
   // Very short or boilerplate-only feed descriptions are not evidence of syndication.
-  return normalized.length >= 160 ? sha(normalized) : null;
+  const vocabulary = new Set(words(normalized));
+  return normalized.length >= 160 && vocabulary.size >= 12
+    ? sha(normalized)
+    : null;
 }
 function sameDevelopment(
   left: StoryInput,
@@ -181,8 +184,23 @@ function followUp(
 ): string[] | null {
   const gap = at(later) - at(earlier);
   if (gap < 4 * DAY || gap > 90 * DAY) return null;
-  const overlap = common(terms(earlier.title), terms(later.title));
-  return overlap.length >= 2 ? overlap : null;
+  const olderTerms = terms(earlier.title);
+  const newerTerms = terms(later.title);
+  const olderVersions = olderTerms.filter((term) => /\d/.test(term));
+  const newerVersions = newerTerms.filter((term) => /\d/.test(term));
+  if (
+    olderVersions.length &&
+    newerVersions.length &&
+    !common(olderVersions, newerVersions).length
+  )
+    return null;
+  const overlap = common(olderTerms, newerTerms);
+  return (
+    overlap.length >= 2 &&
+    overlap.length / Math.max(olderTerms.length, newerTerms.length) >= 0.7
+  )
+    ? overlap
+    : null;
 }
 /**
  * Complete-link clustering prevents an ambiguous intermediary from connecting
