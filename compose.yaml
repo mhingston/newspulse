@@ -9,6 +9,7 @@ services:
       MCP_TOKEN: ${MCP_TOKEN:?Set a random token of at least 24 characters}
       ALLOWED_HOSTS: ${ALLOWED_HOSTS:-localhost,127.0.0.1}
       ALLOWED_ORIGINS: ${ALLOWED_ORIGINS:-}
+      TRUSTED_PRIVATE_FEEDS: ${TRUSTED_PRIVATE_FEEDS:-}
     volumes:
       - newspulse-data:/app/data
     healthcheck:
