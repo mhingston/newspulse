@@ -1,6 +1,9 @@
 import { ProfileStore } from "./profiles";
 import { AnalysisBudget } from "./analysis-budget";
-import type { OpenAICompatibleAnalysis } from "./adapters/analysis";
+import {
+  AnalysisHttpError,
+  type OpenAICompatibleAnalysis,
+} from "./adapters/analysis";
 import type { Store, ProcessingJob } from "./db/store";
 
 export interface AnalysisOptions {
@@ -29,10 +32,21 @@ export function analysisHandler(
       ? JSON.parse(extracted)
       : {};
     const text = parsed.text || item.text;
-    const source = parsed.sourceUrl || item.url;
+    const ref = (
+      item.references as {
+        source_id: string;
+        native_id: string;
+        url: string | null;
+      }[]
+    )[0];
+    const source =
+      parsed.sourceUrl ||
+      item.url ||
+      ref?.url ||
+      (ref ? `source:${ref.source_id}:${ref.native_id}` : null);
     if (!text || !source) return { status: "unavailable" };
     const inputHash = new Bun.CryptoHasher("sha256")
-      .update(JSON.stringify([text, source]))
+      .update(JSON.stringify([text, source, client.identity()]))
       .digest("hex");
     const profileStore = new ProfileStore(store.sqlite);
     const active = profileStore.activeInterests();
@@ -86,28 +100,44 @@ export function analysisHandler(
         ]),
       )
       .digest("hex");
+    const cached = budget.result(key);
+    if (cached)
+      return {
+        status: "analysed",
+        analysisRecord: JSON.parse(
+          cached,
+        ) as import("./db/store").AnalysisRecord,
+      };
     if (!budget.reserve(key, options.reserveTokens, options.reserveMicros))
       throw new Error(
         "Analysis budget unavailable or dispatch requires reconciliation",
       );
-    const response = await client.analyse(text, source, signal, profiles);
-    const used =
-      response.usage &&
-      response.usage.inputTokens + response.usage.outputTokens;
-    if (used !== null && used !== undefined && used <= options.reserveTokens)
-      budget.settle(key, { tokens: used, micros: options.reserveMicros });
-    return {
-      status: "analysed",
-      analysisRecord: {
-        inputHash,
-        provider: options.provider,
-        model: options.model,
-        promptVersion: options.promptVersion,
-        profiles,
-        analysis: response.analysis,
-        usage: response.usage,
-        cost: null,
-      },
+    let response: Awaited<ReturnType<OpenAICompatibleAnalysis["analyse"]>>;
+    try {
+      response = await client.analyse(text, source, signal, profiles);
+    } catch (error) {
+      if (
+        error instanceof AnalysisHttpError &&
+        (error.status === 429 || error.status >= 500)
+      )
+        budget.reconcile(key);
+      throw error;
+    }
+    const used = response.usage
+      ? response.usage.inputTokens + response.usage.outputTokens
+      : null;
+    const analysisRecord = {
+      inputHash,
+      provider: options.provider,
+      model: options.model,
+      promptVersion: options.promptVersion,
+      profiles,
+      analysis: response.analysis,
+      usage: response.usage,
+      cost: null,
     };
+    if (!budget.finish(key, JSON.stringify(analysisRecord), used))
+      throw new Error("Analysis reservation lost");
+    return { status: "analysed", analysisRecord };
   };
 }

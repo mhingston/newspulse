@@ -164,4 +164,5 @@ export const analysisReservations = sqliteTable("analysis_reservations", {
   tokens: integer().notNull(),
   micros: integer().notNull(),
   status: text().notNull(),
+  result: text(),
 });

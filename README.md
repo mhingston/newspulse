@@ -149,3 +149,22 @@ Priority ranges from 1 to 5. A temporary interest requires `expiresAt`, an epoch
 
 Optional, deterministic starting editorial criteria for six content types are in `examples/editorial-profiles.json`; import them explicitly if useful. They are configuration for later scoring, not claims that scoring is implemented.
 Article extraction runs asynchronously after ingestion for public HTTP(S) item URLs. Search and MCP retain feed text while full text is pending or unavailable. See [architecture notes](docs/architecture.md#http-article-extraction) for destination restrictions, limits and extraction behavior.
+
+### Optional structured analysis
+
+Analysis is disabled unless all six settings below are supplied. `ANALYSIS_ENDPOINT` is the complete HTTPS Chat Completions URL and must have no credentials, query or fragment. `ANALYSIS_KEY` is sent only in the authorization header; use a dedicated secret, not a profile. The selected provider must support non-streaming Chat Completions with `response_format: {"type":"json_object"}`, `max_completion_tokens`, and usage fields as described by the [OpenAI Chat API reference](https://developers.openai.com/api/reference/resources/chat). Compatibility varies: validate the selected provider and model before enabling it. [OpenAI structured output guidance](https://developers.openai.com/api/docs/guides/structured-outputs) describes limitations including refusal and incomplete responses; Newspulse validates output locally and rejects incomplete output. No provider requests run in default tests.
+
+```sh
+export ANALYSIS_ENDPOINT=https://api.openai.com/v1/chat/completions
+export ANALYSIS_KEY='your-secret'
+export ANALYSIS_MODEL='your-supported-model'
+export ANALYSIS_TOTAL_TOKENS=180000
+export ANALYSIS_TOTAL_MICROS=1000000
+export ANALYSIS_CALL_MICROS=10000
+```
+
+Budget amounts are lifetime ledger ceilings, not daily limits. `ANALYSIS_CALL_MICROS` is an operator-supplied conservative upper bound in millionths of the billing currency for each request, including all provider fees; verify it against the chosen model's actual pricing and maximum request size. Each call permanently charges that full bound to the local cost ledger even when the provider reports no cost. The token reservation is 18,000 per request: 16,000 input bytes, 1,000 output tokens and 1,000 tokens of message overhead. This bound relies on the selected provider's tokenizer and request accounting fitting that envelope; a provider that can exceed it must not be enabled. The local ledger cannot prevent a provider from charging more than the operator's bound or reporting incorrect usage. Actual monetary cost is stored as unknown; consult provider billing. Exhaustion stops new requests. No automatic budget reset exists.
+
+Validated provider responses are persisted before the fenced job completes so a restart can replay them without another request. A received 429 or server error consumes its full reservation and may retry within the remaining budget. A timeout or other ambiguous failure retains its full reservation and blocks further dispatch until an operator reconciles it. Stop the service and verify the provider's billing and request status first, then inspect `bun run cli analysis-reservations` and use `bun run cli analysis-reconcile KEY` to allow a retry. Reconciliation retains the full previous reservation as spent; a retry needs additional budget and may be chargeable. Never reconcile while a worker or provider request is still running. Job retry backoff and its five-attempt ceiling still apply. Back up the database before migration or reconciliation and restore only into a new stopped path.
+
+Analyses preserve model, provider, prompt version, input hash, exact profile snapshots, claims, citations, uncertainty and reported token usage. Summaries are model-generated, source content is untrusted, and source claims are not verified facts. Missing extraction retains the feed text and source reference; items lacking usable text remain unavailable for analysis. To request reanalysis from code, call `Store.requestReanalysis(itemId)` after an analysis completes. Changed model or profile configuration creates a new version; identical input and configuration reuses an existing result. Publication and scoring remain separate.

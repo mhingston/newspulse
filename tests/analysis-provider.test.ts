@@ -133,6 +133,7 @@ test("completed analysis is fenced, versioned, idempotent and searchable", async
     expect(store.search("summary")).toHaveLength(1);
     expect(store.search("original")).toHaveLength(1);
     expect(store.getItem(item.id)?.summary).toBe("A source summary");
+    expect(store.getItem(item.id)?.analysis?.model).toBe("model");
   } finally {
     store.close();
   }
@@ -442,5 +443,333 @@ test("provider rejects credentials in endpoint query and sanitizes transport err
     throw new Error("expected failure");
   } catch (error) {
     expect(String(error)).not.toContain("secret-key");
+  }
+});
+
+test("completed provider response survives crash before fenced item commit", async () => {
+  const { Store } = await import("../src/db/store"),
+    { AnalysisBudget } = await import("../src/analysis-budget"),
+    { analysisHandler } = await import("../src/analysis-service");
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed");
+    store.enqueueDue(1);
+    store.complete(
+      store.claim(1)!,
+      {
+        items: [
+          {
+            nativeId: "x",
+            title: "title",
+            text: "text",
+            url: "https://example.com/item",
+          },
+        ],
+      },
+      2,
+    );
+    store.completeProcessing(
+      store.claimProcessing("extract", 3)!,
+      "extracted",
+      4,
+      JSON.stringify({ text: "text", sourceUrl: "https://example.com/item" }),
+    );
+    const job = store.claimProcessing("analyse", 5)!;
+    let calls = 0;
+    const client = new OpenAICompatibleAnalysis(settings, async () => {
+      calls++;
+      return Response.json({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { content: JSON.stringify(result) },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+    });
+    const handler = analysisHandler(
+      store,
+      client,
+      new AnalysisBudget(store.sqlite, {
+        maxTokens: 100,
+        maxMicros: 100,
+        maxConcurrent: 1,
+      }),
+      {
+        provider: "p",
+        model: "model",
+        promptVersion: "1",
+        reserveTokens: 100,
+        reserveMicros: 100,
+      },
+    );
+    const first = await handler(job, new AbortController().signal);
+    const recovered = store.claimProcessing("analyse", 60005)!;
+    const replay = await handler(recovered, new AbortController().signal);
+    expect(replay).toEqual(first);
+    expect(calls).toBe(1);
+  } finally {
+    store.close();
+  }
+});
+
+test("analysis configuration is opt-in and requires explicit cost and token ceilings", async () => {
+  const { analysisConfig } = await import("../src/analysis-config");
+  expect(analysisConfig({})).toBeNull();
+  expect(() =>
+    analysisConfig({
+      ANALYSIS_ENDPOINT: "https://example.com/v1/chat/completions",
+    }),
+  ).toThrow();
+  expect(() =>
+    analysisConfig({
+      ANALYSIS_ENDPOINT: "https://example.com/v1/chat/completions",
+      ANALYSIS_KEY: "secret",
+      ANALYSIS_MODEL: "m",
+      ANALYSIS_TOTAL_TOKENS: "100",
+      ANALYSIS_TOTAL_MICROS: "100",
+      ANALYSIS_CALL_MICROS: "10",
+    }),
+  ).toThrow();
+  const config = analysisConfig({
+    ANALYSIS_ENDPOINT: "https://example.com/v1/chat/completions",
+    ANALYSIS_KEY: "secret",
+    ANALYSIS_MODEL: "m",
+    ANALYSIS_TOTAL_TOKENS: "100000",
+    ANALYSIS_TOTAL_MICROS: "100000",
+    ANALYSIS_CALL_MICROS: "100",
+  });
+  expect(config?.reserveTokens).toBe(18000);
+});
+
+test("operator reconciliation retains worst-case spend while allowing a safe explicit retry", async () => {
+  const { Store } = await import("../src/db/store"),
+    { AnalysisBudget } = await import("../src/analysis-budget");
+  const store = new Store(":memory:");
+  try {
+    const budget = new AnalysisBudget(store.sqlite, {
+      maxTokens: 200,
+      maxMicros: 200,
+      maxConcurrent: 1,
+    });
+    expect(budget.reserve("request", 100, 100)).toBe(true);
+    expect(budget.reconcile("request")).toBe(true);
+    expect(budget.reserve("request", 100, 100)).toBe(true);
+    expect(budget.reserve("other", 1, 1)).toBe(false);
+  } finally {
+    store.close();
+  }
+});
+
+test("unavailable extraction leaves feed text eligible for analysis", async () => {
+  const { Store } = await import("../src/db/store"),
+    { AnalysisBudget } = await import("../src/analysis-budget"),
+    { analysisHandler } = await import("../src/analysis-service"),
+    { ProcessingWorker } = await import("../src/worker");
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed");
+    store.enqueueDue();
+    store.complete(store.claim()!, {
+      items: [{ nativeId: "private", title: "title", text: "feed text" }],
+    });
+    store.completeProcessing(
+      store.claimProcessing("extract")!,
+      "unavailable",
+      Date.now(),
+      JSON.stringify({ status: "unavailable" }),
+    );
+    const client = new OpenAICompatibleAnalysis(
+      settings,
+      async (_url, init) => {
+        const body = JSON.parse(String(init.body));
+        const data = JSON.parse(body.messages[1].content);
+        return Response.json({
+          choices: [
+            {
+              finish_reason: "stop",
+              message: {
+                content: JSON.stringify({
+                  ...result,
+                  claims: [{ statement: "claim", citation: data.source }],
+                }),
+              },
+            },
+          ],
+          usage: { prompt_tokens: 10, completion_tokens: 5 },
+        });
+      },
+    );
+    const worker = new ProcessingWorker(store, {
+      analyse: analysisHandler(
+        store,
+        client,
+        new AnalysisBudget(store.sqlite, {
+          maxTokens: 100,
+          maxMicros: 100,
+          maxConcurrent: 1,
+        }),
+        {
+          provider: "p",
+          model: "model",
+          promptVersion: "1",
+          reserveTokens: 100,
+          reserveMicros: 100,
+        },
+      ),
+    });
+    expect(await worker.drain("analyse")).toBe(1);
+    expect(store.getItem(store.search("feed")[0]!.id)?.summary).toBe(
+      "A source summary",
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("analysis schema migrates populated M1 and backup restores provenance and FTS", async () => {
+  const { Database } = await import("bun:sqlite"),
+    { drizzle } = await import("drizzle-orm/bun-sqlite"),
+    { migrate } = await import("drizzle-orm/bun-sqlite/migrator"),
+    { mkdtempSync, rmSync } = await import("node:fs"),
+    { tmpdir } = await import("node:os"),
+    { join } = await import("node:path"),
+    { fileURLToPath } = await import("node:url"),
+    { Store } = await import("../src/db/store");
+  const dir = mkdtempSync(join(tmpdir(), "analysis-upgrade-")),
+    path = join(dir, "old.sqlite"),
+    before = join(dir, "before.sqlite"),
+    after = join(dir, "after.sqlite");
+  const old = new Database(path);
+  migrate(drizzle(old), {
+    migrationsFolder: fileURLToPath(
+      new URL("./fixtures/m1-migrations", import.meta.url),
+    ),
+  });
+  old.exec(
+    "INSERT INTO sources(id,url,title) VALUES('s','https://example.com','source'); INSERT INTO items(id,identity,title,ingested_at) VALUES('i','key','title',1); INSERT INTO content(item_id,text) VALUES('i','original text'); INSERT INTO item_sources(item_id,source_id,native_id) VALUES('i','s','n');",
+  );
+  old.query("VACUUM INTO ?").run(before);
+  old.close();
+  let store: InstanceType<typeof Store> | undefined,
+    restored: InstanceType<typeof Store> | undefined,
+    older: InstanceType<typeof Store> | undefined;
+  try {
+    store = new Store(path);
+    const extraction = store.claimProcessing("extract", 5)!;
+    store.completeProcessing(
+      extraction,
+      "extracted",
+      6,
+      JSON.stringify({ text: "original text" }),
+    );
+    const job = store.claimProcessing("analyse", 7)!;
+    expect(
+      store.completeAnalysis(
+        job,
+        {
+          inputHash: "h",
+          provider: "p",
+          model: "m",
+          promptVersion: "1",
+          profiles: [],
+          analysis: result,
+          usage: null,
+          cost: null,
+        },
+        8,
+      ),
+    ).toBe(true);
+    store.backup(after);
+    restored = new Store(after);
+    older = new Store(before);
+    expect(restored.search("summary")[0]?.id).toBe("i");
+    expect(restored.search("original")[0]?.id).toBe("i");
+    expect(restored.getItem("i")?.references).toHaveLength(1);
+    expect(restored.getItem("i")?.analysis?.model).toBe("m");
+    expect(older.search("original")[0]?.id).toBe("i");
+    expect(older.getItem("i")?.analysis).toBeNull();
+  } finally {
+    store?.close();
+    restored?.close();
+    older?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("a received 429 permits a budgeted retry while retaining its worst-case charge", async () => {
+  const { Store } = await import("../src/db/store"),
+    { AnalysisBudget } = await import("../src/analysis-budget"),
+    { analysisHandler } = await import("../src/analysis-service");
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed");
+    store.enqueueDue(1);
+    store.complete(
+      store.claim(1)!,
+      {
+        items: [
+          {
+            nativeId: "x",
+            title: "title",
+            text: "text",
+            url: "https://example.com/item",
+          },
+        ],
+      },
+      2,
+    );
+    store.completeProcessing(
+      store.claimProcessing("extract", 3)!,
+      "extracted",
+      4,
+      JSON.stringify({ text: "text", sourceUrl: "https://example.com/item" }),
+    );
+    const job = store.claimProcessing("analyse", 5)!;
+    let calls = 0;
+    const client = new OpenAICompatibleAnalysis(settings, async () => {
+      calls++;
+      return calls === 1
+        ? new Response("", { status: 429 })
+        : Response.json({
+            choices: [
+              {
+                finish_reason: "stop",
+                message: { content: JSON.stringify(result) },
+              },
+            ],
+            usage: { prompt_tokens: 10, completion_tokens: 5 },
+          });
+    });
+    const handler = analysisHandler(
+      store,
+      client,
+      new AnalysisBudget(store.sqlite, {
+        maxTokens: 200,
+        maxMicros: 200,
+        maxConcurrent: 1,
+      }),
+      {
+        provider: "p",
+        model: "model",
+        promptVersion: "1",
+        reserveTokens: 100,
+        reserveMicros: 100,
+      },
+    );
+    await expect(handler(job, new AbortController().signal)).rejects.toThrow(
+      "429",
+    );
+    const output = await handler(job, new AbortController().signal);
+    expect(output.status).toBe("analysed");
+    expect(calls).toBe(2);
+    expect(
+      store.sqlite
+        .query("SELECT sum(micros) AS n FROM analysis_reservations")
+        .get(),
+    ).toEqual({ n: 200 });
+  } finally {
+    store.close();
   }
 });

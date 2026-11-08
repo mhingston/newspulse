@@ -1,3 +1,4 @@
+import { AnalysisBudget } from "./analysis-budget";
 import { ProfileStore } from "./profiles";
 import { Store } from "./db/store";
 import { parseOpml, exportOpml } from "./adapters/opml";
@@ -59,6 +60,32 @@ async function main() {
           JSON.stringify(new ProfileStore(store.sqlite).export(), null, 2),
         );
         break;
+      case "analysis-reservations":
+        console.log(
+          JSON.stringify(
+            store.sqlite
+              .query(
+                "SELECT key,tokens,micros,status FROM analysis_reservations ORDER BY key",
+              )
+              .all(),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "analysis-reconcile": {
+        const budget = new AnalysisBudget(store.sqlite, {
+          maxTokens: 1,
+          maxMicros: 1,
+          maxConcurrent: 1,
+        });
+        if (!budget.reconcile(required(0, "reservation key")))
+          throw new Error("Reserved attempt not found");
+        console.log(
+          "Reservation reconciled; worst-case spend remains charged to the budget",
+        );
+        break;
+      }
       case "init":
         console.log("Database migrated");
         break;
@@ -112,7 +139,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <init|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <init|analysis-reservations|analysis-reconcile KEY|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

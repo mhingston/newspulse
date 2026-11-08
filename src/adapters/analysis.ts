@@ -7,7 +7,7 @@ const outputSchema = z.strictObject({
     .array(
       z.strictObject({
         statement: z.string().min(1).max(2000),
-        citation: z.string().url(),
+        citation: z.string().min(1).max(2000),
       }),
     )
     .max(100),
@@ -21,6 +21,11 @@ export interface AnalysisSettings {
   maxInputChars: number;
   maxOutputTokens: number;
   timeoutMs: number;
+}
+export class AnalysisHttpError extends Error {
+  constructor(readonly status: number) {
+    super(`Analysis provider HTTP ${status}`);
+  }
 }
 export class OpenAICompatibleAnalysis {
   constructor(
@@ -49,6 +54,14 @@ export class OpenAICompatibleAnalysis {
       ].every((n) => Number.isSafeInteger(n) && n > 0)
     )
       throw new Error("Invalid analysis limits");
+  }
+  identity(): string {
+    return JSON.stringify([
+      this.settings.endpoint,
+      this.settings.model,
+      this.settings.maxInputChars,
+      this.settings.maxOutputTokens,
+    ]);
   }
   prepare(text: string, source: string, profiles: unknown[]): string {
     const encode = (count: number) =>
@@ -102,8 +115,7 @@ export class OpenAICompatibleAnalysis {
     }).catch(() => {
       throw new Error("Analysis provider transport failed");
     });
-    if (!response.ok)
-      throw new Error(`Analysis provider HTTP ${response.status}`);
+    if (!response.ok) throw new AnalysisHttpError(response.status);
     if (!response.body) throw new Error("Missing analysis response body");
     const reader = response.body.getReader();
     const chunks: Uint8Array[] = [];
@@ -119,6 +131,10 @@ export class OpenAICompatibleAnalysis {
         }
         chunks.push(value);
       }
+    } catch (error) {
+      if (size > 1_000_000)
+        throw new Error("Analysis response budget exceeded");
+      throw new Error("Analysis response stream failed");
     } finally {
       reader.releaseLock();
     }

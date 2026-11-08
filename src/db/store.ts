@@ -243,7 +243,7 @@ export class Store {
             : job.stage === "analyse"
               ? "score"
               : null;
-        if (next && status !== "unavailable")
+        if (next && (status !== "unavailable" || job.stage === "extract"))
           this.enqueueProcessing(next, job.item_id, now, job.generation);
         return true;
       })
@@ -253,8 +253,11 @@ export class Store {
     return this.sqlite
       .transaction(() => {
         const previous = this.sqlite
-          .query<{ generation: number; result: string | null }, [string]>(
-            "SELECT generation,result FROM processing_jobs WHERE item_id=? AND stage='extract' AND status='done' AND outcome='extracted' ORDER BY generation DESC LIMIT 1",
+          .query<
+            { generation: number; result: string | null; outcome: string },
+            [string]
+          >(
+            "SELECT generation,result,outcome FROM processing_jobs WHERE item_id=? AND stage='extract' AND status='done' AND outcome IN ('extracted','unavailable') ORDER BY generation DESC LIMIT 1",
           )
           .get(itemId);
         if (!previous) return false;
@@ -273,12 +276,13 @@ export class Store {
         const generation = previous.generation + 1;
         this.sqlite
           .query(
-            "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,attempts,available_at,created_at,result) VALUES(?,?,'extract',?,'done','extracted',0,?,?,?)",
+            "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,attempts,available_at,created_at,result) VALUES(?,?,'extract',?,'done',?,0,?,?,?)",
           )
           .run(
             crypto.randomUUID(),
             itemId,
             generation,
+            previous.outcome,
             now,
             now,
             previous.result,
@@ -580,6 +584,32 @@ export class Store {
       )
       .get(id);
     if (!item) return null;
+    const analysisRow = this.sqlite
+      .query<
+        {
+          provider: string;
+          model: string;
+          prompt_version: string;
+          input_hash: string;
+          profiles: string;
+          result: string;
+          usage: string | null;
+          cost: number | null;
+          created_at: number;
+        },
+        [string]
+      >(
+        "SELECT provider,model,prompt_version,input_hash,profiles,result,usage,cost,created_at FROM analyses WHERE item_id=? AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=analyses.item_id AND stage='extract') ORDER BY created_at DESC LIMIT 1",
+      )
+      .get(id);
+    const analysis = analysisRow
+      ? {
+          ...analysisRow,
+          profiles: JSON.parse(analysisRow.profiles),
+          result: JSON.parse(analysisRow.result) as { summary: string },
+          usage: analysisRow.usage ? JSON.parse(analysisRow.usage) : null,
+        }
+      : null;
     return {
       ...item,
       references: this.sqlite
@@ -612,16 +642,8 @@ export class Store {
           return null;
         }
       })(),
-      summary: (() => {
-        const row = this.sqlite
-          .query<{ result: string }, [string]>(
-            "SELECT result FROM analyses WHERE item_id=? AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=analyses.item_id AND stage='extract') ORDER BY created_at DESC LIMIT 1",
-          )
-          .get(id);
-        return row
-          ? (JSON.parse(row.result) as { summary: string }).summary
-          : null;
-      })(),
+      analysis,
+      summary: analysis?.result.summary ?? null,
       analysis_status: this.processingResult("analyse", id)
         ? "analysed"
         : "pending",
@@ -640,8 +662,11 @@ export class Store {
         )
         .all(),
       items: this.sqlite.query("SELECT count(*) AS count FROM items").get(),
-      milestone: "M1",
-      ai: "not_enabled",
+      milestone: "M2-in-progress",
+      ai: "optional",
+      analyses: this.sqlite
+        .query("SELECT count(*) AS count FROM analyses")
+        .get(),
     };
   }
   backup(path: string): void {

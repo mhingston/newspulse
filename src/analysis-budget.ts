@@ -44,6 +44,35 @@ export class AnalysisBudget {
       })
       .immediate();
   }
+  result(key: string): string | null {
+    return (
+      this.db
+        .query<{ result: string | null }, [string]>(
+          "SELECT result FROM analysis_reservations WHERE key=? AND status='settled'",
+        )
+        .get(key)?.result ?? null
+    );
+  }
+  finish(key: string, result: string, tokens: number | null): boolean {
+    if (tokens !== null && (!Number.isSafeInteger(tokens) || tokens < 0))
+      throw new Error("Invalid usage");
+    return (
+      this.db
+        .query(
+          "UPDATE analysis_reservations SET tokens=CASE WHEN ? IS NOT NULL AND ?>=0 THEN ? ELSE tokens END,status='settled',result=? WHERE key=? AND status='reserved'",
+        )
+        .run(tokens, tokens, tokens, result, key).changes === 1
+    );
+  }
+  reconcile(key: string): boolean {
+    return (
+      this.db
+        .query(
+          "UPDATE analysis_reservations SET key=?,status='reconciled' WHERE key=? AND status='reserved'",
+        )
+        .run(`${key}:reconciled:${crypto.randomUUID()}`, key).changes === 1
+    );
+  }
   settle(key: string, usage: { tokens: number; micros: number }): boolean {
     if (
       ![usage.tokens, usage.micros].every(

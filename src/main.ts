@@ -1,3 +1,7 @@
+import { analysisConfig } from "./analysis-config";
+import { OpenAICompatibleAnalysis } from "./adapters/analysis";
+import { AnalysisBudget } from "./analysis-budget";
+import { analysisHandler } from "./analysis-service";
 import { stopServices } from "./lifecycle";
 import { config } from "./config";
 import { Store } from "./db/store";
@@ -6,6 +10,7 @@ import { Worker, ProcessingWorker, schedule, log } from "./worker";
 import { HttpContentExtractor, extractionHandler } from "./adapters/extraction";
 import { createApp } from "./http";
 const cfg = config();
+const analysis = analysisConfig();
 const store = new Store(cfg.DB_PATH);
 const app = createApp(store, {
   token: cfg.MCP_TOKEN,
@@ -24,6 +29,31 @@ const scheduler = schedule(
   store,
   new Worker(store, new RssAdapter()),
   new ProcessingWorker(store, {
+    analyse: analysis
+      ? analysisHandler(
+          store,
+          new OpenAICompatibleAnalysis({
+            endpoint: analysis.endpoint,
+            model: analysis.model,
+            apiKey: analysis.apiKey,
+            maxInputChars: 16000,
+            maxOutputTokens: 1000,
+            timeoutMs: 45000,
+          }),
+          new AnalysisBudget(store.sqlite, {
+            maxTokens: analysis.maxTokens,
+            maxMicros: analysis.maxMicros,
+            maxConcurrent: 1,
+          }),
+          {
+            provider: analysis.endpoint,
+            model: analysis.model,
+            promptVersion: "1",
+            reserveTokens: analysis.reserveTokens,
+            reserveMicros: analysis.reserveMicros,
+          },
+        )
+      : undefined,
     extract: extractionHandler(
       store,
       new HttpContentExtractor(),
