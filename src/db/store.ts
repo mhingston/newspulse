@@ -535,33 +535,51 @@ export class Store {
       .get(winner)!.n;
     // Distinct generations prevent unique stage/item/generation collisions, and
     // preserve analysis-to-extraction generation relationships after the move.
-    this.sqlite.query(
-      "UPDATE processing_jobs SET item_id=?,generation=generation+? WHERE item_id=?",
-    ).run(winner, offset, loser);
-    this.sqlite.query(
-      "UPDATE analyses SET item_id=?,generation=generation+? WHERE item_id=?",
-    ).run(winner, offset, loser);
-    this.sqlite.query("UPDATE content_versions SET item_id=? WHERE item_id=?").run(winner, loser);
-    this.sqlite.query("UPDATE item_sources SET parent_item_id=? WHERE parent_item_id=?").run(winner, loser);
-    this.sqlite.query("UPDATE item_sources SET item_id=? WHERE item_id=?").run(winner, loser);
-    this.sqlite.query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?").run(winner, loser);
-    this.sqlite.query("UPDATE item_redirects SET item_id=? WHERE item_id=?").run(winner, loser);
+    this.sqlite
+      .query(
+        "UPDATE processing_jobs SET item_id=?,generation=generation+? WHERE item_id=?",
+      )
+      .run(winner, offset, loser);
+    this.sqlite
+      .query(
+        "UPDATE analyses SET item_id=?,generation=generation+? WHERE item_id=?",
+      )
+      .run(winner, offset, loser);
+    this.sqlite
+      .query("UPDATE content_versions SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
+    this.sqlite
+      .query("UPDATE item_sources SET parent_item_id=? WHERE parent_item_id=?")
+      .run(winner, loser);
+    this.sqlite
+      .query("UPDATE item_sources SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
+    this.sqlite
+      .query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
+    this.sqlite
+      .query("UPDATE item_redirects SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
     const body = this.sqlite
       .query<{ text: string; format: string }, [string]>(
         "SELECT text,format FROM content WHERE item_id=?",
       )
       .get(loser);
     if (body)
-      this.sqlite.query(
-        "INSERT INTO content(item_id,text,format) VALUES(?,?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text,format=excluded.format WHERE content.text=''",
-      ).run(winner, body.text, body.format);
+      this.sqlite
+        .query(
+          "INSERT INTO content(item_id,text,format) VALUES(?,?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text,format=excluded.format WHERE content.text=''",
+        )
+        .run(winner, body.text, body.format);
     this.sqlite.query("DELETE FROM content WHERE item_id=?").run(loser);
-    this.sqlite.query(
-      "UPDATE items SET url=coalesce(url,?),published_at=coalesce(published_at,?) WHERE id=?",
-    ).run(source.url, source.published_at, winner);
-    this.sqlite.query(
-      "INSERT INTO item_redirects(old_id,item_id) VALUES(?,?)",
-    ).run(loser, winner);
+    this.sqlite
+      .query(
+        "UPDATE items SET url=coalesce(url,?),published_at=coalesce(published_at,?) WHERE id=?",
+      )
+      .run(source.url, source.published_at, winner);
+    this.sqlite
+      .query("INSERT INTO item_redirects(old_id,item_id) VALUES(?,?)")
+      .run(loser, winner);
     this.sqlite.query("DELETE FROM items WHERE id=?").run(loser);
   }
 
@@ -572,17 +590,17 @@ export class Store {
       )
       .get(url)?.item_id;
     const legacy = this.sqlite
-      .query<{ id: string }, [string]>(
-        "SELECT id FROM items WHERE identity=?",
-      )
+      .query<{ id: string }, [string]>("SELECT id FROM items WHERE identity=?")
       .get(`url:${url}`)?.id;
     const owner = alias ?? legacy ?? priorId;
     if (!owner) return undefined;
     if (legacy && legacy !== owner) this.mergeItems(owner, legacy);
     if (priorId && priorId !== owner) this.mergeItems(owner, priorId);
-    this.sqlite.query(
-      "INSERT INTO item_url_aliases(canonical_url,item_id) VALUES(?,?) ON CONFLICT(canonical_url) DO UPDATE SET item_id=excluded.item_id",
-    ).run(url, owner);
+    this.sqlite
+      .query(
+        "INSERT INTO item_url_aliases(canonical_url,item_id) VALUES(?,?) ON CONFLICT(canonical_url) DO UPDATE SET item_id=excluded.item_id",
+      )
+      .run(url, owner);
     return owner;
   }
 
@@ -601,9 +619,8 @@ export class Store {
     const owner = url
       ? this.canonicalOwner(url, previousRef?.item_id)
       : previousRef?.item_id;
-    const prior = previousRef && owner
-      ? { ...previousRef, item_id: owner }
-      : previousRef;
+    const prior =
+      previousRef && owner ? { ...previousRef, item_id: owner } : previousRef;
     if (prior) {
       const previous = this.sqlite
         .query<
@@ -695,7 +712,9 @@ export class Store {
     const item = owner
       ? { id: owner }
       : this.sqlite
-          .query<{ id: string }, [string]>("SELECT id FROM items WHERE identity=?")
+          .query<{ id: string }, [string]>(
+            "SELECT id FROM items WHERE identity=?",
+          )
           .get(key)!;
     if (url) this.canonicalOwner(url, item.id);
     this.sqlite
@@ -900,11 +919,12 @@ export class Store {
       );
   }
   getItem(id: string) {
-    id = this.sqlite
-      .query<{ item_id: string }, [string]>(
-        "SELECT item_id FROM item_redirects WHERE old_id=?",
-      )
-      .get(id)?.item_id ?? id;
+    id =
+      this.sqlite
+        .query<{ item_id: string }, [string]>(
+          "SELECT item_id FROM item_redirects WHERE old_id=?",
+        )
+        .get(id)?.item_id ?? id;
     const item = this.sqlite
       .query<Item, [string]>(
         "SELECT i.*,c.text FROM items i LEFT JOIN content c ON c.item_id=i.id WHERE i.id=?",
