@@ -37,6 +37,16 @@ export interface ProcessingJob {
   attempts: number;
   lease_token: string;
 }
+export interface AnalysisRecord {
+  inputHash: string;
+  provider: string;
+  model: string;
+  promptVersion: string;
+  profiles: unknown[];
+  analysis: { summary: string };
+  usage: unknown;
+  cost: number | null;
+}
 export interface Item {
   id: string;
   identity: string;
@@ -235,6 +245,82 @@ export class Store {
               : null;
         if (next && status !== "unavailable")
           this.enqueueProcessing(next, job.item_id, now, job.generation);
+        return true;
+      })
+      .immediate();
+  }
+  requestReanalysis(itemId: string, now = Date.now()): boolean {
+    return this.sqlite
+      .transaction(() => {
+        const previous = this.sqlite
+          .query<{ generation: number; result: string | null }, [string]>(
+            "SELECT generation,result FROM processing_jobs WHERE item_id=? AND stage='extract' AND status='done' AND outcome='extracted' ORDER BY generation DESC LIMIT 1",
+          )
+          .get(itemId);
+        if (!previous) return false;
+        const newest = this.sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT max(generation) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+          )
+          .get(itemId);
+        if (newest?.n !== previous.generation) return false;
+        const completed = this.sqlite
+          .query(
+            "SELECT 1 FROM processing_jobs WHERE item_id=? AND stage='analyse' AND generation=? AND status='done'",
+          )
+          .get(itemId, previous.generation);
+        if (!completed) return false;
+        const generation = previous.generation + 1;
+        this.sqlite
+          .query(
+            "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,attempts,available_at,created_at,result) VALUES(?,?,'extract',?,'done','extracted',0,?,?,?)",
+          )
+          .run(
+            crypto.randomUUID(),
+            itemId,
+            generation,
+            now,
+            now,
+            previous.result,
+          );
+        this.sqlite
+          .query("UPDATE items SET status='extracted' WHERE id=?")
+          .run(itemId);
+        this.enqueueProcessing("analyse", itemId, now, generation);
+        return true;
+      })
+      .immediate();
+  }
+  completeAnalysis(
+    job: ProcessingJob,
+    record: AnalysisRecord,
+    now = Date.now(),
+  ): boolean {
+    if (job.stage !== "analyse") throw new Error("Expected analysis job");
+    return this.sqlite
+      .transaction(() => {
+        if (
+          !this.completeProcessing(job, "analysed", now, JSON.stringify(record))
+        )
+          return false;
+        this.sqlite
+          .query(
+            "INSERT OR IGNORE INTO analyses(id,item_id,generation,input_hash,provider,model,prompt_version,profiles,result,usage,cost,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            crypto.randomUUID(),
+            job.item_id,
+            job.generation,
+            record.inputHash,
+            record.provider,
+            record.model,
+            record.promptVersion,
+            JSON.stringify(record.profiles),
+            JSON.stringify(record.analysis),
+            JSON.stringify(record.usage),
+            record.cost,
+            now,
+          );
         return true;
       })
       .immediate();
@@ -526,8 +612,19 @@ export class Store {
           return null;
         }
       })(),
-      summary: null,
-      analysis_status: "not_implemented",
+      summary: (() => {
+        const row = this.sqlite
+          .query<{ result: string }, [string]>(
+            "SELECT result FROM analyses WHERE item_id=? AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=analyses.item_id AND stage='extract') ORDER BY created_at DESC LIMIT 1",
+          )
+          .get(id);
+        return row
+          ? (JSON.parse(row.result) as { summary: string }).summary
+          : null;
+      })(),
+      analysis_status: this.processingResult("analyse", id)
+        ? "analysed"
+        : "pending",
       content_kind: "untrusted_source_content",
     };
   }

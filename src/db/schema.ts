@@ -127,3 +127,41 @@ export const profiles = sqliteTable(
   },
   (t) => [uniqueIndex("profile_version_unique").on(t.kind, t.id, t.version)],
 );
+
+export const analyses = sqliteTable(
+  "analyses",
+  {
+    id: text().primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    generation: integer().notNull(),
+    inputHash: text("input_hash").notNull(),
+    provider: text().notNull(),
+    model: text().notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    profiles: text().notNull(),
+    result: text().notNull(),
+    usage: text(),
+    cost: integer(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("analysis_identity").on(
+      t.itemId,
+      t.generation,
+      t.inputHash,
+      t.provider,
+      t.model,
+      t.promptVersion,
+      t.profiles,
+    ),
+  ],
+);
+
+export const analysisReservations = sqliteTable("analysis_reservations", {
+  key: text().primaryKey(),
+  tokens: integer().notNull(),
+  micros: integer().notNull(),
+  status: text().notNull(),
+});
