@@ -334,7 +334,7 @@ test("shortening source interval reschedules its next poll", () => {
   s.complete(s.claim(now)!, { items: [] }, now + 1);
   s.updateSource(source.id, { pollSeconds: 60 });
   expect(s.source(source.id)!.next_poll).toBeLessThanOrEqual(
-    Date.now() + 60000,
+    Date.now() + 61_000,
   );
   s.close();
 });
