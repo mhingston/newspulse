@@ -920,3 +920,266 @@ test("latest editorial selection does not parse obsolete profile history", async
     store.close();
   }
 });
+
+test("over-envelope usage blocks later dispatch below lifetime limit until reviewed", async () => {
+  const { Store } = await import("../src/db/store");
+  const { AnalysisBudget } = await import("../src/analysis-budget");
+  const store = new Store(":memory:");
+  try {
+    const b = new AnalysisBudget(store.sqlite, {
+      maxTokens: 1000,
+      maxMicros: 1000,
+      maxConcurrent: 1,
+    });
+    expect(b.reserve("a", 100, 1)).toBe(true);
+    expect(b.finish("a", "cached", 120)).toBe(true);
+    expect(b.result("a")).toBe("cached");
+    expect(b.reserve("b", 1, 1)).toBe(false);
+    expect(b.acknowledgeEnvelopeBreach()).toBe(true);
+    expect(b.reserve("b", 1, 1)).toBe(true);
+  } finally {
+    store.close();
+  }
+});
+
+test("prepare rejects a context with no room for source text", () => {
+  const source = "s";
+  const overhead = Buffer.byteLength(
+    JSON.stringify({ source, profiles: [], text: "" }),
+  );
+  const client = new OpenAICompatibleAnalysis({
+    ...settings,
+    maxInputChars: overhead,
+  });
+  expect(() => client.prepare("a", source, [])).toThrow("input budget");
+});
+
+test("completed malformed responses retire reservation without refund and permit other work", async () => {
+  const { Store } = await import("../src/db/store");
+  const { AnalysisBudget } = await import("../src/analysis-budget");
+  const { analysisHandler } = await import("../src/analysis-service");
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed");
+    store.enqueueDue(1);
+    store.complete(
+      store.claim(1)!,
+      {
+        items: [
+          {
+            nativeId: "a",
+            url: "https://example.com/item",
+            title: "A",
+            text: "body",
+          },
+        ],
+      },
+      2,
+    );
+    store.completeProcessing(
+      store.claimProcessing("extract", 3)!,
+      "extracted",
+      4,
+    );
+    const job = store.claimProcessing("analyse", 5)!;
+    const budget = new AnalysisBudget(store.sqlite, {
+      maxTokens: 1000,
+      maxMicros: 1000,
+      maxConcurrent: 1,
+    });
+    const client = new OpenAICompatibleAnalysis(settings, async () =>
+      Response.json({
+        choices: [{ finish_reason: "length", message: { content: "{}" } }],
+      }),
+    );
+    await expect(
+      analysisHandler(store, client, budget, {
+        provider: "p",
+        model: "m",
+        promptVersion: "1",
+        reserveTokens: 100,
+        reserveMicros: 100,
+      })(job, new AbortController().signal),
+    ).rejects.toThrow();
+    expect(
+      store.sqlite
+        .query("SELECT status,tokens,micros FROM analysis_reservations")
+        .get(),
+    ).toEqual({ status: "reconciled", tokens: 100, micros: 100 });
+    expect(budget.reserve("other", 100, 100)).toBe(true);
+  } finally {
+    store.close();
+  }
+});
+
+test("summary search labels generated snippet provenance in MCP responses", async () => {
+  const { Store } = await import("../src/db/store");
+  const { createApp } = await import("../src/http");
+  const { Client } = await import("@modelcontextprotocol/sdk/client/index.js");
+  const { StreamableHTTPClientTransport } =
+    await import("@modelcontextprotocol/sdk/client/streamableHttp.js");
+  const store = new Store(":memory:");
+  store.addSource("https://example.com/feed");
+  store.enqueueDue(1);
+  store.complete(
+    store.claim(1)!,
+    { items: [{ nativeId: "a", title: "A", text: "source body" }] },
+    2,
+  );
+  store.completeProcessing(
+    store.claimProcessing("extract", 3)!,
+    "extracted",
+    4,
+  );
+  const job = store.claimProcessing("analyse", 5)!;
+  store.completeAnalysis(
+    job,
+    {
+      inputHash: "hash",
+      provider: "p",
+      model: "m",
+      promptVersion: "1",
+      profiles: [],
+      analysis: { ...result, summary: "Generatedcanary summary" },
+      usage: null,
+      cost: null,
+    },
+    6,
+  );
+  const token = "test-token-with-at-least-24-characters";
+  const app = createApp(store, {
+    token,
+    allowedHosts: ["127.0.0.1"],
+    allowedOrigins: [],
+  });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: app.fetch,
+  });
+  const client = new Client({ name: "test", version: "1" });
+  try {
+    await client.connect(
+      new StreamableHTTPClientTransport(new URL("mcp", server.url), {
+        requestInit: { headers: { authorization: `Bearer ${token}` } },
+      }),
+    );
+    const reply = await client.callTool({
+      name: "search_items",
+      arguments: { query: "Generatedcanary" },
+    });
+    const payload = JSON.parse((reply.content as { text: string }[])[0]!.text);
+    expect(payload.items[0].snippet_provenance).toBe(
+      "source_and_model_summary",
+    );
+    expect(payload.items[0].analysis_status).toBe("analysed");
+    expect(payload.analysis_status).toBeUndefined();
+    const list = await client.listTools();
+    expect(
+      list.tools.find((t) => t.name === "get_item")!.description,
+    ).not.toContain("No model summary");
+  } finally {
+    await client.close();
+    await server.stop(true);
+    store.close();
+  }
+});
+
+test("migration backfills only the latest unavailable extraction with usable feed text idempotently", async () => {
+  const { mkdtempSync, rmSync, cpSync, writeFileSync, readFileSync } =
+    await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const { Database } = await import("bun:sqlite");
+  const { drizzle } = await import("drizzle-orm/bun-sqlite");
+  const { migrate } = await import("drizzle-orm/bun-sqlite/migrator");
+  const { Store } = await import("../src/db/store");
+  const dir = mkdtempSync(join(tmpdir(), "analysis-upgrade-"));
+  const old = join(dir, "old-migrations");
+  const path = join(dir, "data.sqlite");
+  cpSync("drizzle", old, { recursive: true });
+  const journalPath = join(old, "meta/_journal.json");
+  const journal = JSON.parse(readFileSync(journalPath, "utf8"));
+  journal.entries = journal.entries.filter((e: { idx: number }) => e.idx < 16);
+  writeFileSync(journalPath, JSON.stringify(journal));
+  const db = new Database(path);
+  migrate(drizzle(db), { migrationsFolder: old });
+  db.exec(
+    `INSERT INTO sources(id,url,title) VALUES('s','https://example.test/feed','S'); INSERT INTO items(id,identity,title,ingested_at) VALUES('i','source:s:a','A',1),('empty','source:s:b','B',1); INSERT INTO content(item_id,text) VALUES('i','feed body'),('empty',''); INSERT INTO processing_jobs(id,stage,generation,item_id,status,available_at,created_at,outcome) VALUES('old','extract',1,'i','done',1,1,'unavailable'),('latest','extract',2,'i','done',2,2,'unavailable'),('empty-extract','extract',1,'empty','done',1,1,'unavailable');`,
+  );
+  db.close();
+  try {
+    let store = new Store(path);
+    const rows = store.sqlite
+      .query(
+        "SELECT item_id,generation FROM processing_jobs WHERE stage='analyse' ORDER BY item_id",
+      )
+      .all();
+    expect(rows).toEqual([{ item_id: "i", generation: 2 }]);
+    store.close();
+    store = new Store(path);
+    expect(
+      store.sqlite
+        .query("SELECT count(*) n FROM processing_jobs WHERE stage='analyse'")
+        .get(),
+    ).toEqual({ n: 1 });
+    store.close();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("completed response errors are distinguishable from interrupted streams", async () => {
+  const { CompletedAnalysisError } = await import("../src/adapters/analysis");
+  for (const body of [
+    "not json",
+    JSON.stringify({
+      choices: [{ finish_reason: "stop", message: { content: "{}" } }],
+    }),
+    JSON.stringify({
+      choices: [{ finish_reason: "length", message: { content: "{}" } }],
+    }),
+  ]) {
+    const client = new OpenAICompatibleAnalysis(
+      settings,
+      async () => new Response(body),
+    );
+    await expect(client.analyse("text", "source")).rejects.toBeInstanceOf(
+      CompletedAnalysisError,
+    );
+  }
+  const client = new OpenAICompatibleAnalysis(
+    settings,
+    async () =>
+      new Response(
+        new ReadableStream({
+          start(controller) {
+            controller.error(new Error("broken"));
+          },
+        }),
+      ),
+  );
+  try {
+    await client.analyse("text", "source");
+    throw new Error("unexpected success");
+  } catch (e) {
+    expect(e).not.toBeInstanceOf(CompletedAnalysisError);
+  }
+});
+
+test("context truncation never dispatches half of a Unicode character", () => {
+  const source = "s";
+  const overhead = Buffer.byteLength(
+    JSON.stringify({ source, profiles: [], text: "" }),
+  );
+  const noRoom = new OpenAICompatibleAnalysis({
+    ...settings,
+    maxInputChars: overhead + 3,
+  });
+  expect(() => noRoom.prepare("😀", source, [])).toThrow("input budget");
+  const fits = new OpenAICompatibleAnalysis({
+    ...settings,
+    maxInputChars: overhead + 4,
+  });
+  expect(JSON.parse(fits.prepare("😀", source, [])).text).toBe("😀");
+});

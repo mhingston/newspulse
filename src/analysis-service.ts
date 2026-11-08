@@ -2,6 +2,7 @@ import { ProfileStore } from "./profiles";
 import { AnalysisBudget } from "./analysis-budget";
 import {
   AnalysisHttpError,
+  CompletedAnalysisError,
   type OpenAICompatibleAnalysis,
 } from "./adapters/analysis";
 import type { Store, ProcessingJob } from "./db/store";
@@ -111,8 +112,9 @@ export function analysisHandler(
       response = await client.analyse(text, source, signal, profiles);
     } catch (error) {
       if (
-        error instanceof AnalysisHttpError &&
-        (error.status === 429 || error.status >= 500)
+        (error instanceof AnalysisHttpError &&
+          (error.status === 429 || error.status >= 500)) ||
+        error instanceof CompletedAnalysisError
       )
         budget.reconcile(key);
       throw error;

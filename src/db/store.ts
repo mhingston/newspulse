@@ -56,6 +56,8 @@ export interface Item {
   ingested_at: number;
   status: string;
   text?: string;
+  snippet_provenance?: string;
+  analysis_status?: string;
 }
 export class Store {
   readonly sqlite: Database;
@@ -559,7 +561,7 @@ export class Store {
       .slice(0, 30)
       .map((x) => '"' + x + '"')
       .join(" AND ");
-    return this.sqlite
+    const matches = this.sqlite
       .query<
         Item,
         [
@@ -586,6 +588,16 @@ export class Store {
         Math.max(1, Math.min(100, limit)),
         offset,
       );
+    return matches.map((item) => {
+      const details = this.getItem(item.id);
+      return {
+        ...item,
+        snippet_provenance: details?.summary
+          ? "source_and_model_summary"
+          : "source_content",
+        analysis_status: details?.analysis_status ?? "unknown",
+      };
+    });
   }
   getItem(id: string) {
     const item = this.sqlite
@@ -669,7 +681,9 @@ export class Store {
         if (job.status === "pending" && job.attempts > 0) return "retryable";
         return job.status;
       })(),
-      content_kind: "untrusted_source_content",
+      content_kind: analysis
+        ? "untrusted_source_and_generated_content"
+        : "untrusted_source_content",
     };
   }
   status() {
@@ -688,6 +702,11 @@ export class Store {
       ai: "optional",
       analyses: this.sqlite
         .query("SELECT count(*) AS count FROM analyses")
+        .get(),
+      analysis_envelope_breach: !!this.sqlite
+        .query(
+          "SELECT 1 FROM analysis_control WHERE id=1 AND envelope_breach=1",
+        )
         .get(),
     };
   }

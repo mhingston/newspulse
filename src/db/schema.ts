@@ -166,3 +166,7 @@ export const analysisReservations = sqliteTable("analysis_reservations", {
   status: text().notNull(),
   result: text(),
 });
+export const analysisControl = sqliteTable("analysis_control", {
+  id: integer().primaryKey(),
+  envelopeBreach: integer("envelope_breach").notNull().default(0),
+});

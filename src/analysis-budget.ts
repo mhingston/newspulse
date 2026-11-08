@@ -23,6 +23,14 @@ export class AnalysisBudget {
       throw new Error("Invalid budget reservation");
     return this.db
       .transaction(() => {
+        if (
+          this.db
+            .query(
+              "SELECT 1 FROM analysis_control WHERE id=1 AND envelope_breach=1",
+            )
+            .get()
+        )
+          return false;
         const totals = this.db
           .query<{ tokens: number; micros: number; active: number }, []>(
             "SELECT coalesce(sum(tokens),0) tokens,coalesce(sum(micros),0) micros,coalesce(sum(status='reserved'),0) active FROM analysis_reservations",
@@ -56,12 +64,37 @@ export class AnalysisBudget {
   finish(key: string, result: string, tokens: number | null): boolean {
     if (tokens !== null && (!Number.isSafeInteger(tokens) || tokens < 0))
       throw new Error("Invalid usage");
+    return this.db
+      .transaction(() => {
+        const reservation = this.db
+          .query<{ tokens: number }, [string]>(
+            "SELECT tokens FROM analysis_reservations WHERE key=? AND status='reserved'",
+          )
+          .get(key);
+        if (!reservation) return false;
+        if (tokens !== null && tokens > reservation.tokens)
+          this.db
+            .query(
+              "INSERT INTO analysis_control(id,envelope_breach) VALUES(1,1) ON CONFLICT(id) DO UPDATE SET envelope_breach=1",
+            )
+            .run();
+        return (
+          this.db
+            .query(
+              "UPDATE analysis_reservations SET tokens=coalesce(?,tokens),status='settled',result=? WHERE key=? AND status='reserved'",
+            )
+            .run(tokens, result, key).changes === 1
+        );
+      })
+      .immediate();
+  }
+  acknowledgeEnvelopeBreach(): boolean {
     return (
       this.db
         .query(
-          "UPDATE analysis_reservations SET tokens=CASE WHEN ? IS NOT NULL AND ?>=0 THEN ? ELSE tokens END,status='settled',result=? WHERE key=? AND status='reserved'",
+          "UPDATE analysis_control SET envelope_breach=0 WHERE id=1 AND envelope_breach=1",
         )
-        .run(tokens, tokens, tokens, result, key).changes === 1
+        .run().changes === 1
     );
   }
   reconcile(key: string): boolean {
