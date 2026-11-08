@@ -1,6 +1,6 @@
 # Implementation roadmap and handoff coverage
 
-[Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) is the entry point for the complete backlog. It links **22 required core issues and 8 conditional refinement issues**. The original request is preserved in [handoff.md](handoff.md), durable constraints in [decisions.md](decisions.md), and contributor instructions in [AGENTS.md](../AGENTS.md).
+[Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) is the entry point for the complete backlog. It links **22 required core issues and 9 conditional refinement issues**. The original request is preserved in [handoff.md](handoff.md), durable constraints in [decisions.md](decisions.md), and contributor instructions in [AGENTS.md](../AGENTS.md).
 
 ## Current implementation and evidence
 
@@ -14,7 +14,7 @@ Observed evidence: `src/domain.ts`, `src/adapters/`, `src/db/`, `src/worker.ts`,
 2. **M2:** generalize jobs, extract, configure profiles, analyse, group, rank and evaluate. Add developing-digest and read-only intelligence slices as soon as their data owners exist. Acceptance: a client can ask what was found today and retrieve useful explanations with original sources.
 3. **M3:** verify/persist/reconcile inbound email, parse originals and attributed links, curate/freeze editions and deliver safely at a configurable time (initially 06:00 Europe/London). Acceptance: RSS plus newsletters feed one briefing and remain independently searchable. This satisfies the handoff's first usable release definition.
 4. **M4:** add bounded query-based discovery, GitHub/HN, manual/Reddit paths, explicit-feedback mutations, complete MCP reads, retention/recovery and operational metrics. Acceptance: recorded and permitted live validation shows useful material outside subscriptions; the full-system release gate passes.
-5. **M5:** evaluate the eight optional refinements individually. Browser access, embeddings, advanced adaptation/history, alerts/replies, stdio and a UI must not become core-release prerequisites.
+5. **M5:** evaluate the nine optional refinements individually. Browser access, embeddings, advanced adaptation/history, alerts/replies, stdio, a UI and new-source recommendations must not become core-release prerequisites.
 
 Milestone labels describe final scope, not a prohibition on useful earlier slices. For example, #9's pure developing-digest logic can be implemented during M2 using fixtures, and #19 can add interest/ranking/draft reads before its final delivery/discovery dependencies are complete. Keep unfinished issue acceptance explicit and close only once its full contracted outcome is accepted.
 
@@ -61,6 +61,7 @@ These implement the handoff's requirement to **evaluate and selectively introduc
 | [#29](https://github.com/mhingston/newspulse/issues/29) | [M5] Evaluate retrieval gaps before adding embeddings or advanced search  |
 | [#30](https://github.com/mhingston/newspulse/issues/30) | [M5] Evaluate optional stdio MCP transport and client interoperability    |
 | [#31](https://github.com/mhingston/newspulse/issues/31) | [M5] Evaluate an optional discovery-focused web interface                 |
+| [#33](https://github.com/mhingston/newspulse/issues/33) | [M5] Evaluate continuous discovery and opt-in recommendations of new sources |
 
 ## Requirement coverage
 
@@ -94,6 +95,7 @@ These implement the handoff's requirement to **evaluate and selectively introduc
 | §12 M1 acceptance                                                                                            | PR #1 and RSS-to-MCP smoke test                                                                                                                                                                                                                                                                                                                           |
 | §12 M2/M3/M4 acceptance and full-system release                                                              | [#23](https://github.com/mhingston/newspulse/issues/23) plus the staged gates above                                                                                                                                                                                                                                                                       |
 | §12 M5 evaluation: browser/adaptation/history/alerts/retrieval/UI                                            | [#24](https://github.com/mhingston/newspulse/issues/24), [#25](https://github.com/mhingston/newspulse/issues/25), [#26](https://github.com/mhingston/newspulse/issues/26), [#27](https://github.com/mhingston/newspulse/issues/27), [#29](https://github.com/mhingston/newspulse/issues/29), [#31](https://github.com/mhingston/newspulse/issues/31)      |
+| Additional optional refinement: identify and recommend valuable new sources (not part of the original handoff) | [#33](https://github.com/mhingston/newspulse/issues/33) |
 | §13 representative relevant/irrelevant/duplicate/borderline fixtures and offline replay                      | [#8](https://github.com/mhingston/newspulse/issues/8)                                                                                                                                                                                                                                                                                                     |
 | §13 relevant discoveries, top precision, duplicate rate, misses, reliability, cost/useful discovery, latency | [#8](https://github.com/mhingston/newspulse/issues/8), [#20](https://github.com/mhingston/newspulse/issues/20), [#23](https://github.com/mhingston/newspulse/issues/23)                                                                                                                                                                                   |
 | §13 comparable Newsweave baseline where practical                                                            | [#8](https://github.com/mhingston/newspulse/issues/8); report inaccessible evidence explicitly                                                                                                                                                                                                                                                            |
