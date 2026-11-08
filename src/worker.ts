@@ -11,9 +11,12 @@ export class Worker {
     private store: Store,
     private adapter: SourceAdapter,
   ) {}
-  async drain(limit = 20): Promise<number> {
+  async drain(
+    limit = 20,
+    shouldStop: () => boolean = () => false,
+  ): Promise<number> {
     let processed = 0;
-    while (processed < limit) {
+    while (processed < limit && !shouldStop()) {
       const job = this.store.claim();
       if (!job) break;
       processed++;
@@ -59,7 +62,7 @@ export function schedule(
     if (active || stopping) return;
     active = (async () => {
       store.enqueueDue();
-      await worker.drain();
+      await worker.drain(20, () => stopping);
     })()
       .catch((e) => log("worker_error", { error: String(e) }))
       .finally(() => {

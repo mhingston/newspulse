@@ -327,3 +327,39 @@ test("failed ingestion rolls back items, FTS, validators and completion together
     store.close();
   }
 });
+
+test("scheduler shutdown finishes the active poll without claiming the remaining queue", async () => {
+  const { schedule } = await import("../src/worker");
+  const store = new Store(":memory:");
+  let finishPoll!: () => void;
+  const blocked = new Promise<void>((resolve) => {
+    finishPoll = resolve;
+  });
+  let calls = 0;
+  try {
+    store.addSource("https://first.example/feed");
+    store.addSource("https://second.example/feed");
+    const worker = new Worker(store, {
+      async poll() {
+        calls++;
+        await blocked;
+        return { items: [] };
+      },
+    });
+    const scheduler = schedule(store, worker);
+    expect(calls).toBe(1);
+    const stopped = scheduler.stop();
+    finishPoll();
+    await stopped;
+    expect(calls).toBe(1);
+    expect(
+      store.sqlite
+        .query("SELECT count(*) AS count FROM jobs WHERE status='pending'")
+        .get(),
+    ).toEqual({ count: 1 });
+    expect(await worker.drain()).toBe(1);
+  } finally {
+    finishPoll();
+    store.close();
+  }
+});

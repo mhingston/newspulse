@@ -1,6 +1,6 @@
 # M1 design and implementation notes
 
-The handoff's implementation boundary is M1. Its broader “first usable release” definition includes M2–M4 features; this foundation deliberately does not claim that definition is complete.
+The initial handoff task's implementation boundary was M1. The first usable release definition needs M2–M3 capabilities (RSS + newsletters + accessible knowledge + daily email); proactive discovery in M4 completes the broader core mission. This foundation does not claim either is complete. The full handoff is archived in [handoff.md](handoff.md), durable decisions are in [decisions.md](decisions.md), and the [roadmap](roadmap.md) links every remaining requirement to an issue.
 
 ## Module boundaries
 
@@ -25,7 +25,7 @@ Drizzle Kit generated the relational baseline. FTS and its triggers use a separa
 
 A startup tick, a minute `Bun.cron` callback, and a one-second queue pump reconcile due sources. SQLite's persisted `next_poll` and job timestamps determine work; schedules do not carry durable state. Catch-up coalesces missed intervals into one poll per source. A partial unique index permits only one active poll per source. The initial single worker bounds HTTP concurrency to one; source intervals and Retry-After bound request frequency.
 
-Jobs are atomically claimed using an immediate transaction. A 60-second lease has a random fencing token. Polling has a 20-second request/body timeout and 5 MB response budget. Items, provenance, validators, source health and job success commit in one short transaction after fetching. Stale workers cannot commit after their lease expires. Five attempts use exponential backoff starting at 30 seconds, honoring Retry-After up to 24 hours. After terminal failure the next scheduled poll starts a fresh job, keeping subscriptions recoverable. Failed sources do not block healthy ones. Shutdown stops intake and waits for active work.
+Jobs are atomically claimed using an immediate transaction. A 60-second lease has a random fencing token. Polling has a 20-second request/body timeout and 5 MB response budget. Items, provenance, validators, source health and job success commit in one short transaction after fetching. Stale workers cannot commit after their lease expires. Five attempts use exponential backoff starting at 30 seconds, honoring Retry-After up to 24 hours. After terminal failure the next scheduled poll starts a fresh job, keeping subscriptions recoverable. Failed sources do not block healthy ones. Shutdown stops new claims and waits for the active poll; queued work stays persisted for restart.
 
 FTS results are immediately available after ingestion. Status stays `ingested`: full-article extraction, analysis and scoring are separate future stages. Digest-like entries with at least five unique links across three hosts retain their original item and fan out up to 50 attributed candidates. Child candidates have titles/URLs but no fetched article body in M1. Feed responses process up to 1,000 entries; older entries beyond that cap are not backfilled.
 

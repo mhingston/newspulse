@@ -2,6 +2,12 @@
 
 A self-hosted foundation for a personal discovery engine. **M1 is implemented:** RSS/Atom → durable SQLite ingestion → authenticated, read-only MCP search. There is no feed-reader UI. Email, AI scoring, proactive discovery and daily briefings remain future milestones.
 
+## Project decisions and remaining work
+
+Start with [AGENTS.md](AGENTS.md) for contributor guidance, [decisions](docs/decisions.md) for architectural/product constraints, and the [roadmap and coverage map](docs/roadmap.md) for implementation order and dependencies. The [original handoff](docs/handoff.md) is preserved in full.
+
+[Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) links 22 required implementation/acceptance issues and 8 conditional refinement issues. Required issues need merged, verified behavior; optional ideas retain the handoff's evaluation gates. The initial “M1 only” instruction scoped PR #1; future sessions should implement a selected issue and its authorized scope rather than restart the entire handoff.
+
 ## Run locally
 
 Install **Bun 1.4.4 or later**. Tested dependencies are exactly pinned and locked.

@@ -13,7 +13,7 @@
     "typecheck": "tsc --noEmit",
     "db:generate": "drizzle-kit generate",
     "smoke": "bun tests/smoke.ts",
-    "format:check": "prettier --check src tests package.json tsconfig.json drizzle.config.ts compose.yaml README.md docs"
+    "format:check": "prettier --check src tests package.json tsconfig.json drizzle.config.ts compose.yaml README.md AGENTS.md docs .github"
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.32.2",
