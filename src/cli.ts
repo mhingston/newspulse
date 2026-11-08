@@ -1,3 +1,4 @@
+import { ProfileStore } from "./profiles";
 import { Store } from "./db/store";
 import { parseOpml, exportOpml } from "./adapters/opml";
 import { RssAdapter } from "./adapters/rss";
@@ -43,6 +44,21 @@ async function main() {
   const store = new Store(path);
   try {
     switch (command) {
+      case "import-profiles": {
+        const input: unknown = JSON.parse(
+          await Bun.file(required(0, "profile JSON path")).text(),
+        );
+        console.log(
+          JSON.stringify(new ProfileStore(store.sqlite).import(input), null, 2),
+        );
+        break;
+      }
+      case "export-profiles":
+      case "list-profiles":
+        console.log(
+          JSON.stringify(new ProfileStore(store.sqlite).export(), null, 2),
+        );
+        break;
       case "init":
         console.log("Database migrated");
         break;
@@ -96,7 +112,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <init|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <init|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
