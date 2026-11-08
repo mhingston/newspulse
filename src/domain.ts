@@ -9,6 +9,7 @@ export interface Candidate {
   children?: { url: string; sourceUrl?: string; title: string }[];
 }
 export interface PollState {
+  cursor?: string;
   etag?: string;
   lastModified?: string;
 }

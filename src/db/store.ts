@@ -28,6 +28,15 @@ export interface Job {
   attempts: number;
   lease_token: string;
 }
+export type ProcessingStage = "extract" | "analyse" | "score";
+export interface ProcessingJob {
+  id: string;
+  item_id: string;
+  generation: number;
+  stage: ProcessingStage;
+  attempts: number;
+  lease_token: string;
+}
 export interface Item {
   id: string;
   identity: string;
@@ -78,15 +87,21 @@ export class Store {
       .query<Source, [string]>("SELECT * FROM sources WHERE id=?")
       .get(id);
   }
-  state(id: string): { etag?: string; lastModified?: string } {
+  state(id: string): { etag?: string; lastModified?: string; cursor?: string } {
     const row = this.sqlite
-      .query<{ etag: string | null; last_modified: string | null }, [string]>(
-        "SELECT * FROM source_state WHERE source_id=?",
-      )
+      .query<
+        {
+          etag: string | null;
+          last_modified: string | null;
+          cursor: string | null;
+        },
+        [string]
+      >("SELECT * FROM source_state WHERE source_id=?")
       .get(id);
     return {
       etag: row?.etag ?? undefined,
       lastModified: row?.last_modified ?? undefined,
+      cursor: row?.cursor ?? undefined,
     };
   }
   enqueueDue(now = Date.now(), force = false): number {
@@ -124,6 +139,139 @@ export class Store {
       })
       .immediate();
   }
+  enqueueProcessing(
+    stage: ProcessingStage,
+    itemId: string,
+    now = Date.now(),
+    generation = 1,
+  ): boolean {
+    return (
+      this.sqlite
+        .query(
+          "INSERT OR IGNORE INTO processing_jobs(id,stage,item_id,available_at,created_at,generation) VALUES(?,?,?,?,?,?)",
+        )
+        .run(crypto.randomUUID(), stage, itemId, now, now, generation)
+        .changes === 1
+    );
+  }
+  claimProcessing(
+    stage: ProcessingStage,
+    now = Date.now(),
+  ): ProcessingJob | null {
+    return this.sqlite
+      .transaction(() => {
+        this.sqlite
+          .query(
+            "UPDATE processing_jobs SET status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END,lease_token=NULL,lease_until=NULL WHERE status='running' AND lease_until<=?",
+          )
+          .run(now);
+        return this.sqlite
+          .query<ProcessingJob, [string, number, string, number]>(
+            `UPDATE processing_jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=? WHERE id=(SELECT id FROM processing_jobs WHERE stage=? AND status='pending' AND available_at<=? ORDER BY available_at,created_at LIMIT 1) RETURNING id,item_id,stage,generation,attempts,lease_token`,
+          )
+          .get(crypto.randomUUID(), now + 60_000, stage, now);
+      })
+      .immediate();
+  }
+  renewProcessing(
+    job: ProcessingJob,
+    duration: number,
+    now = Date.now(),
+  ): boolean {
+    if (!Number.isSafeInteger(duration) || duration <= 0)
+      throw new Error("Invalid lease duration");
+    return (
+      this.sqlite
+        .query(
+          "UPDATE processing_jobs SET lease_until=? WHERE id=? AND status='running' AND lease_token=? AND lease_until>?",
+        )
+        .run(now + duration, job.id, job.lease_token, now).changes === 1
+    );
+  }
+  completeProcessing(
+    job: ProcessingJob,
+    status: string,
+    now = Date.now(),
+    result: string | null = null,
+  ): boolean {
+    const expected = {
+      extract: "extracted",
+      analyse: "analysed",
+      score: "scored",
+    } as const;
+    if (status !== expected[job.stage] && status !== "unavailable")
+      throw new Error("Invalid processing transition");
+    return this.sqlite
+      .transaction(() => {
+        const changed = this.sqlite
+          .query(
+            "UPDATE processing_jobs SET status='done',result=?,outcome=?,lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=? AND lease_until>? AND item_id=? AND stage=? AND generation=?",
+          )
+          .run(
+            result,
+            status,
+            job.id,
+            job.lease_token,
+            now,
+            job.item_id,
+            job.stage,
+            job.generation,
+          ).changes;
+        if (!changed) return false;
+        const latest = this.sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT max(generation) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+          )
+          .get(job.item_id)!.n;
+        if (job.generation !== latest) return true;
+        this.sqlite
+          .query("UPDATE items SET status=? WHERE id=?")
+          .run(status === "scored" ? "available" : status, job.item_id);
+        const next =
+          job.stage === "extract"
+            ? "analyse"
+            : job.stage === "analyse"
+              ? "score"
+              : null;
+        if (next && status !== "unavailable")
+          this.enqueueProcessing(next, job.item_id, now, job.generation);
+        return true;
+      })
+      .immediate();
+  }
+  processingResult(
+    stage: ProcessingStage,
+    itemId: string,
+    generation?: number,
+  ): string | null {
+    return (
+      this.sqlite
+        .query<
+          { result: string | null },
+          [string, string, number | null, string]
+        >(
+          "SELECT result FROM processing_jobs WHERE stage=? AND item_id=? AND generation=coalesce(?,(SELECT max(generation) FROM processing_jobs WHERE stage='extract' AND item_id=?)) AND status='done'",
+        )
+        .get(stage, itemId, generation ?? null, itemId)?.result ?? null
+    );
+  }
+  failProcessing(job: ProcessingJob, error: string, now = Date.now()): boolean {
+    const next = now + Math.min(3600000, 30000 * 2 ** (job.attempts - 1));
+    return (
+      this.sqlite
+        .query(
+          "UPDATE processing_jobs SET status=?,available_at=?,last_error=?,lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=? AND lease_until>?",
+        )
+        .run(
+          job.attempts >= 5 ? "failed" : "pending",
+          next,
+          error.slice(0, 2000),
+          job.id,
+          job.lease_token,
+          now,
+        ).changes === 1
+    );
+  }
   private insert(
     candidate: Candidate,
     sourceId: string,
@@ -135,7 +283,25 @@ export class Store {
         "SELECT item_id FROM item_sources WHERE source_id=? AND native_id=?",
       )
       .get(sourceId, candidate.nativeId);
-    if (prior) return prior.item_id;
+    if (prior) {
+      const changed = candidate.text
+        ? this.sqlite
+            .query("UPDATE content SET text=? WHERE item_id=? AND text='' ")
+            .run(candidate.text, prior.item_id).changes
+        : 0;
+      if (changed) {
+        const generation = this.sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT coalesce(max(generation),0)+1 AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+          )
+          .get(prior.item_id)!.n;
+        this.sqlite
+          .query("UPDATE items SET status='ingested',title=? WHERE id=?")
+          .run(candidate.title, prior.item_id);
+        this.enqueueProcessing("extract", prior.item_id, now, generation);
+      } else this.enqueueProcessing("extract", prior.item_id, now);
+      return prior.item_id;
+    }
     const key = identity(candidate, sourceId);
     this.sqlite
       .query(
@@ -172,11 +338,29 @@ export class Store {
         )
         .run(candidate.title, item.id, item.id);
     }
+    const existing = this.sqlite
+      .query<{ text: string }, [string]>(
+        "SELECT text FROM content WHERE item_id=?",
+      )
+      .get(item.id);
     this.sqlite
       .query(
         "INSERT INTO content(item_id,text) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text WHERE content.text=''",
       )
       .run(item.id, candidate.text);
+    const generation =
+      existing && !existing.text && candidate.text
+        ? this.sqlite
+            .query<{ n: number }, [string]>(
+              "SELECT coalesce(max(generation),0)+1 AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+            )
+            .get(item.id)!.n
+        : 1;
+    if (generation > 1)
+      this.sqlite
+        .query("UPDATE items SET status='ingested' WHERE id=?")
+        .run(item.id);
+    this.enqueueProcessing("extract", item.id, now, generation);
     for (const child of candidate.children ?? [])
       this.insert(
         {
@@ -199,13 +383,18 @@ export class Store {
         for (const item of result.items) this.insert(item, job.source_id, now);
         this.sqlite
           .query(
-            "INSERT INTO source_state(source_id,etag,last_modified,last_checked) VALUES(?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,last_checked=excluded.last_checked",
+            "INSERT INTO source_state(source_id,etag,last_modified,last_checked,cursor) VALUES(?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,last_checked=excluded.last_checked,cursor=excluded.cursor",
           )
           .run(
             job.source_id,
             result.etag ?? null,
             result.lastModified ?? null,
             now,
+            result.cursor ??
+              (result.notModified
+                ? this.state(job.source_id).cursor
+                : undefined) ??
+              null,
           );
         this.sqlite
           .query(
@@ -310,6 +499,22 @@ export class Store {
       references: this.sqlite
         .query(
           "SELECT r.*,s.title AS source_title,s.url AS feed_url FROM item_sources r JOIN sources s ON s.id=r.source_id WHERE r.item_id=?",
+        )
+        .all(id),
+      processing: this.sqlite
+        .query<
+          {
+            stage: string;
+            generation: number;
+            status: string;
+            outcome: string | null;
+            attempts: number;
+            last_error: string | null;
+            available_at: number;
+          },
+          [string]
+        >(
+          "SELECT stage,generation,status,outcome,attempts,last_error,available_at FROM processing_jobs WHERE item_id=? ORDER BY created_at,stage",
         )
         .all(id),
       summary: null,

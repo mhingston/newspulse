@@ -4,6 +4,7 @@ import {
   text,
   integer,
   uniqueIndex,
+  index,
 } from "drizzle-orm/sqlite-core";
 export const sources = sqliteTable("sources", {
   id: text().primaryKey(),
@@ -23,6 +24,7 @@ export const sourceState = sqliteTable("source_state", {
     .references(() => sources.id),
   etag: text(),
   lastModified: text("last_modified"),
+  cursor: text(),
   lastChecked: integer("last_checked"),
 });
 export const items = sqliteTable("items", {
@@ -77,5 +79,40 @@ export const jobs = sqliteTable(
     uniqueIndex("one_active_poll")
       .on(t.sourceId)
       .where(sql`status IN ('pending','running')`),
+  ],
+);
+
+export const processingJobs = sqliteTable(
+  "processing_jobs",
+  {
+    id: text().primaryKey(),
+    stage: text().notNull(),
+    generation: integer().notNull().default(1),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    status: text().notNull().default("pending"),
+    attempts: integer().notNull().default(0),
+    availableAt: integer("available_at").notNull(),
+    leaseUntil: integer("lease_until"),
+    leaseToken: text("lease_token"),
+    lastError: text("last_error"),
+    result: text(),
+    outcome: text(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("processing_stage_item_unique").on(
+      t.stage,
+      t.itemId,
+      t.generation,
+    ),
+    index("processing_lease_idx").on(t.status, t.leaseUntil),
+    index("processing_due_idx").on(
+      t.stage,
+      t.status,
+      t.availableAt,
+      t.createdAt,
+    ),
   ],
 );

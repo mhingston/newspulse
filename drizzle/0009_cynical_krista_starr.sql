@@ -1,0 +1,2 @@
+CREATE INDEX `processing_lease_idx` ON `processing_jobs` (`status`,`lease_until`);--> statement-breakpoint
+CREATE INDEX `processing_due_idx` ON `processing_jobs` (`stage`,`status`,`available_at`,`created_at`);
