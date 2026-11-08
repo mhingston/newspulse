@@ -1,0 +1,25 @@
+name: Temporary PR 40 formatter
+on:
+  push:
+    branches: [feat/issue-6-story-grouping]
+permissions:
+  contents: write
+jobs:
+  format:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bunx prettier --write src tests package.json tsconfig.json drizzle.config.ts compose.yaml README.md AGENTS.md docs .github
+      - name: Commit formatting only
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add src tests README.md docs .github
+          if ! git diff --cached --quiet; then
+            git commit -m "style(stories): apply pinned Prettier formatting"
+            git push
+          fi

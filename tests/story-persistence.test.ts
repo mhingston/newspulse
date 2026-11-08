@@ -56,6 +56,28 @@ function current(store: Store) {
     .all();
 }
 
+test("canonical URL aliases retain one item with both original source references", () => {
+  const store = new Store(":memory:");
+  try {
+    ingest(store, "https://feed-one.example/rss", [
+      candidate("same", "Acme releases Atlas 2 robotics model"),
+    ]);
+    ingest(store, "https://feed-two.example/rss", [
+      {
+        ...candidate("native-other", "Acme releases Atlas 2 robotics model"),
+        url: "https://articles.example/same?utm_source=second-feed",
+      },
+    ]);
+    const items = store.search("Atlas");
+    expect(items).toHaveLength(1);
+    expect(store.getItem(items[0]!.id)!.references).toHaveLength(2);
+    store.stories.reconcile();
+    expect(current(store)).toHaveLength(1);
+  } finally {
+    store.close();
+  }
+});
+
 test("cross-source coverage forms a group without collapsing any source or analysis", () => {
   const store = new Store(":memory:");
   try {
@@ -218,7 +240,7 @@ test("populated pre-story schema upgrades without touching analysis, FTS, or bac
     expect(store.search("persistent")).toHaveLength(1);
     expect(store.search("insight")).toHaveLength(1);
     expect(store.getItem("item")!.analysis?.result.summary).toBe("preserved model insight");
-    expect(store.getItem("item")!.references[0]!.url).toBe("https://articles.example/old#original");
+    expect((store.getItem("item")!.references[0]! as { url: string }).url).toBe("https://articles.example/old#original");
     expect(store.claimProcessing("group", Date.now())?.item_id).toBe("item");
     store.stories.reconcile();
     store.backup(backup);
