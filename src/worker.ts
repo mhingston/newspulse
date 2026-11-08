@@ -55,11 +55,23 @@ export class Worker {
 export function schedule(
   store: Store,
   worker: Worker,
+  processing?: ProcessingWorker,
 ): { stop(): Promise<void> } {
   let active: Promise<unknown> | undefined;
   let stopping = false;
+  const stageActive = new Map<string, Promise<unknown>>();
   const tick = () => {
-    if (active || stopping) return;
+    if (stopping) return;
+    if (processing)
+      for (const stage of ["extract", "analyse", "score"] as const) {
+        if (stageActive.has(stage)) continue;
+        const task = processing
+          .drain(stage, 20, () => stopping)
+          .catch((e) => log("processing_error", { stage, error: String(e) }))
+          .finally(() => stageActive.delete(stage));
+        stageActive.set(stage, task);
+      }
+    if (active) return;
     active = (async () => {
       store.enqueueDue();
       await worker.drain(20, () => stopping);
@@ -79,6 +91,76 @@ export function schedule(
       cron.stop();
       clearInterval(interval);
       await active;
+      await Promise.all(stageActive.values());
     },
   };
+}
+
+/** Handlers perform external work without writing to the store; completion is fenced. */
+export type ProcessingHandler = (
+  job: import("./db/store").ProcessingJob,
+  signal: AbortSignal,
+) => Promise<{ status: string; result?: string }>;
+export class ProcessingWorker {
+  private inFlight = new Set<string>();
+  constructor(
+    private store: Store,
+    private handlers: Partial<
+      Record<import("./db/store").ProcessingStage, ProcessingHandler>
+    >,
+    private timeoutMs = 50_000,
+  ) {
+    if (timeoutMs <= 0 || timeoutMs >= 60_000)
+      throw new Error("Invalid processing timeout");
+  }
+  async drain(
+    stage: import("./db/store").ProcessingStage,
+    limit = 20,
+    shouldStop: () => boolean = () => false,
+  ): Promise<number> {
+    const handler = this.handlers[stage];
+    if (!handler || this.inFlight.has(stage)) return 0;
+    let count = 0;
+    while (count < limit && !shouldStop()) {
+      const job = this.store.claimProcessing(stage);
+      if (!job) break;
+      count++;
+      const controller = new AbortController();
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      this.inFlight.add(stage);
+      const running = Promise.resolve().then(() =>
+        handler(job, controller.signal),
+      );
+      void running.then(
+        () => this.inFlight.delete(stage),
+        () => this.inFlight.delete(stage),
+      );
+      try {
+        const output = await Promise.race([
+          running,
+          new Promise<never>((_, reject) => {
+            timer = setTimeout(() => {
+              controller.abort();
+              reject(new Error("Stage timed out"));
+            }, this.timeoutMs);
+          }),
+        ]);
+        this.store.completeProcessing(
+          job,
+          output.status,
+          Date.now(),
+          output.result ?? null,
+        );
+      } catch (error) {
+        this.store.failProcessing(
+          job,
+          error instanceof Error ? error.message : String(error),
+        );
+      } finally {
+        if (timer) clearTimeout(timer);
+      }
+      if (this.inFlight.has(stage)) break;
+    }
+    return count;
+  }
 }

@@ -15,6 +15,55 @@
       "when": 1794154775132,
       "tag": "0001_fts",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "6",
+      "when": 1794158211988,
+      "tag": "0002_brief_trish_tilby",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "6",
+      "when": 1794158282447,
+      "tag": "0003_strange_the_initiative",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "6",
+      "when": 1794158345285,
+      "tag": "0004_numerous_giant_man",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "6",
+      "when": 1794158398158,
+      "tag": "0005_past_vision",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "6",
+      "when": 1794158517256,
+      "tag": "0006_backfill_processing",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "6",
+      "when": 1794158589802,
+      "tag": "0007_freezing_harrier",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "6",
+      "when": 1794158634867,
+      "tag": "0008_violet_stephen_strange",
+      "breakpoints": true
     }
   ]
 }

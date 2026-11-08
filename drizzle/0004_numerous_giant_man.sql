@@ -1,0 +1,1 @@
+ALTER TABLE `source_state` ADD `cursor` text;
