@@ -36,6 +36,16 @@ function urlOrUndefined(s: string, base: string): string | undefined {
     return undefined;
   }
 }
+// RDF identifiers are URI references, not necessarily fetchable HTTP URLs.
+function identifierOrUndefined(s: string, base: string): string | undefined {
+  const value = s.trim();
+  if (!value) return undefined;
+  try {
+    return new URL(value, base).href;
+  } catch {
+    return value;
+  }
+}
 interface TextConstruct {
   html: string;
   text: string;
@@ -119,7 +129,7 @@ export function parseFeed(
     const nativeId =
       xmlText(child(e, atom ? "id" : "guid")).trim() ||
       (rdf
-        ? urlOrUndefined(
+        ? identifierOrUndefined(
             e.attributes[
               "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about"
             ] ?? "",
