@@ -173,17 +173,6 @@ export const profiles = sqliteTable(
   (t) => [uniqueIndex("profile_version_unique").on(t.kind, t.id, t.version)],
 );
 
-export const profiles = sqliteTable(
-  "profiles",
-  {
-    kind: text().notNull(),
-    id: text().notNull(),
-    version: integer().notNull(),
-    document: text().notNull(),
-  },
-  (t) => [uniqueIndex("profile_version_unique").on(t.kind, t.id, t.version)],
-);
-
 export const analyses = sqliteTable(
   "analyses",
   {
