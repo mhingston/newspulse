@@ -26,7 +26,7 @@ bun run cli search 'TypeScript'
 bun start
 ```
 
-The server polls on startup and continues throughout the day. Default polling is every 30 minutes, minimum 60 seconds. Configuration loads from `.env` through Bun. A random token of at least 24 characters is mandatory for the HTTP server. CLI commands operate locally and do not require the HTTP token.
+The server polls on startup and continues throughout the day. Default polling is every 30 minutes, minimum 60 seconds. Configuration loads from `.env` through Bun. The example token is empty so a copied template fails closed. Supply a random token of at least 24 non-whitespace characters before starting the HTTP server. CLI commands operate locally and do not require the HTTP token.
 
 ## MCP
 
@@ -51,7 +51,7 @@ console.log(results);
 await client.close();
 ```
 
-Tools: `search_items` (literal keywords, limit, offset, optional `source_id`, `since` in epoch milliseconds), `get_item` (ID), `get_sources`, `get_status`. Search combines terms with AND. Results include original URLs; `get_item` also returns all source references. Items without public URLs remain retrievable using their item ID and source-native reference. Source text is untrusted; AI summaries and scores are explicitly unavailable.
+Tools: `search_items` (literal keywords, limit, offset, optional `source_id`, `since` in epoch milliseconds), `get_item` (ID), `get_sources`, `get_status`. Search combines terms with AND. Results include canonical item URLs; `get_item` also returns all original resolved source references, including fragments and tracking context. Items without public URLs remain retrievable using their item ID and source-native reference. Source text is untrusted; AI summaries and scores are explicitly unavailable.
 
 Transport is stateless Streamable HTTP with JSON responses. Stdio is optional in the handoff and not implemented. There are no mutation tools. A client with a browser Origin must appear in `ALLOWED_ORIGINS`. Hosts must appear in `ALLOWED_HOSTS`; use hostnames without ports. No CORS policy is exposed for browser apps yet.
 
@@ -106,6 +106,8 @@ bun test
 bun run smoke
 ```
 
-The smoke test uses local RSS/Atom HTTP fixtures, imports OPML, ingests duplicate stories, reopens SQLite, verifies conditional requests, and searches/retrieves provenance using a real official MCP SDK client over HTTP. Tests never send email or make AI calls. Unit/integration tests cover retry deadlines, fenced lease reclamation, URL-less items, digest fan-out, backups and HTTP access controls.
+The smoke test uses local RSS/Atom HTTP fixtures, imports OPML, ingests duplicate stories, reopens SQLite, verifies conditional requests, and searches/retrieves provenance using a real official MCP SDK client over HTTP. Tests never send email or make AI calls. Unit/integration tests cover retry deadlines, fenced lease reclamation, URL-less items, digest fan-out, backups, HTTP access controls, fail-closed template configuration and coordinated HTTP/worker shutdown. Feed regressions cover namespace-prefixed Atom, mixed XHTML text/links, out-of-line content summary fallback, escaped HTML URL attributes, original citations, publication-date enrichment and encoded byte streams.
+
+Feed decoding follows [RFC 7303 §3.2](https://www.rfc-editor.org/rfc/rfc7303#section-3.2): BOM first, then HTTP charset, then XML declaration/autodetection, defaulting to UTF-8. UTF-16LE/BE and legacy encodings supported by Bun's TextDecoder are covered; unsupported encodings (including UTF-32) and invalid bytes produce explicit feed-health errors instead of silent replacement characters.
 
 See [architecture and roadmap](docs/architecture.md) for the initial schema, reference-project findings, compatibility evidence, defaults and limitations. M1 searches feed-provided content only; full article fetching, semantic deduplication, editorial ranking and proactive discoveries are not available yet. This release has no relevance-quality baseline: those evaluations require the M2 scoring pipeline and representative labeled data.

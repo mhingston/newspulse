@@ -5,7 +5,7 @@ import { RssAdapter } from "../src/adapters/rss";
 import { parseOpml } from "../src/adapters/opml";
 import { Worker, schedule } from "../src/worker";
 import { createApp } from "../src/http";
-import { rss, atom, opml } from "./fixtures";
+import { rss, prefixedAtom, opml } from "./fixtures";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -25,8 +25,15 @@ export async function smoke() {
         return new Response(null, { status: 304 });
       }
       return new Response(
-        new URL(request.url).pathname === "/atom" ? atom : rss,
-        { headers: { etag: '"fixture-v1"' } },
+        new URL(request.url).pathname === "/atom"
+          ? Buffer.concat([
+              Buffer.from([0xff, 0xfe]),
+              Buffer.from(prefixedAtom, "utf16le"),
+            ])
+          : rss,
+        {
+          headers: { etag: '"fixture-v1"', "content-type": "application/xml" },
+        },
       );
     },
   });
@@ -78,6 +85,24 @@ export async function smoke() {
     const item = JSON.parse((detail.content as { text: string }[])[0]!.text);
     assert(item.references.length === 2, "MCP lost provenance");
     assert(item.url === "https://example.com/models", "MCP lost source URL");
+    assert(
+      item.references.some(
+        (r: { url: string }) =>
+          r.url === "https://example.com/models#benchmarks",
+      ),
+      "MCP lost original Atom fragment",
+    );
+    assert(
+      item.references.some(
+        (r: { url: string }) =>
+          r.url === "https://example.com/models?utm_source=rss",
+      ),
+      "MCP lost original RSS citation",
+    );
+    assert(
+      item.published_at === Date.parse("2026-11-08T09:00:00Z"),
+      "MCP lost publication timestamp",
+    );
     const scheduler = schedule(store, new Worker(store, new RssAdapter()));
     await scheduler.stop();
     console.log(

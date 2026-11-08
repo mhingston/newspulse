@@ -2,3 +2,5 @@ export const rss = `<?xml version="1.0"?><rss version="2.0"><channel><title>Engi
 export const atom = `<feed xmlns="http://www.w3.org/2005/Atom"><entry><id>urn:release:1</id><title>Specialist models released</title><link rel="alternate" href="https://example.com/models"/><content type="html">Small models improve robotics.</content><updated>2026-11-08T09:00:00Z</updated></entry></feed>`;
 export const opml = (url: string) =>
   `<opml version="2.0"><body><outline text="Technology"><outline text="Engineering" xmlUrl="${url}"/></outline></body></opml>`;
+
+export const prefixedAtom = `<?xml version="1.0" encoding="UTF-16"?><a:feed xmlns:a="http://www.w3.org/2005/Atom"><a:entry><a:id>urn:release:1</a:id><a:title>Specialist models released</a:title><a:link rel="alternate" href="https://example.com/models#benchmarks"/><a:content type="xhtml"><div xmlns="http://www.w3.org/1999/xhtml">Small <strong>models</strong> improve robotics.</div></a:content><a:updated>2026-11-08T09:00:00Z</a:updated></a:entry></a:feed>`;

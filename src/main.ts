@@ -1,3 +1,4 @@
+import { stopServices } from "./lifecycle";
 import { config } from "./config";
 import { Store } from "./db/store";
 import { RssAdapter } from "./adapters/rss";
@@ -24,9 +25,7 @@ let stopping = false;
 async function stop() {
   if (stopping) return;
   stopping = true;
-  await server.stop();
-  await scheduler.stop();
-  store.close();
+  await stopServices(server, scheduler, store);
 }
 process.on("SIGTERM", () => void stop());
 process.on("SIGINT", () => void stop());

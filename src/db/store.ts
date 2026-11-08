@@ -139,7 +139,7 @@ export class Store {
     const key = identity(candidate, sourceId);
     this.sqlite
       .query(
-        "INSERT INTO items(id,identity,url,title,published_at,ingested_at) VALUES(?,?,?,?,?,?) ON CONFLICT(identity) DO NOTHING",
+        "INSERT INTO items(id,identity,url,title,published_at,ingested_at) VALUES(?,?,?,?,?,?) ON CONFLICT(identity) DO UPDATE SET published_at=coalesce(items.published_at,excluded.published_at)",
       )
       .run(
         crypto.randomUUID(),
@@ -160,7 +160,7 @@ export class Store {
         item.id,
         sourceId,
         candidate.nativeId,
-        candidate.url ?? null,
+        candidate.sourceUrl ?? candidate.url ?? null,
         parentId ?? null,
       );
     // Digest candidates can arrive before a feed supplies the actual body.
@@ -182,6 +182,7 @@ export class Store {
         {
           nativeId: `child:${candidate.nativeId}:${child.url}`,
           url: child.url,
+          sourceUrl: child.sourceUrl,
           title: child.title,
           text: "",
         },
