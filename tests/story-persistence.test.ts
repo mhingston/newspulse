@@ -269,7 +269,6 @@ test("populated pre-story schema upgrades without touching analysis, FTS, or bac
   }
 });
 
-
 test("pending grouping job sees corrections after a clean snapshot was cached", () => {
   const store = new Store(":memory:");
   try {
