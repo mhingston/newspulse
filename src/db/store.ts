@@ -561,7 +561,7 @@ export class Store {
       .slice(0, 30)
       .map((x) => '"' + x + '"')
       .join(" AND ");
-    const matches = this.sqlite
+    return this.sqlite
       .query<
         Item,
         [
@@ -574,7 +574,9 @@ export class Store {
           number,
         ]
       >(
-        `SELECT i.*,snippet(items_fts,1,'','', ' … ',32) AS text
+        `SELECT i.*,snippet(items_fts,1,'','', ' … ',32) AS text,
+      CASE WHEN EXISTS(SELECT 1 FROM analyses a WHERE a.item_id=i.id AND a.generation=(SELECT max(p.generation) FROM processing_jobs p WHERE p.item_id=i.id AND p.stage='extract')) THEN 'source_and_model_summary' ELSE 'source_content' END AS snippet_provenance,
+      coalesce((SELECT CASE WHEN j.status='done' AND j.outcome='unavailable' THEN 'unavailable' WHEN j.status='done' THEN 'analysed' WHEN j.status='pending' AND j.attempts>0 THEN 'retryable' ELSE j.status END FROM processing_jobs j WHERE j.item_id=i.id AND j.stage='analyse' AND j.generation=(SELECT max(p.generation) FROM processing_jobs p WHERE p.item_id=i.id AND p.stage='extract')), 'pending') AS analysis_status
       FROM items_fts JOIN items i ON i.rowid=items_fts.rowid WHERE items_fts MATCH ?
       AND (? IS NULL OR EXISTS(SELECT 1 FROM item_sources r WHERE r.item_id=i.id AND r.source_id=?))
       AND (? IS NULL OR i.ingested_at>=?) ORDER BY bm25(items_fts),i.id LIMIT ? OFFSET ?`,
@@ -588,16 +590,6 @@ export class Store {
         Math.max(1, Math.min(100, limit)),
         offset,
       );
-    return matches.map((item) => {
-      const details = this.getItem(item.id);
-      return {
-        ...item,
-        snippet_provenance: details?.summary
-          ? "source_and_model_summary"
-          : "source_content",
-        analysis_status: details?.analysis_status ?? "unknown",
-      };
-    });
   }
   getItem(id: string) {
     const item = this.sqlite

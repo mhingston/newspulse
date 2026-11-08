@@ -1183,3 +1183,23 @@ test("context truncation never dispatches half of a Unicode character", () => {
   });
   expect(JSON.parse(fits.prepare("😀", source, [])).text).toBe("😀");
 });
+
+test("search does not load full item histories for every match", async () => {
+  const { Store } = await import("../src/db/store");
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed");
+    store.enqueueDue(1);
+    store.complete(
+      store.claim(1)!,
+      { items: [{ nativeId: "a", title: "A", text: "searchable" }] },
+      2,
+    );
+    store.getItem = () => {
+      throw new Error("full item read");
+    };
+    expect(store.search("searchable")).toHaveLength(1);
+  } finally {
+    store.close();
+  }
+});
