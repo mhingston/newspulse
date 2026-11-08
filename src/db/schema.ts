@@ -54,6 +54,22 @@ export const contentVersions = sqliteTable(
     index("content_versions_item").on(t.itemId, t.id),
   ],
 );
+export const itemUrlAliases = sqliteTable(
+  "item_url_aliases",
+  {
+    canonicalUrl: text("canonical_url").primaryKey(),
+    itemId: text("item_id").notNull().references(() => items.id),
+  },
+  (t) => [index("item_url_aliases_item").on(t.itemId)],
+);
+export const itemRedirects = sqliteTable(
+  "item_redirects",
+  {
+    oldId: text("old_id").primaryKey(),
+    itemId: text("item_id").notNull().references(() => items.id),
+  },
+  (t) => [index("item_redirects_item").on(t.itemId)],
+);
 export const items = sqliteTable("items", {
   id: text().primaryKey(),
   identity: text().notNull().unique(),
