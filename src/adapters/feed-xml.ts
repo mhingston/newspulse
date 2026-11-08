@@ -35,6 +35,13 @@ function elements(
       if (key === "xmlns") namespaces.set("", value);
       else if (key.startsWith("xmlns:")) namespaces.set(key.slice(6), value);
     }
+    for (const [key, value] of Object.entries(attributes)) {
+      const separator = key.indexOf(":");
+      if (separator > 0 && namespaces.has(key.slice(0, separator)))
+        attributes[
+          `{${namespaces.get(key.slice(0, separator))}}${key.slice(separator + 1)}`
+        ] = value;
+    }
     const colon = name.indexOf(":");
     const prefix = colon < 0 ? "" : name.slice(0, colon);
     const localName = colon < 0 ? name : name.slice(colon + 1);
@@ -112,7 +119,7 @@ export function xhtmlMarkup(node: XmlElement): string {
       if (typeof c === "string") return escapeHtml(c);
       // The HTML view uses local names, so prefixed XHTML anchors remain anchors.
       const attrs = Object.entries(c.attributes)
-        .filter(([key]) => !key.startsWith("xmlns"))
+        .filter(([key]) => !key.startsWith("xmlns") && !key.startsWith("{"))
         .map(([key, value]) => {
           if (key === "href") {
             try {

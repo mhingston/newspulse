@@ -27,6 +27,7 @@ export class Worker {
         const result = await this.adapter.poll(
           source.url,
           this.store.state(source.id),
+          { maxEntries: source.max_entries, maxBytes: source.max_bytes },
         );
         const committed = this.store.complete(job, result);
         log("poll_completed", {

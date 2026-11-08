@@ -21,6 +21,9 @@ export interface Source {
   failures: number;
   last_error: string | null;
   last_success: number | null;
+  removed: number;
+  max_entries: number;
+  max_bytes: number;
 }
 export interface Job {
   id: string;
@@ -36,6 +39,8 @@ export interface ProcessingJob {
   stage: ProcessingStage;
   attempts: number;
   lease_token: string;
+  origin_source_id: string | null;
+  origin_url: string | null;
 }
 export interface Item {
   id: string;
@@ -65,12 +70,20 @@ export class Store {
     this.sqlite.close();
   }
   addSource(url: string, title = url, pollSeconds = 1800): Source {
-    if (!Number.isInteger(pollSeconds) || pollSeconds < 60)
-      throw new Error("Polling interval must be an integer >= 60 seconds");
+    if (
+      !Number.isSafeInteger(pollSeconds) ||
+      pollSeconds < 60 ||
+      pollSeconds > 31536000
+    )
+      throw new Error(
+        "Polling interval must be an integer between 60 and 31536000 seconds",
+      );
+    if (!title.trim() || title.length > 1000)
+      throw new Error("Invalid source title");
     url = canonicalUrl(url);
     this.sqlite
       .query(
-        "INSERT INTO sources(id,url,title,poll_seconds) VALUES(?,?,?,?) ON CONFLICT(url) DO NOTHING",
+        "INSERT INTO sources(id,url,title,poll_seconds) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET enabled=CASE WHEN removed=1 THEN 1 ELSE enabled END,removed=0",
       )
       .run(crypto.randomUUID(), url, title, pollSeconds);
     return this.sqlite
@@ -79,8 +92,115 @@ export class Store {
   }
   sources(): Source[] {
     return this.sqlite
-      .query<Source, []>("SELECT * FROM sources ORDER BY title")
+      .query<Source, []>(
+        "SELECT * FROM sources WHERE removed=0 ORDER BY title,id",
+      )
       .all();
+  }
+  updateSource(
+    id: string,
+    changes: {
+      title?: string;
+      pollSeconds?: number;
+      enabled?: boolean;
+      maxEntries?: number;
+      maxBytes?: number;
+    },
+  ): Source {
+    return this.sqlite
+      .transaction(() => {
+        const source = this.source(id);
+        if (!source || source.removed) throw new Error("Source not found");
+        const title = changes.title ?? source.title;
+        if (!title.trim() || title.length > 1000)
+          throw new Error("Invalid source title");
+        const interval = changes.pollSeconds ?? source.poll_seconds;
+        if (
+          !Number.isSafeInteger(interval) ||
+          interval < 60 ||
+          interval > 31536000
+        )
+          throw new Error("Invalid polling interval");
+        const maxEntries = changes.maxEntries ?? source.max_entries;
+        const maxBytes = changes.maxBytes ?? source.max_bytes;
+        if (
+          !Number.isSafeInteger(maxEntries) ||
+          maxEntries < 1 ||
+          maxEntries > 10000 ||
+          !Number.isSafeInteger(maxBytes) ||
+          maxBytes < 1 ||
+          maxBytes > 20000000
+        )
+          throw new Error("Invalid feed budget");
+        this.sqlite
+          .query(
+            "UPDATE sources SET title=?,poll_seconds=?,enabled=?,max_entries=?,max_bytes=? WHERE id=?",
+          )
+          .run(
+            title,
+            interval,
+            changes.enabled === undefined
+              ? source.enabled
+              : Number(changes.enabled),
+            maxEntries,
+            maxBytes,
+            id,
+          );
+        if (changes.enabled === false) this.cancelSourceJobs(id);
+        if (
+          changes.pollSeconds !== undefined &&
+          interval !== source.poll_seconds
+        ) {
+          const now = Date.now();
+          this.sqlite
+            .query("UPDATE sources SET next_poll=? WHERE id=?")
+            .run(
+              source.last_success === null
+                ? 0
+                : Math.max(now, source.last_success + interval * 1000),
+              id,
+            );
+        }
+        if (
+          maxEntries !== source.max_entries ||
+          maxBytes !== source.max_bytes
+        ) {
+          // A running request uses the old budget and could restore old validators.
+          this.cancelSourceJobs(id);
+          this.sqlite
+            .query(
+              "UPDATE source_state SET etag=NULL,last_modified=NULL WHERE source_id=?",
+            )
+            .run(id);
+          this.sqlite
+            .query("UPDATE sources SET next_poll=0 WHERE id=?")
+            .run(id);
+        }
+        return this.source(id)!;
+      })
+      .immediate();
+  }
+  private cancelSourceJobs(id: string) {
+    this.sqlite
+      .query(
+        "UPDATE jobs SET status='cancelled',lease_token=NULL,lease_until=NULL,finished_at=? WHERE source_id=? AND status IN ('pending','running')",
+      )
+      .run(Date.now(), id);
+  }
+  removeSource(id: string): void {
+    this.sqlite
+      .transaction(() => {
+        if (
+          !this.sqlite
+            .query(
+              "UPDATE sources SET removed=1,enabled=0 WHERE id=? AND removed=0",
+            )
+            .run(id).changes
+        )
+          throw new Error("Source not found");
+        this.cancelSourceJobs(id);
+      })
+      .immediate();
   }
   source(id: string): Source | null {
     return this.sqlite
@@ -132,7 +252,7 @@ export class Store {
         return this.sqlite
           .query<Job, [string, number, number]>(
             `UPDATE jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=?
-        WHERE id=(SELECT id FROM jobs WHERE status='pending' AND available_at<=? ORDER BY available_at,created_at LIMIT 1)
+        WHERE id=(SELECT j.id FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 1)
         RETURNING id,source_id,attempts,lease_token`,
           )
           .get(crypto.randomUUID(), now + 60_000, now);
@@ -144,14 +264,24 @@ export class Store {
     itemId: string,
     now = Date.now(),
     generation = 1,
+    originSourceId: string | null = null,
+    originUrl: string | null = null,
   ): boolean {
     return (
       this.sqlite
         .query(
-          "INSERT OR IGNORE INTO processing_jobs(id,stage,item_id,available_at,created_at,generation) VALUES(?,?,?,?,?,?)",
+          "INSERT OR IGNORE INTO processing_jobs(id,stage,item_id,available_at,created_at,generation,origin_source_id,origin_url) VALUES(?,?,?,?,?,?,?,?)",
         )
-        .run(crypto.randomUUID(), stage, itemId, now, now, generation)
-        .changes === 1
+        .run(
+          crypto.randomUUID(),
+          stage,
+          itemId,
+          now,
+          now,
+          generation,
+          originSourceId,
+          originUrl,
+        ).changes === 1
     );
   }
   claimProcessing(
@@ -167,7 +297,7 @@ export class Store {
           .run(now);
         return this.sqlite
           .query<ProcessingJob, [string, number, string, number]>(
-            `UPDATE processing_jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=? WHERE id=(SELECT id FROM processing_jobs WHERE stage=? AND status='pending' AND available_at<=? ORDER BY available_at,created_at LIMIT 1) RETURNING id,item_id,stage,generation,attempts,lease_token`,
+            `UPDATE processing_jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=? WHERE id=(SELECT id FROM processing_jobs WHERE stage=? AND status='pending' AND available_at<=? ORDER BY available_at,created_at LIMIT 1) RETURNING id,item_id,stage,generation,attempts,lease_token,origin_source_id,origin_url`,
           )
           .get(crypto.randomUUID(), now + 60_000, stage, now);
       })
@@ -234,7 +364,14 @@ export class Store {
               ? "score"
               : null;
         if (next && status !== "unavailable")
-          this.enqueueProcessing(next, job.item_id, now, job.generation);
+          this.enqueueProcessing(
+            next,
+            job.item_id,
+            now,
+            job.generation,
+            job.origin_source_id,
+            job.origin_url,
+          );
         return true;
       })
       .immediate();
@@ -279,17 +416,60 @@ export class Store {
     parentId?: string,
   ): string {
     const prior = this.sqlite
-      .query<{ item_id: string }, [string, string]>(
-        "SELECT item_id FROM item_sources WHERE source_id=? AND native_id=?",
+      .query<{ item_id: string; url: string | null }, [string, string]>(
+        "SELECT item_id,url FROM item_sources WHERE source_id=? AND native_id=?",
       )
       .get(sourceId, candidate.nativeId);
     if (prior) {
-      const changed = candidate.text
-        ? this.sqlite
-            .query("UPDATE content SET text=? WHERE item_id=? AND text='' ")
-            .run(candidate.text, prior.item_id).changes
-        : 0;
+      const previous = this.sqlite
+        .query<
+          {
+            text: string;
+            title: string;
+            backfilled: number;
+            url: string | null;
+          },
+          [string, string]
+        >(
+          "SELECT text,title,backfilled,url FROM content_versions WHERE source_id=? AND native_id=? ORDER BY id DESC LIMIT 1",
+        )
+        .get(sourceId, candidate.nativeId);
+      const originalUrl = candidate.sourceUrl ?? candidate.url ?? prior.url;
+      const lastBody = this.sqlite
+        .query<{ text: string }, [string, string]>(
+          "SELECT text FROM content_versions WHERE source_id=? AND native_id=? AND text<>'' ORDER BY id DESC LIMIT 1",
+        )
+        .get(sourceId, candidate.nativeId)?.text;
+      const changed =
+        !previous ||
+        previous.title !== candidate.title ||
+        (candidate.text !== "" && lastBody !== candidate.text) ||
+        previous.url !== originalUrl;
+      if (changed || previous?.backfilled) {
+        this.sqlite
+          .query(
+            "INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at) VALUES(?,?,?,?,?,?,?)",
+          )
+          .run(
+            prior.item_id,
+            sourceId,
+            candidate.nativeId,
+            candidate.title,
+            candidate.text,
+            originalUrl,
+            now,
+          );
+      }
       if (changed) {
+        if (candidate.text)
+          this.sqlite
+            .query("UPDATE content SET text=? WHERE item_id=?")
+            .run(candidate.text, prior.item_id);
+        this.sqlite
+          .query(
+            "UPDATE item_sources SET url=? WHERE source_id=? AND native_id=?",
+          )
+          .run(originalUrl, sourceId, candidate.nativeId);
         const generation = this.sqlite
           .query<{ n: number }, [string]>(
             "SELECT coalesce(max(generation),0)+1 AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
@@ -298,8 +478,20 @@ export class Store {
         this.sqlite
           .query("UPDATE items SET status='ingested',title=? WHERE id=?")
           .run(candidate.title, prior.item_id);
-        this.enqueueProcessing("extract", prior.item_id, now, generation);
+        if (candidate.url)
+          this.sqlite
+            .query("UPDATE items SET url=coalesce(url,?) WHERE id=?")
+            .run(canonicalUrl(candidate.url), prior.item_id);
+        this.enqueueProcessing(
+          "extract",
+          prior.item_id,
+          now,
+          generation,
+          sourceId,
+          originalUrl,
+        );
       } else this.enqueueProcessing("extract", prior.item_id, now);
+      this.insertChildren(candidate, sourceId, now, prior.item_id);
       return prior.item_id;
     }
     const key = identity(candidate, sourceId);
@@ -328,6 +520,19 @@ export class Store {
         candidate.nativeId,
         candidate.sourceUrl ?? candidate.url ?? null,
         parentId ?? null,
+      );
+    this.sqlite
+      .query(
+        "INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at) VALUES(?,?,?,?,?,?,?)",
+      )
+      .run(
+        item.id,
+        sourceId,
+        candidate.nativeId,
+        candidate.title,
+        candidate.text,
+        candidate.sourceUrl ?? candidate.url ?? null,
+        now,
       );
     // Digest candidates can arrive before a feed supplies the actual body.
     if (candidate.text) {
@@ -360,7 +565,23 @@ export class Store {
       this.sqlite
         .query("UPDATE items SET status='ingested' WHERE id=?")
         .run(item.id);
-    this.enqueueProcessing("extract", item.id, now, generation);
+    this.enqueueProcessing(
+      "extract",
+      item.id,
+      now,
+      generation,
+      sourceId,
+      candidate.sourceUrl ?? candidate.url ?? null,
+    );
+    this.insertChildren(candidate, sourceId, now, item.id);
+    return item.id;
+  }
+  private insertChildren(
+    candidate: Candidate,
+    sourceId: string,
+    now: number,
+    parentId: string,
+  ): void {
     for (const child of candidate.children ?? [])
       this.insert(
         {
@@ -372,9 +593,8 @@ export class Store {
         },
         sourceId,
         now,
-        item.id,
+        parentId,
       );
-    return item.id;
   }
   complete(job: Job, result: PollResult, now = Date.now()): boolean {
     return this.sqlite
@@ -383,7 +603,7 @@ export class Store {
         for (const item of result.items) this.insert(item, job.source_id, now);
         this.sqlite
           .query(
-            "INSERT INTO source_state(source_id,etag,last_modified,last_checked,cursor) VALUES(?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,last_checked=excluded.last_checked,cursor=excluded.cursor",
+            "INSERT INTO source_state(source_id,etag,last_modified,last_checked,cursor,entry_count,truncated) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,last_checked=excluded.last_checked,cursor=excluded.cursor,entry_count=coalesce(excluded.entry_count,source_state.entry_count),truncated=coalesce(excluded.truncated,source_state.truncated)",
           )
           .run(
             job.source_id,
@@ -395,6 +615,8 @@ export class Store {
                 ? this.state(job.source_id).cursor
                 : undefined) ??
               null,
+            result.entryCount ?? null,
+            result.truncated === undefined ? null : Number(result.truncated),
           );
         this.sqlite
           .query(
@@ -501,6 +723,23 @@ export class Store {
           "SELECT r.*,s.title AS source_title,s.url AS feed_url FROM item_sources r JOIN sources s ON s.id=r.source_id WHERE r.item_id=?",
         )
         .all(id),
+      content_versions: this.sqlite
+        .query<
+          {
+            id: number;
+            source_id: string;
+            native_id: string;
+            title: string;
+            text: string;
+            url: string | null;
+            observed_at: number;
+            backfilled: number;
+          },
+          [string]
+        >(
+          "SELECT id,source_id,native_id,title,text,url,observed_at,backfilled FROM content_versions WHERE item_id=? ORDER BY id",
+        )
+        .all(id),
       processing: this.sqlite
         .query<
           {
@@ -533,7 +772,15 @@ export class Store {
   }
   status() {
     return {
-      sources: this.sources(),
+      sources: this.sources().map((source) => ({
+        ...source,
+        feed_diagnostics:
+          this.sqlite
+            .query(
+              "SELECT entry_count,truncated FROM source_state WHERE source_id=?",
+            )
+            .get(source.id) ?? null,
+      })),
       jobs: this.sqlite
         .query("SELECT status,count(*) AS count FROM jobs GROUP BY status")
         .all(),

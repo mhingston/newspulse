@@ -55,7 +55,12 @@ function atomText(node: XmlElement | undefined): TextConstruct {
     return { html: "", text: normalizeText(xmlText(node)) };
   return { html: "", text: "" };
 }
-export function parseFeed(xml: string, base: string): Candidate[] {
+export function parseFeed(
+  xml: string,
+  base: string,
+  maxEntries = 1000,
+  diagnostics?: { entryCount: number },
+): Candidate[] {
   const root = parseXml(xml, base);
   const atom =
     root.name === "feed" &&
@@ -70,7 +75,8 @@ export function parseFeed(xml: string, base: string): Candidate[] {
     : channel
       ? childElements(channel, "item")
       : childElements(root, "item", "http://purl.org/rss/1.0/");
-  return entries.slice(0, 1000).map((e) => {
+  if (diagnostics) diagnostics.entryCount = entries.length;
+  return entries.slice(0, maxEntries).map((e) => {
     const linkNode = atom
       ? childElements(e, "link").find(
           (l) => !l.attributes.rel || l.attributes.rel === "alternate",
@@ -112,6 +118,14 @@ export function parseFeed(xml: string, base: string): Candidate[] {
     );
     const nativeId =
       xmlText(child(e, atom ? "id" : "guid")).trim() ||
+      (rdf
+        ? urlOrUndefined(
+            e.attributes[
+              "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about"
+            ] ?? "",
+            e.base,
+          )
+        : undefined) ||
       url ||
       `sha256:${createHash("sha256")
         .update(title + "\n" + (body.html || body.text))
@@ -166,8 +180,16 @@ export class RssAdapter implements SourceAdapter {
       input: string,
       init?: RequestInit,
     ) => Promise<Response> = fetch,
+    private defaults: { maxEntries: number; maxBytes: number } = {
+      maxEntries: 1000,
+      maxBytes: 5000000,
+    },
   ) {}
-  async poll(url: string, state: PollState): Promise<PollResult> {
+  async poll(
+    url: string,
+    state: PollState,
+    limits = this.defaults,
+  ): Promise<PollResult> {
     const headers: Record<string, string> = {
       "user-agent": "Newspulse/0.1 (+https://github.com/mhingston/newspulse)",
       accept:
@@ -203,7 +225,7 @@ export class RssAdapter implements SourceAdapter {
         const { done, value } = await reader.read();
         if (done) break;
         size += value.length;
-        if (size > 5_000_000) throw new Error("Feed exceeds 5 MB budget");
+        if (size > limits.maxBytes) throw new Error("Feed exceeds byte budget");
         chunks.push(value);
       }
     } finally {
@@ -215,11 +237,17 @@ export class RssAdapter implements SourceAdapter {
       bytes.set(c, offset);
       offset += c.length;
     }
+    const diagnostics = { entryCount: 0 };
+    const items = parseFeed(
+      decodeFeed(bytes, response.headers.get("content-type")),
+      response.url || url,
+      limits.maxEntries,
+      diagnostics,
+    );
     return {
-      items: parseFeed(
-        decodeFeed(bytes, response.headers.get("content-type")),
-        response.url || url,
-      ),
+      items,
+      entryCount: diagnostics.entryCount,
+      truncated: diagnostics.entryCount > limits.maxEntries,
       etag: response.headers.get("etag") ?? undefined,
       lastModified: response.headers.get("last-modified") ?? undefined,
     };

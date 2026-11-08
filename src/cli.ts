@@ -75,6 +75,49 @@ async function main() {
           ),
         );
         break;
+      case "list-sources":
+        console.log(JSON.stringify(store.sources(), null, 2));
+        break;
+      case "update-source": {
+        const id = required(0, "source ID");
+        const changes: {
+          title?: string;
+          pollSeconds?: number;
+          maxEntries?: number;
+          maxBytes?: number;
+        } = {};
+        for (const arg of args.slice(1)) {
+          const pos = arg.indexOf("=");
+          if (pos < 1) throw new Error("Expected option=value");
+          const key = arg.slice(0, pos),
+            value = arg.slice(pos + 1);
+          if (key === "title") changes.title = value;
+          else if (key === "poll-seconds") changes.pollSeconds = Number(value);
+          else if (key === "max-entries") changes.maxEntries = Number(value);
+          else if (key === "max-bytes") changes.maxBytes = Number(value);
+          else throw new Error(`Unknown source option: ${key}`);
+        }
+        if (!Object.keys(changes).length)
+          throw new Error("No source changes supplied");
+        console.log(JSON.stringify(store.updateSource(id, changes), null, 2));
+        break;
+      }
+      case "enable-source":
+      case "disable-source":
+        console.log(
+          JSON.stringify(
+            store.updateSource(required(0, "source ID"), {
+              enabled: command === "enable-source",
+            }),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "remove-source":
+        store.removeSource(required(0, "source ID"));
+        console.log("Source removed; history retained");
+        break;
       case "import-opml": {
         const feeds = parseOpml(
           await Bun.file(required(0, "OPML path")).text(),
@@ -112,7 +155,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <init|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <init|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

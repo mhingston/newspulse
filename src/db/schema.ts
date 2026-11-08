@@ -17,6 +17,9 @@ export const sources = sqliteTable("sources", {
   failures: integer().notNull().default(0),
   lastError: text("last_error"),
   lastSuccess: integer("last_success"),
+  removed: integer().notNull().default(0),
+  maxEntries: integer("max_entries").notNull().default(1000),
+  maxBytes: integer("max_bytes").notNull().default(5000000),
 });
 export const sourceState = sqliteTable("source_state", {
   sourceId: text("source_id")
@@ -26,7 +29,31 @@ export const sourceState = sqliteTable("source_state", {
   lastModified: text("last_modified"),
   cursor: text(),
   lastChecked: integer("last_checked"),
+  entryCount: integer("entry_count"),
+  truncated: integer(),
 });
+export const contentVersions = sqliteTable(
+  "content_versions",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    sourceId: text("source_id")
+      .notNull()
+      .references(() => sources.id),
+    nativeId: text("native_id").notNull(),
+    url: text(),
+    title: text().notNull(),
+    text: text().notNull(),
+    observedAt: integer("observed_at").notNull(),
+    backfilled: integer().notNull().default(0),
+  },
+  (t) => [
+    index("content_versions_source_native").on(t.sourceId, t.nativeId, t.id),
+    index("content_versions_item").on(t.itemId, t.id),
+  ],
+);
 export const items = sqliteTable("items", {
   id: text().primaryKey(),
   identity: text().notNull().unique(),
@@ -88,6 +115,8 @@ export const processingJobs = sqliteTable(
     id: text().primaryKey(),
     stage: text().notNull(),
     generation: integer().notNull().default(1),
+    originSourceId: text("origin_source_id").references(() => sources.id),
+    originUrl: text("origin_url"),
     itemId: text("item_id")
       .notNull()
       .references(() => items.id),

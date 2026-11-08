@@ -34,6 +34,13 @@ test("populated M1 migration retains poll lease, validators, provenance and sear
     expect(store.search("searchable").map((item) => item.id)).toEqual(["i"]);
     expect(store.claimProcessing("extract", Date.now())?.item_id).toBe("i");
     expect(store.getItem("i")!.references).toHaveLength(1);
+    expect(store.getItem("i")!.content_versions[0]!.text).toBe(
+      "migration searchable content",
+    );
+    expect(store.getItem("i")!.content_versions[0]!.url).toBe(
+      "https://example.com/item",
+    );
+    expect(store.getItem("i")!.content_versions[0]!.backfilled).toBe(1);
     expect(store.claim(60099)).toBeNull();
     const recovered = store.claim(60100)!;
     expect(recovered.id).toBe("j");
@@ -48,6 +55,9 @@ test("populated M1 migration retains poll lease, validators, provenance and sear
     restored = new Store(backup);
     expect(restored.search("searchable").map((item) => item.id)).toEqual(["i"]);
     expect(restored.state("s").etag).toBe("v1");
+    expect(restored.getItem("i")!.content_versions[0]!.text).toBe(
+      "migration searchable content",
+    );
     expect(restored.sqlite.query("PRAGMA integrity_check").get()).toEqual({
       integrity_check: "ok",
     });
