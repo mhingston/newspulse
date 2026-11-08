@@ -773,3 +773,150 @@ test("a received 429 permits a budgeted retry while retaining its worst-case cha
     store.close();
   }
 });
+
+test("provider rejects redirects without forwarding its bearer credential", async () => {
+  let observed: RequestRedirect | undefined;
+  const client = new OpenAICompatibleAnalysis(settings, async (_url, init) => {
+    observed = init.redirect;
+    return new Response(null, {
+      status: 302,
+      headers: { location: "https://attacker.example/" },
+    });
+  });
+  await expect(
+    client.analyse("text", "https://example.com/item"),
+  ).rejects.toThrow();
+  expect(observed).toBe("error");
+});
+
+test("usage exceeding a reservation is recorded and stops further dispatch", async () => {
+  const { Store } = await import("../src/db/store");
+  const { AnalysisBudget } = await import("../src/analysis-budget");
+  const store = new Store(":memory:");
+  try {
+    const budget = new AnalysisBudget(store.sqlite, {
+      maxTokens: 100,
+      maxMicros: 100,
+      maxConcurrent: 1,
+    });
+    expect(budget.reserve("one", 60, 20)).toBe(true);
+    expect(budget.finish("one", "{}", 120)).toBe(true);
+    expect(budget.reserve("two", 1, 1)).toBe(false);
+    expect(
+      store.sqlite
+        .query<{ tokens: number }, []>(
+          "SELECT tokens FROM analysis_reservations WHERE key='one'",
+        )
+        .get()!.tokens,
+    ).toBe(120);
+  } finally {
+    store.close();
+  }
+});
+
+test("empty Compose analysis variables keep analysis disabled", async () => {
+  const { analysisConfig } = await import("../src/analysis-config");
+  expect(
+    analysisConfig({
+      ANALYSIS_ENDPOINT: "",
+      ANALYSIS_KEY: "",
+      ANALYSIS_MODEL: "",
+      ANALYSIS_TOTAL_TOKENS: "",
+      ANALYSIS_TOTAL_MICROS: "",
+      ANALYSIS_CALL_MICROS: "",
+    }),
+  ).toBeNull();
+});
+
+test("terminal analysis can be explicitly requeued and reports its true state", async () => {
+  const { Store } = await import("../src/db/store");
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed");
+    store.enqueueDue(1);
+    store.complete(
+      store.claim(1)!,
+      { items: [{ nativeId: "a", title: "A", text: "body" }] },
+      2,
+    );
+    const id = store.search("body")[0]!.id;
+    store.completeProcessing(
+      store.claimProcessing("extract", 3)!,
+      "extracted",
+      4,
+    );
+    const job = store.claimProcessing("analyse", 5)!;
+    store.sqlite
+      .query("UPDATE processing_jobs SET attempts=5 WHERE id=?")
+      .run(job.id);
+    store.failProcessing({ ...job, attempts: 5 }, "needs reconciliation", 6);
+    expect(store.getItem(id)!.analysis_status).toBe("failed");
+    expect(store.retryFailedAnalysis(id, 7)).toBe(true);
+    expect(store.getItem(id)!.analysis_status).toBe("pending");
+    expect(store.claimProcessing("analyse", 7)!.attempts).toBe(1);
+  } finally {
+    store.close();
+  }
+});
+
+test("stopped reconciliation recovers after a crashed worker leaves a lease", async () => {
+  const { Store } = await import("../src/db/store");
+  const { AnalysisBudget } = await import("../src/analysis-budget");
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed");
+    store.enqueueDue(1);
+    store.complete(
+      store.claim(1)!,
+      { items: [{ nativeId: "a", title: "A", text: "body" }] },
+      2,
+    );
+    store.completeProcessing(
+      store.claimProcessing("extract", 3)!,
+      "extracted",
+      4,
+    );
+    store.claimProcessing("analyse", 5);
+    const budget = new AnalysisBudget(store.sqlite, {
+      maxTokens: 100,
+      maxMicros: 100,
+      maxConcurrent: 1,
+    });
+    expect(budget.reserve("key", 50, 50)).toBe(true);
+    expect(budget.reconcile("key")).toBe(true);
+  } finally {
+    store.close();
+  }
+});
+
+test("latest editorial selection does not parse obsolete profile history", async () => {
+  const { Store } = await import("../src/db/store");
+  const { ProfileStore } = await import("../src/profiles");
+  const store = new Store(":memory:");
+  try {
+    store.sqlite
+      .query(
+        "INSERT INTO profiles(kind,id,version,document) VALUES ('editorial','paper',1,'invalid')",
+      )
+      .run();
+    const latest = {
+      kind: "editorial",
+      id: "paper",
+      version: 2,
+      description: "paper",
+      contentTypes: ["paper"],
+      criteria: [{ dimension: "evidence", weight: 1 }],
+      presentation: [],
+    };
+    store.sqlite
+      .query(
+        "INSERT INTO profiles(kind,id,version,document) VALUES ('editorial','paper',2,?)",
+      )
+      .run(JSON.stringify(latest));
+    expect(
+      JSON.stringify(new ProfileStore(store.sqlite).latestEditorial()),
+    ).toBe(JSON.stringify([latest]));
+  } finally {
+    store.close();
+  }
+});

@@ -249,6 +249,16 @@ export class Store {
       })
       .immediate();
   }
+  retryFailedAnalysis(itemId: string, now = Date.now()): boolean {
+    return (
+      this.sqlite
+        .query(
+          `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
+      WHERE item_id=? AND stage='analyse' AND status='failed' AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=? AND stage='extract')`,
+        )
+        .run(now, itemId, itemId).changes === 1
+    );
+  }
   requestReanalysis(itemId: string, now = Date.now()): boolean {
     return this.sqlite
       .transaction(() => {
@@ -644,9 +654,21 @@ export class Store {
       })(),
       analysis,
       summary: analysis?.result.summary ?? null,
-      analysis_status: this.processingResult("analyse", id)
-        ? "analysed"
-        : "pending",
+      analysis_status: (() => {
+        const job = this.sqlite
+          .query<
+            { status: string; outcome: string | null; attempts: number },
+            [string, string]
+          >(
+            "SELECT status,outcome,attempts FROM processing_jobs WHERE item_id=? AND stage='analyse' AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=? AND stage='extract')",
+          )
+          .get(id, id);
+        if (!job) return "pending";
+        if (job.status === "done")
+          return job.outcome === "unavailable" ? "unavailable" : "analysed";
+        if (job.status === "pending" && job.attempts > 0) return "retryable";
+        return job.status;
+      })(),
       content_kind: "untrusted_source_content",
     };
   }

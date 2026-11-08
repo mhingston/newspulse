@@ -1,3 +1,4 @@
+import { acquireAnalysisLock } from "./analysis-lock";
 import { analysisConfig } from "./analysis-config";
 import { OpenAICompatibleAnalysis } from "./adapters/analysis";
 import { AnalysisBudget } from "./analysis-budget";
@@ -11,6 +12,9 @@ import { HttpContentExtractor, extractionHandler } from "./adapters/extraction";
 import { createApp } from "./http";
 const cfg = config();
 const analysis = analysisConfig();
+// The OS releases this lock only when the process exits, including after a crash.
+// Keep it for the process lifetime even if a timed-out provider ignores abort.
+if (analysis) acquireAnalysisLock(cfg.DB_PATH);
 const store = new Store(cfg.DB_PATH);
 const app = createApp(store, {
   token: cfg.MCP_TOKEN,

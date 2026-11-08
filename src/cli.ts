@@ -1,3 +1,4 @@
+import { acquireAnalysisLock } from "./analysis-lock";
 import { AnalysisBudget } from "./analysis-budget";
 import { ProfileStore } from "./profiles";
 import { Store } from "./db/store";
@@ -42,6 +43,8 @@ async function main() {
     console.log(`Restored to ${path}`);
     return;
   }
+  const analysisLock =
+    command === "analysis-reconcile" ? acquireAnalysisLock(path) : null;
   const store = new Store(path);
   try {
     switch (command) {
@@ -72,6 +75,16 @@ async function main() {
             2,
           ),
         );
+        break;
+      case "analysis-retry":
+        if (!store.retryFailedAnalysis(required(0, "item ID")))
+          throw new Error("No failed current analysis job found");
+        console.log("Failed analysis requeued");
+        break;
+      case "analysis-reanalyse":
+        if (!store.requestReanalysis(required(0, "item ID")))
+          throw new Error("Item is not eligible for reanalysis");
+        console.log("Reanalysis queued");
         break;
       case "analysis-reconcile": {
         const budget = new AnalysisBudget(store.sqlite, {
@@ -139,11 +152,12 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <init|analysis-reservations|analysis-reconcile KEY|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <init|analysis-reservations|analysis-reconcile KEY|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
     store.close();
+    analysisLock?.close();
   }
 }
 main().catch((e) => {

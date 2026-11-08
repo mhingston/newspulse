@@ -50,13 +50,7 @@ export function analysisHandler(
       .digest("hex");
     const profileStore = new ProfileStore(store.sqlite);
     const active = profileStore.activeInterests();
-    const editorial = new Map<
-      string,
-      ReturnType<ProfileStore["export"]>[number]
-    >();
-    for (const p of profileStore.export())
-      if (p.kind === "editorial") editorial.set(p.id, p);
-    const profiles = [...active, ...editorial.values()];
+    const profiles = [...active, ...profileStore.latestEditorial()];
     client.prepare(text, source, profiles);
     const prior = store.sqlite
       .query<

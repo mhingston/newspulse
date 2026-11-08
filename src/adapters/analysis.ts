@@ -91,6 +91,7 @@ export class OpenAICompatibleAnalysis {
     const timeout = AbortSignal.timeout(this.settings.timeoutMs);
     const response = await this.fetcher(this.settings.endpoint, {
       method: "POST",
+      redirect: "error",
       headers: {
         "content-type": "application/json",
         authorization: `Bearer ${this.settings.apiKey}`,

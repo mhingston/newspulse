@@ -29,7 +29,7 @@ export function analysisConfig(
     "ANALYSIS_TOTAL_MICROS",
     "ANALYSIS_CALL_MICROS",
   ];
-  if (!keys.some((k) => env[k] !== undefined)) return null;
+  if (!keys.some((k) => (env[k] ?? "").trim() !== "")) return null;
   const parsed = schema.parse(env);
   return {
     endpoint: parsed.ANALYSIS_ENDPOINT,
