@@ -275,6 +275,11 @@ export class Store {
       .immediate();
   }
   private markGroupingDirty(itemId: string, now: number): void {
+    // Invalidate before reusing an already-pending grouping job: the queued
+    // job must observe new evidence rather than reusing a cached snapshot.
+    this.sqlite
+      .query("UPDATE story_grouping_state SET fingerprint='dirty' WHERE id=1")
+      .run();
     const last = this.sqlite
       .query<{ generation: number; status: string }, [string]>(
         "SELECT generation,status FROM processing_jobs WHERE stage='group' AND item_id=? ORDER BY generation DESC LIMIT 1",

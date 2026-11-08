@@ -93,19 +93,22 @@ export class StoryStore {
    * under BEGIN IMMEDIATE so a concurrent writer cannot commit a stale plan.
    */
   reconcile(now = Date.now()): GroupingResult {
-    const inputs = this.inputs();
-    const fingerprint = hash([STORY_RULE_VERSION, inputs]);
     const prior = this.sqlite
       .query<{ fingerprint: string }, []>(
         "SELECT fingerprint FROM story_grouping_state WHERE id=1",
       )
       .get();
-    if (prior?.fingerprint === fingerprint)
+    // All evidence mutations mark the snapshot dirty transactionally.
+    // Subsequent queued jobs may therefore skip the full library scan.
+    if (prior?.fingerprint.startsWith(STORY_RULE_VERSION + ":"))
       return { changed: false, groups: 0, members: 0 };
+    const inputs = this.inputs();
+    const snapshotHash = hash([STORY_RULE_VERSION, inputs]);
+    const fingerprint = STORY_RULE_VERSION + ":" + snapshotHash;
     const plan = planStories(inputs);
     return this.sqlite
       .transaction(() => {
-        if (hash([STORY_RULE_VERSION, this.inputs()]) !== fingerprint)
+        if (hash([STORY_RULE_VERSION, this.inputs()]) !== snapshotHash)
           return {
             changed: false,
             stale: true,
