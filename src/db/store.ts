@@ -528,6 +528,11 @@ export class Store {
       jobs: this.sqlite
         .query("SELECT status,count(*) AS count FROM jobs GROUP BY status")
         .all(),
+      processing_jobs: this.sqlite
+        .query(
+          "SELECT stage,status,count(*) AS count FROM processing_jobs GROUP BY stage,status ORDER BY stage,status",
+        )
+        .all(),
       items: this.sqlite.query("SELECT count(*) AS count FROM items").get(),
       milestone: "M1",
       ai: "not_enabled",
