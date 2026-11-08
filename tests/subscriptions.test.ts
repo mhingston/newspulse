@@ -216,6 +216,32 @@ test("RSS 1.0 RDF retains native identity and resolved citation", async () => {
   expect(result.items[0]?.text).toBe("Body & more");
 });
 
+test("RDF preserves non-HTTP native identifiers across article link corrections", async () => {
+  const xml = (link: string) =>
+    `<rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#" xmlns="http://purl.org/rss/1.0/"><item rdf:about="urn:uuid:example-article"><title>Article</title><link>${link}</link><description>Body</description></item></rdf:RDF>`;
+  const original = await new RssAdapter(
+    async () => new Response(xml("https://example.test/old")),
+  ).poll("https://example.test/feed", {});
+  const corrected = await new RssAdapter(
+    async () => new Response(xml("https://example.test/new")),
+  ).poll("https://example.test/feed", {});
+  expect(original.items[0]?.nativeId).toBe("urn:uuid:example-article");
+  expect(corrected.items[0]?.nativeId).toBe(original.items[0]?.nativeId);
+  expect(corrected.items[0]?.sourceUrl).toBe("https://example.test/new");
+
+  const store = new Store(":memory:");
+  store.addSource("https://example.test/feed");
+  for (const [i, result] of [original, corrected].entries()) {
+    const now = i * 2 + 1;
+    store.enqueueDue(now, true);
+    expect(store.complete(store.claim(now)!, result, now + 1)).toBe(true);
+  }
+  const rows = store.search("Article");
+  expect(rows).toHaveLength(1);
+  expect(store.getItem(rows[0]!.id)?.content_versions).toHaveLength(2);
+  store.close();
+});
+
 test("raising truncated feed entry budget clears validators so omitted entries can be recovered", () => {
   const s = new Store(":memory:");
   const source = s.addSource("https://example.test/feed");
