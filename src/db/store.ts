@@ -248,11 +248,11 @@ export class Store {
       this.sqlite
         .query<
           { result: string | null },
-          [string, string, number | null, string, string]
+          [string, string, number | null, string]
         >(
-          "SELECT result FROM processing_jobs WHERE stage=? AND item_id=? AND generation=coalesce(?,(SELECT max(generation) FROM processing_jobs WHERE stage=? AND item_id=?)) AND status='done'",
+          "SELECT result FROM processing_jobs WHERE stage=? AND item_id=? AND generation=coalesce(?,(SELECT max(generation) FROM processing_jobs WHERE stage='extract' AND item_id=?)) AND status='done'",
         )
-        .get(stage, itemId, generation ?? null, stage, itemId)?.result ?? null
+        .get(stage, itemId, generation ?? null, itemId)?.result ?? null
     );
   }
   failProcessing(job: ProcessingJob, error: string, now = Date.now()): boolean {

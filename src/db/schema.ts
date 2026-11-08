@@ -4,6 +4,7 @@ import {
   text,
   integer,
   uniqueIndex,
+  index,
 } from "drizzle-orm/sqlite-core";
 export const sources = sqliteTable("sources", {
   id: text().primaryKey(),
@@ -105,6 +106,13 @@ export const processingJobs = sqliteTable(
       t.stage,
       t.itemId,
       t.generation,
+    ),
+    index("processing_lease_idx").on(t.status, t.leaseUntil),
+    index("processing_due_idx").on(
+      t.stage,
+      t.status,
+      t.availableAt,
+      t.createdAt,
     ),
   ],
 );

@@ -461,3 +461,66 @@ test("same native ID enrichment creates a new generation and exposes current res
   expect(store.search("new body")[0]?.id).toBe(id);
   store.close();
 });
+
+test("default stage results follow current extraction generation", () => {
+  const store = new Store(":memory:");
+  store.addSource("https://example.com/feed");
+  store.enqueueDue(1);
+  store.complete(
+    store.claim(1)!,
+    { items: [{ nativeId: "a", title: "Alpha", text: "" }] },
+    2,
+  );
+  const id = store.search("Alpha")[0]!.id;
+  let now = 3;
+  for (const [stage, status] of [
+    ["extract", "extracted"],
+    ["analyse", "analysed"],
+    ["score", "scored"],
+  ] as const) {
+    expect(
+      store.completeProcessing(
+        store.claimProcessing(stage, now)!,
+        status,
+        now + 1,
+        "old",
+      ),
+    ).toBe(true);
+    now += 2;
+  }
+  store.enqueueDue(now, true);
+  store.complete(
+    store.claim(now)!,
+    { items: [{ nativeId: "a", title: "Alpha", text: "body" }] },
+    now + 1,
+  );
+  expect(store.processingResult("analyse", id)).toBeNull();
+  expect(store.processingResult("score", id)).toBeNull();
+  expect(store.processingResult("analyse", id, 1)).toBe("old");
+  const job = store.claimProcessing("extract", now + 2)!;
+  store.completeProcessing(job, "unavailable", now + 3);
+  expect(store.processingResult("analyse", id)).toBeNull();
+  store.close();
+});
+
+test("processing queue queries use indexes for reclaim and due work", () => {
+  const store = new Store(":memory:");
+  const reclaim = store.sqlite
+    .query<{ detail: string }, []>(
+      "EXPLAIN QUERY PLAN SELECT id FROM processing_jobs WHERE status='running' AND lease_until<=100",
+    )
+    .all();
+  const due = store.sqlite
+    .query<{ detail: string }, []>(
+      "EXPLAIN QUERY PLAN SELECT id FROM processing_jobs WHERE stage='extract' AND status='pending' AND available_at<=100 ORDER BY available_at,created_at LIMIT 1",
+    )
+    .all();
+  expect(
+    reclaim.some((row) => row.detail.includes("processing_lease_idx")),
+  ).toBe(true);
+  expect(due.some((row) => row.detail.includes("processing_due_idx"))).toBe(
+    true,
+  );
+  expect(due.some((row) => row.detail.includes("TEMP B-TREE"))).toBe(false);
+  store.close();
+});
