@@ -1,0 +1,33 @@
+{
+  "name": "newspulse",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "bun": ">=1.4.4"
+  },
+  "scripts": {
+    "start": "bun src/main.ts",
+    "cli": "bun src/cli.ts",
+    "test": "bun test",
+    "typecheck": "tsc --noEmit",
+    "db:generate": "drizzle-kit generate",
+    "smoke": "bun tests/smoke.ts",
+    "format:check": "prettier --check src tests package.json tsconfig.json drizzle.config.ts compose.yaml README.md AGENTS.md docs .github"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.32.2",
+    "drizzle-orm": "0.45.4",
+    "entities": "9.0.0",
+    "fast-xml-parser": "5.12.0",
+    "hono": "4.13.17",
+    "resend": "6.37.0",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/bun": "1.4.4",
+    "drizzle-kit": "0.31.11",
+    "prettier": "3.9.10",
+    "typescript": "7.0.2"
+  }
+}

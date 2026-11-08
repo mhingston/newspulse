@@ -1,0 +1,336 @@
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import { mkdirSync } from "node:fs";
+import { dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  canonicalUrl,
+  identity,
+  type Candidate,
+  type PollResult,
+} from "../domain";
+export interface Source {
+  id: string;
+  kind: string;
+  url: string;
+  title: string;
+  enabled: number;
+  poll_seconds: number;
+  next_poll: number;
+  failures: number;
+  last_error: string | null;
+  last_success: number | null;
+}
+export interface Job {
+  id: string;
+  source_id: string;
+  attempts: number;
+  lease_token: string;
+}
+export interface Item {
+  id: string;
+  identity: string;
+  url: string | null;
+  title: string;
+  published_at: number | null;
+  ingested_at: number;
+  status: string;
+  text?: string;
+}
+export class Store {
+  readonly sqlite: Database;
+  constructor(path: string) {
+    if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
+    this.sqlite = new Database(path, { create: true, strict: true });
+    this.sqlite.exec(
+      "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=5000; PRAGMA foreign_keys=ON;",
+    );
+    migrate(drizzle(this.sqlite), {
+      migrationsFolder: fileURLToPath(
+        new URL("../../drizzle", import.meta.url),
+      ),
+    });
+  }
+  close() {
+    this.sqlite.close();
+  }
+  addSource(url: string, title = url, pollSeconds = 1800): Source {
+    if (!Number.isInteger(pollSeconds) || pollSeconds < 60)
+      throw new Error("Polling interval must be an integer >= 60 seconds");
+    url = canonicalUrl(url);
+    this.sqlite
+      .query(
+        "INSERT INTO sources(id,url,title,poll_seconds) VALUES(?,?,?,?) ON CONFLICT(url) DO NOTHING",
+      )
+      .run(crypto.randomUUID(), url, title, pollSeconds);
+    return this.sqlite
+      .query<Source, [string]>("SELECT * FROM sources WHERE url=?")
+      .get(url)!;
+  }
+  sources(): Source[] {
+    return this.sqlite
+      .query<Source, []>("SELECT * FROM sources ORDER BY title")
+      .all();
+  }
+  source(id: string): Source | null {
+    return this.sqlite
+      .query<Source, [string]>("SELECT * FROM sources WHERE id=?")
+      .get(id);
+  }
+  state(id: string): { etag?: string; lastModified?: string } {
+    const row = this.sqlite
+      .query<{ etag: string | null; last_modified: string | null }, [string]>(
+        "SELECT * FROM source_state WHERE source_id=?",
+      )
+      .get(id);
+    return {
+      etag: row?.etag ?? undefined,
+      lastModified: row?.last_modified ?? undefined,
+    };
+  }
+  enqueueDue(now = Date.now(), force = false): number {
+    return this.sqlite
+      .transaction(() => {
+        let count = 0;
+        for (const s of this.sources().filter(
+          (s) => s.enabled && (force || s.next_poll <= now),
+        )) {
+          count += this.sqlite
+            .query(
+              "INSERT OR IGNORE INTO jobs(id,source_id,available_at,created_at) VALUES(?,?,?,?)",
+            )
+            .run(crypto.randomUUID(), s.id, now, now).changes;
+        }
+        return count;
+      })
+      .immediate();
+  }
+  claim(now = Date.now()): Job | null {
+    return this.sqlite
+      .transaction(() => {
+        this.sqlite
+          .query(
+            "UPDATE jobs SET status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END, lease_token=NULL, lease_until=NULL, last_error='Expired lease recovered' WHERE status='running' AND lease_until<=?",
+          )
+          .run(now);
+        return this.sqlite
+          .query<Job, [string, number, number]>(
+            `UPDATE jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=?
+        WHERE id=(SELECT id FROM jobs WHERE status='pending' AND available_at<=? ORDER BY available_at,created_at LIMIT 1)
+        RETURNING id,source_id,attempts,lease_token`,
+          )
+          .get(crypto.randomUUID(), now + 60_000, now);
+      })
+      .immediate();
+  }
+  private insert(
+    candidate: Candidate,
+    sourceId: string,
+    now: number,
+    parentId?: string,
+  ): string {
+    const prior = this.sqlite
+      .query<{ item_id: string }, [string, string]>(
+        "SELECT item_id FROM item_sources WHERE source_id=? AND native_id=?",
+      )
+      .get(sourceId, candidate.nativeId);
+    if (prior) return prior.item_id;
+    const key = identity(candidate, sourceId);
+    this.sqlite
+      .query(
+        "INSERT INTO items(id,identity,url,title,published_at,ingested_at) VALUES(?,?,?,?,?,?) ON CONFLICT(identity) DO UPDATE SET published_at=coalesce(items.published_at,excluded.published_at)",
+      )
+      .run(
+        crypto.randomUUID(),
+        key,
+        candidate.url ? canonicalUrl(candidate.url) : null,
+        candidate.title,
+        candidate.publishedAt ?? null,
+        now,
+      );
+    const item = this.sqlite
+      .query<{ id: string }, [string]>("SELECT id FROM items WHERE identity=?")
+      .get(key)!;
+    this.sqlite
+      .query(
+        "INSERT INTO item_sources(item_id,source_id,native_id,url,parent_item_id) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        item.id,
+        sourceId,
+        candidate.nativeId,
+        candidate.sourceUrl ?? candidate.url ?? null,
+        parentId ?? null,
+      );
+    // Digest candidates can arrive before a feed supplies the actual body.
+    if (candidate.text) {
+      this.sqlite
+        .query(
+          `UPDATE items SET title=? WHERE id=? AND EXISTS
+        (SELECT 1 FROM content WHERE item_id=? AND text='')`,
+        )
+        .run(candidate.title, item.id, item.id);
+    }
+    this.sqlite
+      .query(
+        "INSERT INTO content(item_id,text) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text WHERE content.text=''",
+      )
+      .run(item.id, candidate.text);
+    for (const child of candidate.children ?? [])
+      this.insert(
+        {
+          nativeId: `child:${candidate.nativeId}:${child.url}`,
+          url: child.url,
+          sourceUrl: child.sourceUrl,
+          title: child.title,
+          text: "",
+        },
+        sourceId,
+        now,
+        item.id,
+      );
+    return item.id;
+  }
+  complete(job: Job, result: PollResult, now = Date.now()): boolean {
+    return this.sqlite
+      .transaction(() => {
+        if (!this.owns(job, now)) return false;
+        for (const item of result.items) this.insert(item, job.source_id, now);
+        this.sqlite
+          .query(
+            "INSERT INTO source_state(source_id,etag,last_modified,last_checked) VALUES(?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,last_checked=excluded.last_checked",
+          )
+          .run(
+            job.source_id,
+            result.etag ?? null,
+            result.lastModified ?? null,
+            now,
+          );
+        this.sqlite
+          .query(
+            "UPDATE sources SET failures=0,last_error=NULL,last_success=?,next_poll=?+poll_seconds*1000 WHERE id=?",
+          )
+          .run(now, now, job.source_id);
+        this.sqlite
+          .query(
+            "UPDATE jobs SET status='done',finished_at=?,lease_token=NULL,lease_until=NULL WHERE id=? AND lease_token=?",
+          )
+          .run(now, job.id, job.lease_token);
+        return true;
+      })
+      .immediate();
+  }
+  private owns(job: Job, now: number): boolean {
+    return !!this.sqlite
+      .query(
+        "SELECT 1 FROM jobs WHERE id=? AND status='running' AND lease_token=? AND lease_until>?",
+      )
+      .get(job.id, job.lease_token, now);
+  }
+  fail(job: Job, error: string, retryAfterMs = 0, now = Date.now()): void {
+    this.sqlite
+      .transaction(() => {
+        if (!this.owns(job, now)) return;
+        const next =
+          now +
+          Math.max(
+            retryAfterMs,
+            Math.min(3600_000, 30_000 * 2 ** (job.attempts - 1)),
+          );
+        this.sqlite
+          .query(
+            "UPDATE jobs SET status=?,available_at=?,last_error=?,lease_token=NULL,lease_until=NULL,finished_at=? WHERE id=?",
+          )
+          .run(
+            job.attempts >= 5 ? "failed" : "pending",
+            next,
+            error.slice(0, 2000),
+            job.attempts >= 5 ? now : null,
+            job.id,
+          );
+        this.sqlite
+          .query(
+            "UPDATE sources SET failures=failures+1,last_error=?,next_poll=? WHERE id=?",
+          )
+          .run(error.slice(0, 2000), next, job.source_id);
+      })
+      .immediate();
+  }
+  search(
+    query: string,
+    limit = 20,
+    sourceId?: string,
+    since?: number,
+    offset = 0,
+  ): Item[] {
+    const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
+    if (!terms.length) return [];
+    const match = terms
+      .slice(0, 30)
+      .map((x) => '"' + x + '"')
+      .join(" AND ");
+    return this.sqlite
+      .query<
+        Item,
+        [
+          string,
+          string | null,
+          string | null,
+          number | null,
+          number | null,
+          number,
+          number,
+        ]
+      >(
+        `SELECT i.*,snippet(items_fts,1,'','', ' … ',32) AS text
+      FROM items_fts JOIN items i ON i.rowid=items_fts.rowid WHERE items_fts MATCH ?
+      AND (? IS NULL OR EXISTS(SELECT 1 FROM item_sources r WHERE r.item_id=i.id AND r.source_id=?))
+      AND (? IS NULL OR i.ingested_at>=?) ORDER BY bm25(items_fts),i.id LIMIT ? OFFSET ?`,
+      )
+      .all(
+        match,
+        sourceId ?? null,
+        sourceId ?? null,
+        since ?? null,
+        since ?? null,
+        Math.max(1, Math.min(100, limit)),
+        offset,
+      );
+  }
+  getItem(id: string) {
+    const item = this.sqlite
+      .query<Item, [string]>(
+        "SELECT i.*,c.text FROM items i LEFT JOIN content c ON c.item_id=i.id WHERE i.id=?",
+      )
+      .get(id);
+    if (!item) return null;
+    return {
+      ...item,
+      references: this.sqlite
+        .query(
+          "SELECT r.*,s.title AS source_title,s.url AS feed_url FROM item_sources r JOIN sources s ON s.id=r.source_id WHERE r.item_id=?",
+        )
+        .all(id),
+      summary: null,
+      analysis_status: "not_implemented",
+      content_kind: "untrusted_source_content",
+    };
+  }
+  status() {
+    return {
+      sources: this.sources(),
+      jobs: this.sqlite
+        .query("SELECT status,count(*) AS count FROM jobs GROUP BY status")
+        .all(),
+      items: this.sqlite.query("SELECT count(*) AS count FROM items").get(),
+      milestone: "M1",
+      ai: "not_enabled",
+    };
+  }
+  backup(path: string): void {
+    if (path === ":memory:") throw new Error("Backup needs a file path");
+    mkdirSync(dirname(path), { recursive: true });
+    this.sqlite.query("VACUUM INTO ?").run(path);
+  }
+}

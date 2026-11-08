@@ -1,0 +1,39 @@
+{
+  "version": 1,
+  "status": "seed-only; scoring replay begins in M2",
+  "synthetic_interest": "Practical small specialist models for robotics, with reproducible evidence",
+  "items": [
+    {
+      "id": "relevant",
+      "url": "https://example.com/small-robot-model",
+      "title": "Small robotics model with reproducible benchmarks",
+      "text": "Released weights, test protocol and hardware latency measurements.",
+      "label": "relevant",
+      "reason": "Direct topic match with inspectable evidence"
+    },
+    {
+      "id": "irrelevant",
+      "url": "https://example.com/fashion",
+      "title": "Seasonal fashion trends",
+      "text": "A clothing retailer publishes its seasonal collection.",
+      "label": "irrelevant",
+      "reason": "Outside the explicit synthetic interest"
+    },
+    {
+      "id": "duplicate",
+      "url": "https://example.com/small-robot-model?utm_source=digest",
+      "title": "Same robotics release via digest",
+      "text": "The same release surfaced in another subscription.",
+      "label": "duplicate",
+      "duplicate_of": "relevant"
+    },
+    {
+      "id": "borderline",
+      "url": "https://example.com/robotics-discussion",
+      "title": "Community speculation about tiny robotics models",
+      "text": "An adjacent discussion makes unverified claims without benchmarks.",
+      "label": "borderline",
+      "reason": "Potentially useful adjacent topic, weak supporting evidence"
+    }
+  ]
+}
