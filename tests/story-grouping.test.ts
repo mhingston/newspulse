@@ -81,7 +81,10 @@ test("replay and arrival order produce stable partitions and canonical group key
 
 test("recorded evaluation fixture distinguishes developments and historical links", () => {
   const fixture = JSON.parse(
-    readFileSync(new URL("./fixtures/evaluation.json", import.meta.url), "utf8"),
+    readFileSync(
+      new URL("./fixtures/evaluation.json", import.meta.url),
+      "utf8",
+    ),
   ) as {
     story_evaluation: {
       cases: {
