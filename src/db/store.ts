@@ -517,6 +517,15 @@ export class Store {
           "SELECT stage,generation,status,outcome,attempts,last_error,available_at FROM processing_jobs WHERE item_id=? ORDER BY created_at,stage",
         )
         .all(id),
+      extraction: (() => {
+        const value = this.processingResult("extract", id);
+        if (!value) return null;
+        try {
+          return JSON.parse(value) as { text?: string; status?: string };
+        } catch {
+          return null;
+        }
+      })(),
       summary: null,
       analysis_status: "not_implemented",
       content_kind: "untrusted_source_content",

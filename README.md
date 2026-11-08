@@ -110,7 +110,7 @@ The smoke test uses local RSS/Atom HTTP fixtures, imports OPML, ingests duplicat
 
 Feed decoding follows [RFC 7303 §3.2](https://www.rfc-editor.org/rfc/rfc7303#section-3.2): BOM first, then HTTP charset, then XML declaration/autodetection, defaulting to UTF-8. UTF-16LE/BE and legacy encodings supported by Bun's TextDecoder are covered; unsupported encodings (including UTF-32) and invalid bytes produce explicit feed-health errors instead of silent replacement characters.
 
-See [architecture and roadmap](docs/architecture.md) for the initial schema, reference-project findings, compatibility evidence, defaults and limitations. M1 searches feed-provided content only; full article fetching, semantic deduplication, editorial ranking and proactive discoveries are not available yet. This release has no relevance-quality baseline: those evaluations require the M2 scoring pipeline and representative labeled data.
+See [architecture and roadmap](docs/architecture.md) for the initial schema, reference-project findings, compatibility evidence, defaults and limitations. Semantic deduplication, editorial ranking and proactive discoveries are not available yet. This release has no relevance-quality baseline: those evaluations require the M2 scoring pipeline and representative labeled data.
 
 ### Interest and editorial profiles
 
@@ -148,3 +148,4 @@ Create a JSON array such as the following, then import it using `bun run cli imp
 Priority ranges from 1 to 5. A temporary interest requires `expiresAt`, an epoch millisecond timestamp; at and after expiry it is excluded from active interests while historical versions remain available. Persistent interests omit `expiresAt`. Editorial criteria are separate from interests. Query scheduling, feedback records and analysis references are implemented in later milestones; `feedbackRefs` contains explicit external identifiers and does not infer feedback from reading behavior. No discovery is scheduled by profile import alone.
 
 Optional, deterministic starting editorial criteria for six content types are in `examples/editorial-profiles.json`; import them explicitly if useful. They are configuration for later scoring, not claims that scoring is implemented.
+Article extraction runs asynchronously after ingestion for public HTTP(S) item URLs. Search and MCP retain feed text while full text is pending or unavailable. See [architecture notes](docs/architecture.md#http-article-extraction) for destination restrictions, limits and extraction behavior.
