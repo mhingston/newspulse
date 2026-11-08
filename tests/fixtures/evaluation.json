@@ -35,5 +35,42 @@
       "label": "borderline",
       "reason": "Potentially useful adjacent topic, weak supporting evidence"
     }
-  ]
+  ],
+  "story_evaluation": {
+    "version": "specific-development-v1",
+    "cases": [
+      {
+        "id": "atlas-release",
+        "title": "Acme releases Atlas 2 robotics model",
+        "day": 0,
+        "development": "atlas-2-release"
+      },
+      {
+        "id": "atlas-coverage",
+        "title": "Atlas 2 robotics model launched by Acme",
+        "day": 0,
+        "development": "atlas-2-release"
+      },
+      {
+        "id": "orion-release",
+        "title": "Acme releases Orion 3 robotics model",
+        "day": 0,
+        "development": "orion-3-release"
+      },
+      {
+        "id": "atlas-recall",
+        "title": "Acme recalls Atlas 2 robotics model",
+        "day": 7,
+        "development": "atlas-2-recall",
+        "follows": "atlas-2-release"
+      },
+      {
+        "id": "unrelated",
+        "title": "New robotics model trends across industry",
+        "day": 0,
+        "development": "unrelated"
+      }
+    ],
+    "notes": "Negative controls distinguish different products, generic topics and substantive follow-ups. Deterministic rules prioritize precision over recall."
+  }
 }

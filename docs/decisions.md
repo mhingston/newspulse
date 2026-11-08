@@ -50,6 +50,10 @@ Prefer ordinary HTTP extraction and structured APIs for GitHub/HN. Reddit initia
 
 Use versioned recorded evaluation data, offline score replay, source-linked outputs and failure-injection tests. Measure relevant discoveries beyond subscriptions, top-result precision, duplicates, known-important-development misses, source reliability, cost/useful discovery and latency. Capture a comparable Newsweave baseline when practical and report when it is unavailable. Required issues need merged, verified behavior. M5 refinements and optional stdio require a documented evaluation and implemented adoption or justified non-adoption; optional ideas do not become mandatory features merely because they have tracking issues. Basis: §§12–15.
 
+## D13 — Story groups are explainable and independent of item identity
+
+A specific-development group is a *relationship* among canonical items, not a replacement for any item or original source citation. Prefer deterministic, negative-tested lexical, entity, version, temporal and content-hash evidence to an unmeasured semantic model. Persist the rule version and explicit membership evidence. Corrections end memberships and retain their audit trail; a later substantive update is a distinct group with an optional directional historical link. Reconciliation runs through durable processing jobs and avoids paid analysis. Snapshot-wide calculation is the initial implementation, not an indefinitely accepted scalability guarantee. No vector store, mandatory model, external queue or publisher rewrite is justified by #6.
+
 ## Updating decisions
 
 For a consequential change, record the affected D-number, evidence, chosen alternative, compatibility/data consequences and rollback. Update the affected issue and operator-facing README. Do not silently change the product toward reader UI, uncontrolled discovery spend or a provider-specific conversational system. The original handoff is an archived requirement source; new approved decisions are recorded here, not retroactively edited into it.
