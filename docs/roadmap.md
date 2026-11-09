@@ -130,4 +130,4 @@ Required children need merged implementation, linked acceptance evidence and upd
 
 If current provider terms, schema ownership or dependency contracts invalidate an issue, record evidence and replan before introducing a new service or security boundary. A missing live credential blocks live verification, not deterministic implementation and contract tests. M1 is not the complete product; the remaining backlog makes that boundary explicit.
 
-The #10 inbound slice persists verified event/message identities and retrieved bodies, and reconciles the provider's paginated received list. Searchable newsletter originals and linked-article attribution remain #11; receiving alone does not complete the M3 briefing.
+The #10 and #11 inbound slices persist and reconcile received messages, index newsletter originals and ingest attributed linked articles. They do not send a briefing; outbound delivery remains #12.

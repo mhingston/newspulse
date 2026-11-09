@@ -379,6 +379,8 @@ export const inboundMessages = sqliteTable(
     receivedAt: integer("received_at").notNull(),
     metadata: text().notNull(),
     body: text(),
+    itemId: text("item_id").references(() => items.id),
+    indexDiagnostics: text("index_diagnostics"),
     status: text().notNull().default("pending"),
     attempts: integer().notNull().default(0),
     availableAt: integer("available_at").notNull(),
@@ -391,6 +393,7 @@ export const inboundMessages = sqliteTable(
     uniqueIndex("inbound_message_identity").on(t.provider, t.providerId),
     index("inbound_message_due").on(t.status, t.availableAt, t.id),
     index("inbound_message_lease").on(t.status, t.leaseUntil),
+    index("inbound_message_index_due").on(t.status, t.itemId, t.id),
   ],
 );
 
