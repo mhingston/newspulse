@@ -1,0 +1,122 @@
+{
+  "version": 1,
+  "id": "synthetic-robotics-v1",
+  "asOf": 1794000000000,
+  "profiles": [
+    {
+      "kind": "interest",
+      "id": "synthetic-robotics",
+      "version": 1,
+      "description": "Synthetic evaluation interest; not a user preference",
+      "entities": ["robotics"],
+      "keywords": ["robot model", "robotics"],
+      "priority": 4,
+      "positive": ["benchmarks", "research"],
+      "negative": ["advertising"],
+      "queries": [],
+      "lifetime": "persistent",
+      "feedbackRefs": []
+    }
+  ],
+  "items": [
+    {
+      "id": "atlas-release",
+      "title": "Acme releases Atlas 2 robotics model",
+      "text": "Robotics research release provides reproducible benchmarks, model weights, laboratory protocols, hardware measurements, evaluation scripts, independent comparisons, practical implementation notes and detailed results for the Atlas system.",
+      "publishedAt": 1793990000000,
+      "relevance": "relevant",
+      "development": "atlas-2-release",
+      "important": true,
+      "outsideSubscription": true,
+      "analysis": null
+    },
+    {
+      "id": "atlas-duplicate",
+      "title": "Atlas 2 robotics model launched by Acme",
+      "text": "Robotics research release provides reproducible benchmarks, model weights, laboratory protocols, hardware measurements, evaluation scripts, independent comparisons, practical implementation notes and detailed results for the Atlas system.",
+      "publishedAt": 1793990000000,
+      "relevance": "relevant",
+      "development": "atlas-2-release",
+      "important": true,
+      "outsideSubscription": false,
+      "analysis": null
+    },
+    {
+      "id": "orion-release",
+      "title": "Acme releases Orion 3 robotics model",
+      "text": "Robotics research release provides Orion weights and reproducible benchmarks with implementation guidance, independent comparisons and transparent laboratory measurements for a new robot model.",
+      "publishedAt": 1793980000000,
+      "relevance": "relevant",
+      "development": "orion-3-release",
+      "important": true,
+      "outsideSubscription": true,
+      "analysis": null
+    },
+    {
+      "id": "atlas-recall",
+      "title": "Acme recalls Atlas 2 robotics model",
+      "text": "Robotics security recall follows a safety defect in the Atlas controller. The research team provides practical remediation and measurements for users.",
+      "publishedAt": 1793900000000,
+      "relevance": "relevant",
+      "development": "atlas-2-recall",
+      "important": true,
+      "outsideSubscription": false,
+      "analysis": null
+    },
+    {
+      "id": "old-robotics",
+      "title": "Older robotics tutorial",
+      "text": "Robotics research tutorial describes an earlier robot model implementation and shares its historical benchmarks.",
+      "publishedAt": 1789000000000,
+      "relevance": "relevant",
+      "development": "old-tutorial",
+      "important": false,
+      "outsideSubscription": true,
+      "analysis": null
+    },
+    {
+      "id": "discussion",
+      "title": "Robotics model community speculation",
+      "text": "An informal robotics discussion speculates about a future robot model without benchmarks or source material.",
+      "publishedAt": 1793990000000,
+      "relevance": "borderline",
+      "development": "speculation",
+      "important": false,
+      "outsideSubscription": true,
+      "analysis": null
+    },
+    {
+      "id": "advertisement",
+      "title": "Robotics advertising campaign",
+      "text": "Advertising promotes a robotics product without research or benchmarks.",
+      "publishedAt": 1793990000000,
+      "relevance": "irrelevant",
+      "development": "advertisement",
+      "important": false,
+      "outsideSubscription": false,
+      "analysis": null
+    },
+    {
+      "id": "fashion",
+      "title": "Seasonal fashion collection",
+      "text": "A retailer publishes a seasonal clothing collection.",
+      "publishedAt": 1793990000000,
+      "relevance": "irrelevant",
+      "development": "fashion",
+      "important": false,
+      "outsideSubscription": true,
+      "analysis": null
+    },
+    {
+      "id": "unknown-label",
+      "title": "Robotics update with uncertain relevance",
+      "text": "Robotics notes mention a robot model but contain no evaluation labels.",
+      "publishedAt": null,
+      "relevance": null,
+      "development": null,
+      "important": null,
+      "outsideSubscription": null,
+      "analysis": null
+    }
+  ]
+}

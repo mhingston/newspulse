@@ -1,0 +1,365 @@
+{
+  "corpus": {
+    "id": "synthetic-robotics-v1",
+    "version": 1,
+    "hash": "7aa1b833fc2147ee470adeafde4633217d0c44f43ad5105bb8e600d93a4f942b"
+  },
+  "config": {
+    "k": 5,
+    "asOf": 1794000000000,
+    "criteriaVersion": "deterministic-v1",
+    "groupingVersion": "specific-development-v1",
+    "profiles": [
+      {
+        "id": "synthetic-robotics",
+        "version": 1
+      }
+    ],
+    "models": []
+  },
+  "ranking": [
+    {
+      "id": "orion-release",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 95,
+          "novelty": 100,
+          "substance": 40,
+          "evidence": 30,
+          "practical": 70,
+          "impact": 30,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 70,
+        "eligible": true,
+        "reasons": [
+          "interest:synthetic-robotics@1: robotics, robot model, robotics"
+        ],
+        "uncertainty": ["history_unavailable", "analysis_unavailable"]
+      },
+      "groupId": "story:4ba1dc8e50183ef5815b20ba",
+      "eligible": true
+    },
+    {
+      "id": "atlas-duplicate",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 85,
+          "novelty": 100,
+          "substance": 40,
+          "evidence": 30,
+          "practical": 70,
+          "impact": 30,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 67,
+        "eligible": true,
+        "reasons": ["interest:synthetic-robotics@1: robotics, robotics"],
+        "uncertainty": ["history_unavailable", "analysis_unavailable"]
+      },
+      "groupId": "story:a424cf2f328fff8706280e88",
+      "eligible": true
+    },
+    {
+      "id": "atlas-release",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 85,
+          "novelty": 100,
+          "substance": 40,
+          "evidence": 30,
+          "practical": 70,
+          "impact": 30,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 67,
+        "eligible": true,
+        "reasons": ["interest:synthetic-robotics@1: robotics, robotics"],
+        "uncertainty": ["history_unavailable", "analysis_unavailable"]
+      },
+      "groupId": "story:a424cf2f328fff8706280e88",
+      "eligible": true
+    },
+    {
+      "id": "atlas-recall",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 80,
+          "novelty": 100,
+          "substance": 40,
+          "evidence": 30,
+          "practical": 30,
+          "impact": 70,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 65,
+        "eligible": true,
+        "reasons": ["interest:synthetic-robotics@1: robotics, robotics"],
+        "uncertainty": ["history_unavailable", "analysis_unavailable"]
+      },
+      "groupId": "story:46f5ee28c029ad0cfc5b2625",
+      "eligible": true
+    },
+    {
+      "id": "discussion",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 90,
+          "novelty": 100,
+          "substance": 40,
+          "evidence": 30,
+          "practical": 30,
+          "impact": 30,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 65,
+        "eligible": true,
+        "reasons": [
+          "interest:synthetic-robotics@1: robotics, robot model, robotics"
+        ],
+        "uncertainty": ["history_unavailable", "analysis_unavailable"]
+      },
+      "groupId": "story:3cc610240ec72ccfbf16c22b",
+      "eligible": true
+    },
+    {
+      "id": "old-robotics",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 95,
+          "novelty": 10,
+          "substance": 40,
+          "evidence": 30,
+          "practical": 70,
+          "impact": 30,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 57,
+        "eligible": true,
+        "reasons": [
+          "interest:synthetic-robotics@1: robotics, robot model, robotics"
+        ],
+        "uncertainty": ["history_unavailable", "analysis_unavailable"]
+      },
+      "groupId": "story:383e72e53d5d68a825899f8a",
+      "eligible": true
+    },
+    {
+      "id": "advertisement",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 70,
+          "novelty": 100,
+          "substance": 10,
+          "evidence": 30,
+          "practical": 30,
+          "impact": 30,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 55,
+        "eligible": true,
+        "reasons": [
+          "interest:synthetic-robotics@1: robotics, robotics",
+          "negative_preferences:advertising"
+        ],
+        "uncertainty": ["history_unavailable", "analysis_unavailable"]
+      },
+      "groupId": "story:aacfba7d190db7655bedec38",
+      "eligible": true
+    },
+    {
+      "id": "unknown-label",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 85,
+          "novelty": 50,
+          "substance": 10,
+          "evidence": 30,
+          "practical": 30,
+          "impact": 30,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 52,
+        "eligible": true,
+        "reasons": [
+          "interest:synthetic-robotics@1: robotics, robot model, robotics"
+        ],
+        "uncertainty": [
+          "publication_time_unavailable_or_future",
+          "history_unavailable",
+          "analysis_unavailable"
+        ]
+      },
+      "groupId": "story:8a56baa3e2ebdad054df7a2d",
+      "eligible": true
+    }
+  ],
+  "excluded": [
+    {
+      "id": "fashion",
+      "score": {
+        "criteriaVersion": "deterministic-v1",
+        "components": {
+          "relevance": 0,
+          "novelty": 100,
+          "substance": 10,
+          "evidence": 30,
+          "practical": 30,
+          "impact": 30,
+          "nonredundancy": 50
+        },
+        "weights": {
+          "relevance": 35,
+          "novelty": 15,
+          "substance": 10,
+          "evidence": 10,
+          "practical": 10,
+          "impact": 10,
+          "nonredundancy": 10
+        },
+        "total": 30,
+        "eligible": false,
+        "reasons": ["no_interest_match"],
+        "uncertainty": ["history_unavailable", "analysis_unavailable"]
+      },
+      "groupId": "story:309d267f086d5fe5433d5bcc",
+      "eligible": false
+    }
+  ],
+  "metrics": {
+    "precisionAtK": {
+      "numerator": 4,
+      "denominator": 4,
+      "value": 1,
+      "unknown": 1
+    },
+    "duplicateRate": {
+      "numerator": 1,
+      "denominator": 5,
+      "value": 0.2,
+      "unknown": 0
+    },
+    "usefulDiscoveries": {
+      "numerator": 3,
+      "denominator": 4,
+      "value": 0.75,
+      "unknown": 1
+    },
+    "outsideSubscriptionRelevance": {
+      "numerator": 2,
+      "denominator": 2,
+      "value": 1,
+      "unknown": 1
+    },
+    "importantRecall": {
+      "numerator": 3,
+      "denominator": 3,
+      "value": 1,
+      "unknown": 1
+    },
+    "groupPairPrecision": {
+      "numerator": 1,
+      "denominator": 1,
+      "value": 1,
+      "unknown": 0
+    },
+    "groupPairRecall": {
+      "numerator": 1,
+      "denominator": 1,
+      "value": 1,
+      "unknown": 8
+    }
+  },
+  "missedImportantDevelopments": [],
+  "usage": {
+    "providerCalls": 0,
+    "cost": null,
+    "costPerUsefulDiscovery": {
+      "value": null,
+      "usefulDiscoveries": 3,
+      "unknownLabels": 1
+    }
+  },
+  "latencyMs": null,
+  "latencyReason": "No timing observation recorded; elapsed time is environment-dependent and excluded from deterministic replay."
+}
