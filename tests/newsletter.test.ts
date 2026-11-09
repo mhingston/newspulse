@@ -53,6 +53,13 @@ describe("newsletter normalization", () => {
   });
 
   test("handles essays, plain-text Reddit links, and absent bodies", () => {
+    const fragment = normalizeNewsletter(
+      email(
+        '<p>Original fragment text</p><a href="https://example.org/article">Article</a>',
+      ),
+    );
+    expect(fragment.candidate.text).toContain("Original fragment text");
+    expect(fragment.candidate.children).toHaveLength(1);
     const essay = normalizeNewsletter(
       email(null, "An entire newsletter essay without links."),
     );

@@ -81,7 +81,10 @@ export function normalizeNewsletter(email: ReceivedEmail): {
   };
   let text = plain;
   if (html.trim()) {
-    const { document } = parseHTML(html);
+    // linkedom does not populate document.body for standalone HTML fragments.
+    const { document } = parseHTML(
+      /<html(?:\s|>)/i.test(html) ? html : `<html><body>${html}</body></html>`,
+    );
     for (const element of document.querySelectorAll(
       "script,style,noscript,nav,footer,form,svg",
     ))
