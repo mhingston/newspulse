@@ -1,6 +1,6 @@
 # Implementation roadmap and handoff coverage
 
-**M2 implementation snapshot (2026-11-08):** #5 is merged and closed via #38; integration PR #39 has merged. #6 is under development and requires validation, review and merge before closure. #7 follows #6.
+**M2 implementation snapshot (2026-11-09):** #5 and #6 have merged implementations. #7 has a scoring slice under development; its production history/update acceptance remains open, and it must not be closed until the complete contract is merged and verified. GitHub issues and merged code remain authoritative for execution state.
 
 [Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) is the entry point for the complete backlog. It links **22 required core issues and 9 conditional refinement issues**. The original request is preserved in [handoff.md](handoff.md), durable constraints in [decisions.md](decisions.md), and contributor instructions in [AGENTS.md](../AGENTS.md).
 
@@ -122,7 +122,7 @@ The handoff proposes entities, not a mandate to prebuild every empty table. Add 
 
 ## MCP surface ownership
 
-`search_items`, `get_item`, `get_sources`, and `get_status` exist in M1. Completing those plus `get_digest`, `get_discoveries`, `explain_ranking`, and `get_interests` belongs to #19, with early additive read slices during M2/M3. The six mutations (`add_source`, `remove_source`, `update_interest`, `submit_feedback`, `ingest_url`, `trigger_discovery`) belong to #18; manual ingestion service/data comes from #17. Optional stdio is #30. No connecting client is required to delegate conversational reasoning back into this service.
+`search_items`, `get_item`, `get_sources`, and `get_status` exist in M1. The developing #7 slice adds an initial `explain_ranking` history read. Completing those plus `get_digest`, `get_discoveries`, and `get_interests` belongs to #19, with early additive read slices during M2/M3. The six mutations (`add_source`, `remove_source`, `update_interest`, `submit_feedback`, `ingest_url`, `trigger_discovery`) belong to #18; manual ingestion service/data comes from #17. Optional stdio is #30. No connecting client is required to delegate conversational reasoning back into this service.
 
 ## Closure discipline
 

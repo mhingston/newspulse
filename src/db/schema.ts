@@ -220,6 +220,27 @@ export const analysisControl = sqliteTable("analysis_control", {
   envelopeBreach: integer("envelope_breach").notNull().default(0),
 });
 
+/** Immutable, reproducible scoring runs; a new input creates a new row. */
+export const itemScores = sqliteTable(
+  "item_scores",
+  {
+    id: text().primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    generation: integer().notNull(),
+    inputHash: text("input_hash").notNull(),
+    criteriaVersion: text("criteria_version").notNull(),
+    provenance: text().notNull(),
+    result: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("item_score_identity").on(t.itemId, t.generation, t.inputHash),
+    index("item_scores_item").on(t.itemId, t.createdAt),
+  ],
+);
+
 /** Development groups never replace items or original citations. */
 export const storyGroups = sqliteTable("story_groups", {
   id: text().primaryKey(),

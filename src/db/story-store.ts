@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import type { Database } from "bun:sqlite";
+import { invalidateScores } from "./score-queue";
 import {
   planStories,
   STORY_RULE_VERSION,
@@ -189,6 +190,7 @@ export class StoryStore {
               .run(now, group.id);
 
         this.reconcileRelations(plan, now);
+        invalidateScores(this.sqlite, now);
         this.sqlite
           .query(
             "INSERT INTO story_grouping_state(id,fingerprint,updated_at) VALUES(1,?,?) " +

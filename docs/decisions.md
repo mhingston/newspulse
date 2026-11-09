@@ -12,7 +12,7 @@ Use Bun, strict TypeScript, Hono, SQLite through `bun:sqlite`, Drizzle migration
 
 ## D3 — Processing runs continuously, publication separately
 
-Persist/index at ingestion, then independently extract, analyse, score and expose availability. Pending/failed AI must not hide collected items or stop other sources. Publication selects already processed content. Scheduling callbacks only wake durable SQLite jobs; they do not own recoverable state. Preserve retries, bounded work, leases and fencing. Basis: §§4, 11. The processing foundation now persists extraction, analysis and scoring jobs independently of polling; stage handlers remain future work. Existing M1 items are backfilled and remain searchable while processing is pending.
+Persist/index at ingestion, then independently extract, analyse, score and expose availability. Pending/failed AI must not hide collected items or stop other sources. Publication selects already processed content. Scheduling callbacks only wake durable SQLite jobs; they do not own recoverable state. Preserve retries, bounded work, leases and fencing. Basis: §§4, 11. Extraction and deterministic scoring handlers run independently of optional analysis; existing extracted items are queued by migration and remain searchable while processing is pending.
 
 ## D4 — Identity and attribution are independent
 
@@ -24,7 +24,7 @@ Interests describe what matters to this user; editorial profiles describe how a 
 
 ## D6 — Deterministic decisions first, bounded optional AI
 
-Use deterministic filtering, ranking, novelty, redundancy and curation wherever practical. Use OpenAI-compatible providers for structured analysis behind a small interface; optional specialist judgments must expose their provenance and failure fallback. Do not build an internal conversational assistant. Embeddings require a measured retrieval gap after simpler FTS improvements have been evaluated. Basis: §§3, 6, 7, 9, 13, 14.
+Use deterministic filtering, ranking, novelty, redundancy and curation wherever practical. Use OpenAI-compatible providers for structured analysis behind a small interface; optional specialist judgments must expose their provenance and failure fallback. The initial scoring baseline records its components, versioned profiles and uncertainty, and does not infer prior publication from grouping or source edits. Production historical novelty and meaningful-update evidence remain unfinished. Do not build an internal conversational assistant. Embeddings require a measured retrieval gap after simpler FTS improvements have been evaluated. Basis: §§3, 6, 7, 9, 13, 14.
 
 ## D7 — Discovery is explicit, budgeted and auditable
 

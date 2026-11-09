@@ -105,6 +105,7 @@ export type ProcessingHandler = (
   status: string;
   result?: string;
   analysisRecord?: import("./db/store").AnalysisRecord;
+  scoreRecord?: import("./db/store").ScoreRecord;
 }>;
 export class ProcessingWorker {
   private inFlight = new Set<string>();
@@ -152,6 +153,8 @@ export class ProcessingWorker {
         ]);
         if (output.analysisRecord)
           this.store.completeAnalysis(job, output.analysisRecord);
+        else if (output.scoreRecord)
+          this.store.completeScore(job, output.scoreRecord);
         else
           this.store.completeProcessing(
             job,

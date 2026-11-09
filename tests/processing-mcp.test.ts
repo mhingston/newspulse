@@ -62,6 +62,21 @@ test("MCP serves ingested item while analysis is blocked and reports queue healt
       arguments: { id: payload.items[0].id },
     });
     const item = JSON.parse((detail.content as { text: string }[])[0]!.text);
+    const explanation = await client.callTool({
+      name: "explain_ranking",
+      arguments: { id: payload.items[0].id },
+    });
+    const ranking = JSON.parse(
+      (explanation.content as { text: string }[])[0]!.text,
+    );
+    expect(ranking.item_id).toBe(payload.items[0].id);
+    expect(ranking.references).toEqual(item.references);
+    expect(ranking.scores).toEqual([]);
+    const missing = await client.callTool({
+      name: "explain_ranking",
+      arguments: { id: "missing" },
+    });
+    expect(missing.isError).toBe(true);
     expect(
       item.processing.some(
         (job: { stage: string; status: string }) =>

@@ -169,6 +169,13 @@
       "when": 1794162108847,
       "tag": "0023_story_groups",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "6",
+      "when": 1794211600769,
+      "tag": "0024_cuddly_mister_sinister",
+      "breakpoints": true
     }
   ]
 }

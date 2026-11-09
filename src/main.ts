@@ -3,6 +3,7 @@ import { analysisConfig } from "./analysis-config";
 import { OpenAICompatibleAnalysis } from "./adapters/analysis";
 import { AnalysisBudget } from "./analysis-budget";
 import { analysisHandler } from "./analysis-service";
+import { scoringHandler } from "./scoring-service";
 import { stopServices } from "./lifecycle";
 import { config } from "./config";
 import { Store } from "./db/store";
@@ -33,6 +34,7 @@ const scheduler = schedule(
   store,
   new Worker(store, new RssAdapter()),
   new ProcessingWorker(store, {
+    score: scoringHandler(store),
     group: async () => {
       const result = store.stories.reconcile();
       if (result.stale) throw new Error("Story inputs changed during grouping");

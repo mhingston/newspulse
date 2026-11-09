@@ -1,5 +1,13 @@
 import { Database } from "bun:sqlite";
 import { StoryStore } from "./story-store";
+import { createHash } from "node:crypto";
+import { ProfileStore } from "../profiles";
+import { invalidateScores } from "./score-queue";
+import {
+  SCORING_CRITERIA_VERSION,
+  scoreItem,
+  type ScoringInput,
+} from "../scoring";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { mkdirSync } from "node:fs";
@@ -52,6 +60,13 @@ export interface AnalysisRecord {
   analysis: { summary: string };
   usage: unknown;
   cost: number | null;
+}
+export interface ScoreRecord {
+  inputHash: string;
+  criteriaVersion: string;
+  provenance: unknown;
+  result: unknown;
+  capturedAt: number;
 }
 export interface Item {
   id: string;
@@ -321,6 +336,52 @@ export class Store {
   ): ProcessingJob | null {
     return this.sqlite
       .transaction(() => {
+        if (stage === "score") {
+          this.sqlite
+            .query(
+              `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
+               WHERE stage='score' AND status='done' AND COALESCE((
+                 SELECT s.criteria_version FROM item_scores s WHERE s.item_id=processing_jobs.item_id
+                   AND s.generation=processing_jobs.generation ORDER BY s.created_at DESC,s.rowid DESC LIMIT 1
+               ), '')<>?`,
+            )
+            .run(now, SCORING_CRITERIA_VERSION);
+          this.sqlite
+            .query(
+              `UPDATE processing_jobs SET status='done',outcome='superseded',lease_token=NULL,lease_until=NULL
+            WHERE stage='score' AND status IN ('pending','running') AND generation <
+              (SELECT max(e.generation) FROM processing_jobs e WHERE e.item_id=processing_jobs.item_id AND e.stage='extract')`,
+            )
+            .run();
+          this.sqlite
+            .query(
+              `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
+            WHERE stage='score' AND status='done' AND EXISTS (
+              SELECT 1 FROM item_scores s JOIN profiles p ON p.kind='interest'
+              WHERE s.item_id=processing_jobs.item_id AND s.generation=processing_jobs.generation
+                AND s.id=(SELECT id FROM item_scores WHERE item_id=s.item_id AND generation=s.generation ORDER BY created_at DESC,rowid DESC LIMIT 1)
+                AND p.version=(SELECT max(q.version) FROM profiles q WHERE q.kind=p.kind AND q.id=p.id)
+                AND json_extract(p.document,'$.expiresAt')>s.created_at AND json_extract(p.document,'$.expiresAt')<=?
+            )`,
+            )
+            .run(now, now);
+          this.sqlite
+            .query(
+              `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
+            WHERE stage='score' AND status='done' AND EXISTS (
+              SELECT 1 FROM item_scores s JOIN items i ON i.id=s.item_id
+              WHERE s.item_id=processing_jobs.item_id AND s.generation=processing_jobs.generation
+                AND s.id=(SELECT id FROM item_scores WHERE item_id=s.item_id AND generation=s.generation ORDER BY created_at DESC,rowid DESC LIMIT 1)
+                AND i.published_at IS NOT NULL AND (
+                  (i.published_at>s.created_at AND i.published_at<=?) OR
+                  (i.published_at+172800001>s.created_at AND i.published_at+172800001<=?) OR
+                  (i.published_at+604800001>s.created_at AND i.published_at+604800001<=?) OR
+                  (i.published_at+2592000001>s.created_at AND i.published_at+2592000001<=?)
+                )
+            )`,
+            )
+            .run(now, now, now, now, now);
+        }
         this.sqlite
           .query(
             "UPDATE processing_jobs SET status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END,lease_token=NULL,lease_until=NULL WHERE status='running' AND lease_until<=?",
@@ -396,8 +457,13 @@ export class Store {
             : job.stage === "analyse"
               ? "score"
               : null;
-        if (job.stage === "extract") this.markGroupingDirty(job.item_id, now);
-        if (next && (status !== "unavailable" || job.stage === "extract"))
+        if (job.stage === "extract") {
+          this.markGroupingDirty(job.item_id, now);
+          this.enqueueProcessing("score", job.item_id, now, job.generation);
+        }
+        if (job.stage === "analyse" && status === "unavailable")
+          invalidateScores(this.sqlite, now, job.item_id);
+        if (next)
           this.enqueueProcessing(
             next,
             job.item_id,
@@ -496,9 +562,139 @@ export class Store {
             record.cost,
             now,
           );
+        invalidateScores(this.sqlite, now, job.item_id);
         return true;
       })
       .immediate();
+  }
+  scoringSnapshot(job: ProcessingJob, now = Date.now()) {
+    const item = this.getItem(job.item_id);
+    if (!item || job.stage !== "score") return null;
+    const latest = this.sqlite
+      .query<{ n: number }, [string]>(
+        "SELECT max(generation) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+      )
+      .get(job.item_id)?.n;
+    if (latest !== job.generation) return null;
+    const profiles = new ProfileStore(this.sqlite);
+    const interests = profiles.activeInterests(now);
+    const editorial = profiles.latestEditorial();
+    const input: ScoringInput = {
+      itemId: item.id,
+      title: item.title,
+      text: item.extraction?.text?.trim() || item.text || "",
+      publishedAt: item.published_at,
+      now,
+      interests,
+      editorialProfiles: editorial,
+      analysis: (item.analysis?.result ?? null) as ScoringInput["analysis"],
+      history: null,
+    };
+    const provenance = {
+      interests,
+      editorial,
+      analysis: item.analysis,
+      extraction: item.extraction,
+      story: item.story,
+      generation: job.generation,
+      history: null,
+    };
+    const inputHash = createHash("sha256")
+      .update(
+        JSON.stringify({
+          criteriaVersion: SCORING_CRITERIA_VERSION,
+          input,
+          provenance,
+        }),
+      )
+      .digest("hex");
+    return { input, inputHash, provenance };
+  }
+  completeScore(
+    job: ProcessingJob,
+    record: ScoreRecord,
+    now = Date.now(),
+  ): boolean {
+    if (job.stage !== "score") throw new Error("Expected score job");
+    return this.sqlite
+      .transaction(() => {
+        const captured = this.scoringSnapshot(job, record.capturedAt);
+        const current = this.scoringSnapshot(job, now);
+        if (
+          !captured ||
+          captured.inputHash !== record.inputHash ||
+          !current ||
+          JSON.stringify(captured.input.interests) !==
+            JSON.stringify(current.input.interests) ||
+          JSON.stringify(scoreItem(captured.input)) !==
+            JSON.stringify(scoreItem(current.input))
+        ) {
+          if (!captured) {
+            this.sqlite
+              .query(
+                "UPDATE processing_jobs SET status='done',outcome='superseded',lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=? AND lease_until>?",
+              )
+              .run(job.id, job.lease_token, now);
+            return false;
+          }
+          this.sqlite
+            .query(
+              "UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=? AND lease_until>?",
+            )
+            .run(now, job.id, job.lease_token, now);
+          return false;
+        }
+        if (
+          !this.completeProcessing(job, "scored", now, JSON.stringify(record))
+        )
+          return false;
+        this.sqlite
+          .query(
+            "INSERT OR IGNORE INTO item_scores(id,item_id,generation,input_hash,criteria_version,provenance,result,created_at) VALUES(?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            crypto.randomUUID(),
+            job.item_id,
+            job.generation,
+            record.inputHash,
+            record.criteriaVersion,
+            JSON.stringify(record.provenance),
+            JSON.stringify(record.result),
+            now,
+          );
+        return true;
+      })
+      .immediate();
+  }
+  scoreHistory(itemId: string) {
+    const resolved =
+      this.sqlite
+        .query<{ item_id: string }, [string]>(
+          "SELECT item_id FROM item_redirects WHERE old_id=?",
+        )
+        .get(itemId)?.item_id ?? itemId;
+    return this.sqlite
+      .query<
+        {
+          id: string;
+          item_id: string;
+          generation: number;
+          input_hash: string;
+          criteria_version: string;
+          provenance: string;
+          result: string;
+          created_at: number;
+        },
+        [string]
+      >(
+        "SELECT * FROM item_scores WHERE item_id=? ORDER BY created_at DESC, rowid DESC",
+      )
+      .all(resolved)
+      .map((row) => ({
+        ...row,
+        provenance: JSON.parse(row.provenance) as unknown,
+        result: JSON.parse(row.result) as unknown,
+      }));
   }
   processingResult(
     stage: ProcessingStage,
@@ -565,6 +761,11 @@ export class Store {
     this.sqlite
       .query(
         "UPDATE analyses SET item_id=?,generation=generation+? WHERE item_id=?",
+      )
+      .run(winner, offset, loser);
+    this.sqlite
+      .query(
+        "UPDATE item_scores SET item_id=?,generation=generation+? WHERE item_id=?",
       )
       .run(winner, offset, loser);
     this.sqlite

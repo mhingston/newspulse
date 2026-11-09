@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Store } from "../src/db/store";
+import { ProfileStore } from "../src/profiles";
+import { invalidateScores } from "../src/db/score-queue";
 
 describe("processing jobs", () => {
   test("persist, deduplicate, renew and fence item work", () => {
@@ -380,6 +382,202 @@ test("scored completion records scored outcome and makes item available", () => 
     store.getItem(id)?.processing.find((row) => row.stage === "score")?.outcome,
   ).toBe("scored");
   expect(store.getItem(id)?.status).toBe("available");
+  store.close();
+});
+
+test("score history persists provenance and fences expired workers", () => {
+  const store = new Store(":memory:");
+  store.addSource("https://example.com/feed");
+  store.enqueueDue(1);
+  store.complete(
+    store.claim(1)!,
+    { items: [{ nativeId: "a", title: "Alpha", text: "body" }] },
+    2,
+  );
+  const id = store.search("body")[0]!.id;
+  store.enqueueProcessing("score", id, 3);
+  const stale = store.claimProcessing("score", 3)!;
+  const current = store.claimProcessing("score", 60003)!;
+  const snapshot = store.scoringSnapshot(current, 60004)!;
+  const record = {
+    inputHash: snapshot.inputHash,
+    criteriaVersion: "v1",
+    provenance: { profile: 1 },
+    result: { total: 42 },
+    capturedAt: 60004,
+  };
+  expect(store.completeScore(stale, record, 60004)).toBe(false);
+  expect(store.scoreHistory(id)).toHaveLength(0);
+  expect(store.completeScore(current, record, 60004)).toBe(true);
+  expect(store.scoreHistory(id)[0]).toMatchObject({
+    criteria_version: "v1",
+    provenance: { profile: 1 },
+    result: { total: 42 },
+  });
+  store.close();
+});
+
+test("score is requeued at a novelty boundary and preserves prior runs", () => {
+  const store = new Store(":memory:");
+  store.addSource("https://example.com/feed");
+  store.enqueueDue(1);
+  store.complete(
+    store.claim(1)!,
+    {
+      items: [{ nativeId: "a", title: "Alpha", text: "body", publishedAt: 1 }],
+    },
+    2,
+  );
+  const id = store.search("body")[0]!.id;
+  store.enqueueProcessing("score", id, 3);
+  const job = store.claimProcessing("score", 3)!;
+  const snapshot = store.scoringSnapshot(job, 4)!;
+  expect(
+    store.completeScore(
+      job,
+      {
+        inputHash: snapshot.inputHash,
+        criteriaVersion: "v1",
+        provenance: snapshot.provenance,
+        result: { total: 1 },
+        capturedAt: 4,
+      },
+      4,
+    ),
+  ).toBe(true);
+  expect(store.claimProcessing("score", 172800002)).not.toBeNull();
+  expect(store.scoreHistory(id)).toHaveLength(1);
+  store.close();
+});
+
+test("profile edits fence scoring and expiry schedules another run", () => {
+  const store = new Store(":memory:");
+  store.addSource("https://example.com/feed");
+  store.enqueueDue(1);
+  store.complete(
+    store.claim(1)!,
+    { items: [{ nativeId: "a", title: "Alpha", text: "body" }] },
+    2,
+  );
+  const id = store.search("body")[0]!.id;
+  store.enqueueProcessing("score", id, 3);
+  const old = store.claimProcessing("score", 3)!;
+  const oldSnapshot = store.scoringSnapshot(old, 4)!;
+  const profiles = new ProfileStore(store.sqlite);
+  profiles.import([
+    {
+      kind: "interest",
+      id: "i",
+      version: 1,
+      description: "test",
+      entities: [],
+      keywords: ["body"],
+      priority: 1,
+      positive: [],
+      negative: [],
+      queries: [],
+      lifetime: "temporary",
+      expiresAt: 100,
+      feedbackRefs: [],
+    },
+  ]);
+  expect(
+    store.completeScore(
+      old,
+      {
+        inputHash: oldSnapshot.inputHash,
+        criteriaVersion: "v1",
+        provenance: oldSnapshot.provenance,
+        result: {},
+        capturedAt: 4,
+      },
+      5,
+    ),
+  ).toBe(false);
+  const current = store.claimProcessing("score", Date.now())!;
+  const active = store.scoringSnapshot(current, 50)!;
+  expect(
+    store.completeScore(
+      current,
+      {
+        inputHash: active.inputHash,
+        criteriaVersion: "v1",
+        provenance: active.provenance,
+        result: {},
+        capturedAt: 50,
+      },
+      51,
+    ),
+  ).toBe(true);
+  expect(store.claimProcessing("score", 100)).not.toBeNull();
+  store.close();
+});
+
+test("superseded score claims terminate and never block the current generation", () => {
+  const store = new Store(":memory:");
+  store.addSource("https://example.com/feed");
+  store.enqueueDue(1);
+  store.complete(
+    store.claim(1)!,
+    { items: [{ nativeId: "a", title: "A", text: "body" }] },
+    2,
+  );
+  const id = store.search("body")[0]!.id;
+  store.enqueueProcessing("score", id, 3, 1);
+  const old = store.claimProcessing("score", 3)!;
+  const snapshot = store.scoringSnapshot(old, 4)!;
+  store.enqueueProcessing("extract", id, 5, 2);
+  expect(
+    store.completeScore(
+      old,
+      {
+        inputHash: snapshot.inputHash,
+        criteriaVersion: "v1",
+        provenance: snapshot.provenance,
+        result: {},
+        capturedAt: 4,
+      },
+      6,
+    ),
+  ).toBe(false);
+  expect(store.claimProcessing("score", 7)).toBeNull();
+  expect(
+    store.sqlite
+      .query<{ status: string; outcome: string }, [string]>(
+        "SELECT status,outcome FROM processing_jobs WHERE id=?",
+      )
+      .get(old.id),
+  ).toEqual({ status: "done", outcome: "superseded" });
+  const extract = store.claimProcessing("extract", 7)!;
+  if (extract.generation === 1)
+    store.completeProcessing(extract, "extracted", 8);
+  const newer =
+    extract.generation === 2 ? extract : store.claimProcessing("extract", 9)!;
+  expect(store.completeProcessing(newer, "extracted", 10)).toBe(true);
+  expect(store.claimProcessing("score", 11)?.generation).toBe(2);
+  store.close();
+});
+
+test("score invalidation creates a job without waiting for analysis", () => {
+  const store = new Store(":memory:");
+  store.addSource("https://example.com/feed");
+  store.enqueueDue(1);
+  store.complete(
+    store.claim(1)!,
+    { items: [{ nativeId: "a", title: "A", text: "body" }] },
+    2,
+  );
+  const id = store.search("body")[0]!.id;
+  store.completeProcessing(
+    store.claimProcessing("extract", 3)!,
+    "extracted",
+    4,
+  );
+  store.sqlite
+    .query("DELETE FROM processing_jobs WHERE stage='score' AND item_id=?")
+    .run(id);
+  invalidateScores(store.sqlite, 5, id);
+  expect(store.claimProcessing("score", 5)?.item_id).toBe(id);
   store.close();
 });
 

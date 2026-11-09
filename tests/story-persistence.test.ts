@@ -254,6 +254,7 @@ test("populated pre-story schema upgrades without touching analysis, FTS, or bac
       "https://articles.example/old#original",
     );
     expect(store.claimProcessing("group", Date.now())?.item_id).toBe("item");
+    expect(store.claimProcessing("score", Date.now())?.item_id).toBe("item");
     store.stories.reconcile();
     store.backup(backup);
     restored = new Store(backup);
