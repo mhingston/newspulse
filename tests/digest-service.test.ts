@@ -64,11 +64,34 @@ test("current scored item can be drafted and frozen without delivery, retaining 
     });
     store.stories.reconcile();
     await worker.drain("score");
+    store.sqlite
+      .query(
+        "INSERT INTO analyses(id,item_id,generation,input_hash,provider,model,prompt_version,profiles,result,created_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        "recorded-analysis",
+        itemId,
+        1,
+        "hash",
+        "fake",
+        "model",
+        "v1",
+        "[]",
+        JSON.stringify({
+          summary: "Generated summary",
+          classification: "news",
+          claims: [],
+          uncertainty: ["Unverified <claim>"],
+        }),
+        Date.now(),
+      );
     const draft = draftDigest(store, options);
     expect(draft.status).toBe("ready");
     if (draft.status !== "ready") throw new Error("missing draft");
     expect(draft.selected[0]!.itemId).toBe(itemId);
     expect(draft.rendered!.text).toContain("msg-1");
+    expect(draft.rendered!.text).toContain("Unverified <claim>");
+    expect(draft.rendered!.html).toContain("Unverified &lt;claim&gt;");
     expect(() =>
       draftDigest(store, { ...options, date: "2000-01-01" }),
     ).toThrow("local date");
@@ -103,6 +126,7 @@ test("current scored item can be drafted and frozen without delivery, retaining 
     expect(frozen.items[0]!.item_id).toBe(itemId);
     expect(new DigestStore(store.sqlite).get(today)).toEqual(frozen);
     expect(frozen.plain_text).toContain("msg-1");
+    expect(frozen.plain_text).toContain("Unverified <claim>");
     const app = createApp(store, {
       token: "a-long-private-token-with-24-characters",
       allowedHosts: ["127.0.0.1"],

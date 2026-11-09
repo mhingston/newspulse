@@ -1,9 +1,15 @@
 import { expect, test } from "bun:test";
 import { Store } from "../src/db/store";
+import { DigestStore } from "../src/db/digest-store";
 import { ProfileStore } from "../src/profiles";
 import { ProcessingWorker } from "../src/worker";
 import { scoringHandler } from "../src/scoring-service";
-import { digestDefaults, draftDigest } from "../src/digest-service";
+import {
+  digestDefaults,
+  draftDigest,
+  previewDigest,
+  freezeDigest,
+} from "../src/digest-service";
 
 const today = new Intl.DateTimeFormat("sv-SE", {
   timeZone: "Europe/London",
@@ -112,6 +118,49 @@ test("oversized score and combined development references exclude only affected 
         .flatMap((item) => item.citations)
         .some((ref) => ref.nativeId === "group-b"),
     ).toBe(true);
+    const options = { ...digestDefaults(today), minScore: 0 };
+    const preview = previewDigest(store, options);
+    const frozen = freezeDigest(store, options, preview.confirmation.hash);
+    const decisions = frozen.decisions as {
+      decisionEvidence: {
+        itemId: string;
+        evidence: {
+          scoreId: string;
+          groupId: string | null;
+          score: number;
+        } | null;
+      }[];
+    };
+    const evidence = decisions.decisionEvidence.find(
+      (entry) => entry.itemId === byNative.get("large"),
+    )!.evidence!;
+    expect(evidence.scoreId).toBeTruthy();
+    expect(typeof evidence.score).toBe("number");
+    store.sqlite
+      .query("UPDATE item_scores SET result='{}' WHERE id=?")
+      .run(evidence.scoreId);
+    expect(
+      (new DigestStore(store.sqlite).get(today)!.decisions as typeof decisions)
+        .decisionEvidence,
+    ).toEqual(decisions.decisionEvidence);
+    store.sqlite
+      .query(
+        "UPDATE item_sources SET url=? WHERE source_id=? AND native_id='group-a'",
+      )
+      .run("https://example.com/" + "x".repeat(5000), source.id);
+    const oversizedBytes = draftDigest(store, {
+      ...digestDefaults(today),
+      minScore: 0,
+    });
+    expect(
+      oversizedBytes.decisions.find((d) => d.itemId === byNative.get("group-a"))
+        ?.reasons,
+    ).toEqual(["reference_bytes_exceeded"]);
+    store.sqlite
+      .query(
+        "UPDATE item_sources SET url=NULL WHERE source_id=? AND native_id='group-a'",
+      )
+      .run(source.id);
     store.sqlite
       .query(
         "INSERT INTO item_sources(item_id,source_id,native_id) VALUES(?,?,?)",

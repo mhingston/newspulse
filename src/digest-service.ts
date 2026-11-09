@@ -42,6 +42,11 @@ function validateDate(date: string, timezone: string) {
 }
 /** Draft is read-only. No delivery or user-feedback history exists yet. */
 export function draftDigest(store: Store, options: DigestOptions) {
+  return store.sqlite
+    .transaction(() => draftDigestSnapshot(store, options))
+    .deferred();
+}
+function draftDigestSnapshot(store: Store, options: DigestOptions) {
   validateDate(options.date, options.timezone);
   if (!Number.isSafeInteger(options.now) || options.now < 0)
     throw new Error("Invalid draft time");
@@ -174,7 +179,7 @@ export function draftDigest(store: Store, options: DigestOptions) {
     string,
     { sourceId: string; nativeId: string; url: string | null }[]
   >();
-  const oversizedGroups = new Set<string>();
+  const oversizedGroups = new Map<string, string>();
   const groupKey = (row: (typeof rows)[number]) =>
     JSON.stringify(
       row.group_id === null ? ["item", row.item_id] : ["group", row.group_id],
@@ -182,37 +187,47 @@ export function draftDigest(store: Store, options: DigestOptions) {
   for (const row of rows) {
     const key = groupKey(row);
     if (groupReferences.has(key) || oversizedGroups.has(key)) continue;
+    const query =
+      row.group_id === null
+        ? "SELECT source_id,native_id,url FROM item_sources INDEXED BY item_sources_item WHERE item_id=? LIMIT 21"
+        : "SELECT r.source_id,r.native_id,r.url FROM story_memberships m INDEXED BY story_members_group JOIN item_sources r INDEXED BY item_sources_item ON r.item_id=m.item_id WHERE m.group_id=? AND m.ended_at IS NULL LIMIT 21";
+    const size = store.sqlite
+      .query<{ n: number; bytes: number }, [string]>(
+        `SELECT count(*) AS n,coalesce(sum(length(CAST(source_id AS BLOB))+length(CAST(native_id AS BLOB))+coalesce(length(CAST(url AS BLOB)),0)),0) AS bytes FROM (${query})`,
+      )
+      .get(row.group_id ?? row.item_id)!;
+    if (size.n > 20 || size.bytes > 4096) {
+      oversizedGroups.set(
+        key,
+        size.n > 20 ? "reference_limit_exceeded" : "reference_bytes_exceeded",
+      );
+      continue;
+    }
     const refs = store.sqlite
       .query<
         { source_id: string; native_id: string; url: string | null },
         [string]
-      >(
-        row.group_id === null
-          ? "SELECT source_id,native_id,url FROM item_sources INDEXED BY item_sources_item WHERE item_id=? LIMIT 21"
-          : "SELECT r.source_id,r.native_id,r.url FROM story_memberships m INDEXED BY story_members_group JOIN item_sources r INDEXED BY item_sources_item ON r.item_id=m.item_id WHERE m.group_id=? AND m.ended_at IS NULL LIMIT 21",
-      )
+      >(query)
       .all(row.group_id ?? row.item_id)
       .map((ref) => ({
         sourceId: ref.source_id,
         nativeId: ref.native_id,
         url: ref.url,
       }));
-    if (refs.length > 20) oversizedGroups.add(key);
-    else
-      groupReferences.set(
-        key,
-        refs.sort((a, b) =>
-          a.sourceId < b.sourceId
-            ? -1
-            : a.sourceId > b.sourceId
-              ? 1
-              : a.nativeId < b.nativeId
-                ? -1
-                : a.nativeId > b.nativeId
-                  ? 1
-                  : 0,
-        ),
-      );
+    groupReferences.set(
+      key,
+      refs.sort((a, b) =>
+        a.sourceId < b.sourceId
+          ? -1
+          : a.sourceId > b.sourceId
+            ? 1
+            : a.nativeId < b.nativeId
+              ? -1
+              : a.nativeId > b.nativeId
+                ? 1
+                : 0,
+      ),
+    );
   }
   const limited = rows.flatMap((row) => {
     const size = store.sqlite
@@ -221,7 +236,7 @@ export function draftDigest(store: Store, options: DigestOptions) {
       )
       .get(row.score_id)?.size;
     const reason = oversizedGroups.has(groupKey(row))
-      ? "reference_limit_exceeded"
+      ? oversizedGroups.get(groupKey(row))!
       : size === undefined || size > 200_000
         ? "score_snapshot_limit_exceeded"
         : null;
@@ -238,9 +253,13 @@ export function draftDigest(store: Store, options: DigestOptions) {
         eligible: boolean;
         reasons: string[];
       };
-      const summary = row.summary
-        ? ((JSON.parse(row.summary) as { summary?: string }).summary ?? null)
+      const analysis = row.summary
+        ? (JSON.parse(row.summary) as {
+            summary?: string;
+            uncertainty?: string[];
+          })
         : null;
+      const summary = analysis?.summary ?? null;
       return {
         itemId: row.item_id,
         groupId: row.group_id,
@@ -253,6 +272,7 @@ export function draftDigest(store: Store, options: DigestOptions) {
           .map((reason) => reason.slice(9).split("@")[0]!),
         title: row.title,
         summary,
+        uncertainty: analysis?.uncertainty ?? [],
         explanation:
           score.reasons.join("; ") || "No score explanation available",
         citations: [...(groupReferences.get(groupKey(row)) ?? [])],
@@ -267,6 +287,30 @@ export function draftDigest(store: Store, options: DigestOptions) {
     maxItems: options.maxItems,
     maxPerInterest: options.maxPerInterest,
   });
+  const evidenceById = new Map(
+    rows.map((row) => {
+      const score = JSON.parse(row.result) as {
+        total: number;
+        eligible: boolean;
+      };
+      return [
+        row.item_id,
+        {
+          scoreId: row.score_id,
+          score: score.total,
+          eligible: score.eligible,
+          groupId: row.group_id,
+          citations: groupReferences.get(groupKey(row)) ?? null,
+        },
+      ] as const;
+    }),
+  );
+  const decisionEvidence = [...result.decisions, ...limited, ...terminal].map(
+    (decision) => ({
+      itemId: decision.itemId,
+      evidence: evidenceById.get(decision.itemId) ?? null,
+    }),
+  );
   result.decisions.push(...limited, ...terminal);
   result.decisions.sort((a, b) =>
     a.itemId < b.itemId ? -1 : a.itemId > b.itemId ? 1 : 0,
@@ -302,6 +346,7 @@ export function draftDigest(store: Store, options: DigestOptions) {
             itemId: item.itemId,
             title: item.title,
             summary: item.summary,
+            uncertainty: item.uncertainty,
             why: item.explanation,
             references: item.citations.map((ref) => ({
               source: ref.sourceId,
@@ -313,6 +358,7 @@ export function draftDigest(store: Store, options: DigestOptions) {
       : null;
   return {
     ...result,
+    decisionEvidence,
     rendered,
     date: options.date,
     timezone: options.timezone,
@@ -380,6 +426,7 @@ export function freezeDigest(
             },
             history: draft.history,
             decisions: draft.decisions,
+            decisionEvidence: draft.decisionEvidence,
             feedbackTargets: draft.rendered.feedbackTargets,
           },
           items: draft.selected.map((item) => ({

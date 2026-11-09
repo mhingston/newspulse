@@ -18,11 +18,36 @@ const candidate = (
   interestIds: ["robots"],
   title: itemId,
   summary: null,
+  uncertainty: [],
   explanation: "A source-linked explanation",
   citations: [{ sourceId: "feed", nativeId: itemId, url: null }],
   discovery: false,
   update: null,
   ...overrides,
+});
+
+test("overlapping interests each count towards the cap", () => {
+  const items = [
+    candidate("joint-a", {
+      score: 99,
+      interestIds: ["climate", "robots", "robots"],
+    }),
+    candidate("joint-b", { score: 98, interestIds: ["climate", "robots"] }),
+    candidate("robots-only", { score: 97, interestIds: ["robots"] }),
+    candidate("climate-only", { score: 96, interestIds: ["climate"] }),
+    candidate("independent", { score: 60, interestIds: ["biology"] }),
+  ];
+  const result = curateDigest({ ...input(items), maxPerInterest: 2 });
+  expect(result.selected.map((item) => item.itemId)).toEqual([
+    "joint-a",
+    "independent",
+    "joint-b",
+  ]);
+  expect(
+    result.decisions
+      .filter((decision) => !decision.included)
+      .map((decision) => decision.reasons[0]),
+  ).toEqual(["interest_limit", "interest_limit"]);
 });
 const input = (candidates: CurationCandidate[]): CurationInput => ({
   candidates,

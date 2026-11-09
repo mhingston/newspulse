@@ -4,6 +4,7 @@ export interface DigestRenderItem {
   title: string;
   why: string;
   summary: string | null;
+  uncertainty: string[];
   references: { source: string; nativeId: string; url: string | null }[];
 }
 export interface RenderedDigest {
@@ -54,7 +55,10 @@ export function renderDigest(
           : escapeHtml(label);
       })
       .join("; ");
-    return `<article><h2>${escapeHtml(item.title)}</h2>${item.summary ? `<p>Model summary: ${escapeHtml(item.summary)}</p>` : ""}<p>${escapeHtml(item.why)}</p><p>Sources: ${refs}</p></article>`;
+    const caveats = item.uncertainty
+      .map((value) => `<li>${escapeHtml(value)}</li>`)
+      .join("");
+    return `<article><h2>${escapeHtml(item.title)}</h2>${item.summary ? `<p>Model summary: ${escapeHtml(item.summary)}</p>` : ""}${caveats ? `<p>Model uncertainty:</p><ul>${caveats}</ul>` : ""}<p>${escapeHtml(item.why)}</p><p>Sources: ${refs}</p></article>`;
   });
   const textItems = items.map((item) => {
     const refs = item.references
@@ -66,6 +70,9 @@ export function renderDigest(
     return [
       item.title,
       item.summary ? `Model summary: ${item.summary}` : null,
+      item.uncertainty.length
+        ? `Model uncertainty:\n${item.uncertainty.map((value) => `- ${value}`).join("\n")}`
+        : null,
       item.why,
       `Sources: ${refs}`,
     ]

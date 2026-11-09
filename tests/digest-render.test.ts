@@ -8,6 +8,7 @@ test("digest escapes untrusted content, retains original citations and URL-less 
       title: "<script>alert(1)</script>",
       why: "Why <important>",
       summary: "<img src=x onerror=alert(1)>",
+      uncertainty: ["<script>uncertain</script>", "Evidence unavailable"],
       references: [
         {
           source: "News & Co",
@@ -24,6 +25,11 @@ test("digest escapes untrusted content, retains original citations and URL-less 
   expect(output.html).not.toContain('href="javascript:');
   expect(output.html).toContain("https://example.com/a?x=1&amp;y=2");
   expect(output.html).toContain("Newsletter (message-2)");
+  expect(output.html).toContain("Model uncertainty:");
+  expect(output.html).toContain("&lt;script&gt;uncertain&lt;/script&gt;");
+  expect(output.text).toContain(
+    "Model uncertainty:\n- <script>uncertain</script>\n- Evidence unavailable",
+  );
   expect(output.feedbackTargets).toEqual([
     { itemId: "item-1", actions: ["useful", "not_useful"] },
   ]);

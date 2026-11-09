@@ -14,6 +14,7 @@ export interface CurationCandidate {
   interestIds: string[];
   title: string;
   summary: string | null;
+  uncertainty: string[];
   explanation: string;
   citations: CurationCitation[];
   discovery: boolean;
@@ -157,12 +158,16 @@ export function curateDigest(input: CurationInput): CurationResult {
   const selected: CurationCandidate[] = [];
   const groupIds = new Set<string>();
   const counts = new Map<string, number>();
-  const category = (item: CurationCandidate) =>
-    [...new Set(item.interestIds)].sort(cmp)[0] ?? "";
+  const categories = (item: CurationCandidate) => {
+    const ids = [...new Set(item.interestIds)].sort(cmp);
+    return ids.length ? ids : [""];
+  };
+  const load = (item: CurationCandidate) =>
+    Math.max(...categories(item).map((id) => counts.get(id) ?? 0));
   while (pool.length && selected.length < input.maxItems) {
     pool.sort(
       (a, b) =>
-        (counts.get(category(a)) ?? 0) - (counts.get(category(b)) ?? 0) ||
+        load(a) - load(b) ||
         b.score - a.score ||
         Number(b.discovery) - Number(a.discovery) ||
         cmp(a.itemId, b.itemId),
@@ -176,8 +181,8 @@ export function curateDigest(input: CurationInput): CurationResult {
       });
       continue;
     }
-    const key = category(item);
-    if ((counts.get(key) ?? 0) >= input.maxPerInterest) {
+    const keys = categories(item);
+    if (keys.some((key) => (counts.get(key) ?? 0) >= input.maxPerInterest)) {
       decisions.set(item.itemId, {
         itemId: item.itemId,
         included: false,
@@ -186,7 +191,7 @@ export function curateDigest(input: CurationInput): CurationResult {
       continue;
     }
     selected.push(item);
-    counts.set(key, (counts.get(key) ?? 0) + 1);
+    for (const key of keys) counts.set(key, (counts.get(key) ?? 0) + 1);
     groupIds.add(group(item));
     const prior = input.priorEditions.find(
       (edition) =>

@@ -59,6 +59,30 @@ test("freezing is atomic, idempotent and database-enforced immutable", () => {
         .query("UPDATE digests SET subject='rewritten' WHERE id=?")
         .run(original.id),
     ).toThrow();
+    store.sqlite
+      .query(
+        "INSERT INTO digests(id,edition_date,timezone,subject,html,plain_text,decisions,fingerprint,frozen_at) VALUES('unsealed','2026-11-10','UTC','other','x','x','{}','hash',1)",
+      )
+      .run();
+    expect(() =>
+      store.sqlite
+        .query(
+          "UPDATE OR REPLACE digests SET id=?,edition_date=? WHERE id='unsealed'",
+        )
+        .run(original.id, edition.date),
+    ).toThrow();
+    expect(() =>
+      store.sqlite
+        .query(
+          "UPDATE OR REPLACE digests SET edition_date=? WHERE id='unsealed'",
+        )
+        .run(edition.date),
+    ).toThrow();
+    expect(() =>
+      store.sqlite
+        .query("UPDATE OR REPLACE digests SET id=? WHERE id='unsealed'")
+        .run(original.id),
+    ).toThrow();
     expect(() =>
       store.sqlite.query("DELETE FROM digests WHERE id=?").run(original.id),
     ).toThrow();

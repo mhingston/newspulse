@@ -66,8 +66,8 @@ function add(
       .run(`score-${id}`, SCORING_CRITERIA_VERSION);
   }
 }
-function setup() {
-  const store = new Store(":memory:");
+function setup(path = ":memory:") {
+  const store = new Store(path);
   store.addSource("https://example.test/feed");
   store.sqlite.query("UPDATE sources SET id='source'").run();
   store.sqlite
@@ -77,6 +77,60 @@ function setup() {
     .run(now);
   return store;
 }
+
+test("draft reads one WAL snapshot during concurrent writes", () => {
+  const dir = mkdtempSync(join(tmpdir(), "digest-snapshot-"));
+  const path = join(dir, "database.sqlite"),
+    s = setup(path),
+    writer = new Store(path);
+  try {
+    add(s, "one", now - 1000, now - 900);
+    const original = s.sqlite.query.bind(s.sqlite);
+    let changed = false;
+    Object.defineProperty(s.sqlite, "query", {
+      configurable: true,
+      value: (sql: string) => {
+        const statement = original(sql);
+        if (!sql.startsWith("SELECT item_id FROM digest_activity"))
+          return statement;
+        return new Proxy(statement, {
+          get(target, key) {
+            if (key === "all")
+              return (...args: unknown[]) => {
+                const rows = Reflect.apply(target.all, target, args);
+                if (!changed) {
+                  changed = true;
+                  writer.sqlite
+                    .query(
+                      "UPDATE items SET title='Concurrent change' WHERE id='one'",
+                    )
+                    .run();
+                }
+                return rows;
+              };
+            return Reflect.get(target, key, target);
+          },
+        });
+      },
+    });
+    const draft = draftDigest(s, {
+      ...digestDefaults("2026-11-09", now),
+      minScore: 0,
+    });
+    expect(changed).toBe(true);
+    expect(draft.status).toBe("ready");
+    expect(draft.selected[0]!.title).toBe("Robotics");
+    expect(
+      writer.sqlite
+        .query<{ title: string }, []>("SELECT title FROM items WHERE id='one'")
+        .get()!.title,
+    ).toBe("Concurrent change");
+  } finally {
+    writer.close();
+    s.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
 
 test("late first scoring and new observations enter intake, periodic rescores do not", () => {
   const s = setup();
