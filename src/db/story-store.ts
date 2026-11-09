@@ -72,8 +72,10 @@ export class StoryStore {
         "SELECT i.id,i.identity,i.url,i.title,i.published_at,i.ingested_at," +
           "coalesce(c.text,'') AS body," +
           "(SELECT p.result FROM processing_jobs p WHERE p.item_id=i.id " +
-          "AND p.stage='extract' AND p.status='done' AND p.outcome='extracted' " +
-          "ORDER BY p.generation DESC LIMIT 1) AS extracted " +
+          "AND p.stage='extract' " +
+          "AND p.generation=(SELECT max(latest.generation) FROM processing_jobs latest " +
+          "WHERE latest.item_id=i.id AND latest.stage='extract') " +
+          "AND p.status='done' AND p.outcome='extracted' LIMIT 1) AS extracted " +
           "FROM items i LEFT JOIN content c ON c.item_id=i.id ORDER BY i.identity,i.id",
       )
       .all();
