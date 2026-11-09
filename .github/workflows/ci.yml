@@ -18,3 +18,5 @@ jobs:
       - run: bun run format:check
       - run: bun test
       - run: bun run smoke
+      - name: Drizzle schema drift
+        run: bun run db:generate && test -z "$(git status --porcelain -- drizzle)"

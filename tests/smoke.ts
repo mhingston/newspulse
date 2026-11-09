@@ -71,7 +71,19 @@ export async function smoke() {
       }),
     );
     const tools = await client.listTools();
-    assert(tools.tools.length === 4, "Expected four read-only MCP tools");
+    assert(
+      JSON.stringify(tools.tools.map((tool) => tool.name).sort()) ===
+        JSON.stringify(
+          [
+            "get_item",
+            "get_sources",
+            "get_status",
+            "get_story_group",
+            "search_items",
+          ].sort(),
+        ),
+      "Expected all five read-only MCP tools",
+    );
     const result = await client.callTool({
       name: "search_items",
       arguments: { query: "robotics" },

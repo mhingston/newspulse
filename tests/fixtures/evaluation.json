@@ -35,5 +35,66 @@
       "label": "borderline",
       "reason": "Potentially useful adjacent topic, weak supporting evidence"
     }
-  ]
+  ],
+  "story_evaluation": {
+    "version": "specific-development-v1",
+    "cases": [
+      {
+        "id": "atlas-release",
+        "title": "Acme releases Atlas 2 robotics model",
+        "day": 0,
+        "development": "atlas-2-release"
+      },
+      {
+        "id": "atlas-coverage",
+        "title": "Atlas 2 robotics model launched by Acme",
+        "day": 0,
+        "development": "atlas-2-release"
+      },
+      {
+        "id": "orion-release",
+        "title": "Acme releases Orion 3 robotics model",
+        "day": 0,
+        "development": "orion-3-release"
+      },
+      {
+        "id": "atlas-recall",
+        "title": "Acme recalls Atlas 2 robotics model",
+        "day": 7,
+        "development": "atlas-2-recall",
+        "follows": "atlas-2-release"
+      },
+      {
+        "id": "unrelated",
+        "title": "New robotics model trends across industry",
+        "day": 0,
+        "development": "unrelated"
+      },
+      {
+        "id": "atlas-3-shared-year",
+        "title": "Acme releases Atlas 3 robotics model in 2026",
+        "day": 0,
+        "development": "atlas-3-release"
+      },
+      {
+        "id": "orion-2-same-version",
+        "title": "Acme releases Orion 2 robotics model",
+        "day": 0,
+        "development": "orion-2-release"
+      },
+      {
+        "id": "atlas-2.1-release",
+        "title": "Acme releases Atlas v2.1 robotics model",
+        "day": 0,
+        "development": "atlas-2.1-release"
+      },
+      {
+        "id": "atlas-2.2-release",
+        "title": "Acme releases Atlas v2.2 robotics model",
+        "day": 0,
+        "development": "atlas-2.2-release"
+      }
+    ],
+    "notes": "Negative controls cover shared years, conflicting dotted versions, same-version different products, generic topics, and chronological follow-ups. Rules deliberately prioritize precision."
+  }
 }

@@ -1,5 +1,7 @@
 # Implementation roadmap and handoff coverage
 
+**M2 implementation snapshot (2026-11-08):** #5 is merged and closed via #38; integration PR #39 has merged. #6 is under development and requires validation, review and merge before closure. #7 follows #6.
+
 [Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) is the entry point for the complete backlog. It links **22 required core issues and 9 conditional refinement issues**. The original request is preserved in [handoff.md](handoff.md), durable constraints in [decisions.md](decisions.md), and contributor instructions in [AGENTS.md](../AGENTS.md).
 
 ## Current implementation and evidence

@@ -219,3 +219,60 @@ export const analysisControl = sqliteTable("analysis_control", {
   id: integer().primaryKey(),
   envelopeBreach: integer("envelope_breach").notNull().default(0),
 });
+
+/** Development groups never replace items or original citations. */
+export const storyGroups = sqliteTable("story_groups", {
+  id: text().primaryKey(),
+  firstSeen: integer("first_seen").notNull(),
+  retiredAt: integer("retired_at"),
+});
+export const storyMemberships = sqliteTable(
+  "story_memberships",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    groupId: text("group_id")
+      .notNull()
+      .references(() => storyGroups.id),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    originalItemId: text("original_item_id"),
+    evidence: text().notNull(),
+    ruleVersion: text("rule_version").notNull(),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+  },
+  (t) => [
+    uniqueIndex("story_current_member")
+      .on(t.itemId)
+      .where(sql`ended_at IS NULL`),
+    index("story_members_group").on(t.groupId, t.endedAt),
+  ],
+);
+export const storyRelations = sqliteTable(
+  "story_relations",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    olderGroupId: text("older_group_id")
+      .notNull()
+      .references(() => storyGroups.id),
+    newerGroupId: text("newer_group_id")
+      .notNull()
+      .references(() => storyGroups.id),
+    reason: text().notNull(),
+    evidence: text().notNull(),
+    ruleVersion: text("rule_version").notNull(),
+    startedAt: integer("started_at").notNull(),
+    endedAt: integer("ended_at"),
+  },
+  (t) => [
+    uniqueIndex("story_current_relation")
+      .on(t.olderGroupId, t.newerGroupId)
+      .where(sql`ended_at IS NULL`),
+  ],
+);
+export const storyGroupingState = sqliteTable("story_grouping_state", {
+  id: integer().primaryKey(),
+  fingerprint: text().notNull(),
+  updatedAt: integer("updated_at").notNull(),
+});

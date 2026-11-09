@@ -64,7 +64,7 @@ export function schedule(
   const tick = () => {
     if (stopping) return;
     if (processing)
-      for (const stage of ["extract", "analyse", "score"] as const) {
+      for (const stage of ["extract", "analyse", "group", "score"] as const) {
         if (stageActive.has(stage)) continue;
         const task = processing
           .drain(stage, 20, () => stopping)
