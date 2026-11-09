@@ -169,7 +169,14 @@ export class ResendInbound implements InboundEmailProvider {
     let bytes = 0;
     try {
       while (true) {
-        const chunk = await abortable(reader.read(), requestSignal);
+        const chunk = await abortable(reader.read(), requestSignal).catch(
+          () => {
+            throw new InboundProviderError(
+              "transient",
+              "Inbound provider response stream failed",
+            );
+          },
+        );
         if (chunk.done) break;
         bytes += chunk.value.byteLength;
         if (bytes > this.maxBytes) {
