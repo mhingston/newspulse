@@ -1,0 +1,1 @@
+CREATE INDEX `item_sources_item` ON `item_sources` (`item_id`,`source_id`,`native_id`);

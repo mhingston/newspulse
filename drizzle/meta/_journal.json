@@ -204,6 +204,48 @@
       "when": 1794213730350,
       "tag": "0028_absurd_garia",
       "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "6",
+      "when": 1794215219090,
+      "tag": "0029_wide_scarlet_witch",
+      "breakpoints": true
+    },
+    {
+      "idx": 30,
+      "version": "6",
+      "when": 1794215229829,
+      "tag": "0030_perfect_the_twelve",
+      "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "6",
+      "when": 1794228336372,
+      "tag": "0031_guard_frozen_insert",
+      "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "6",
+      "when": 1794228523760,
+      "tag": "0032_wide_wraith",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "6",
+      "when": 1794228720805,
+      "tag": "0033_glossy_whirlwind",
+      "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "6",
+      "when": 1794229480957,
+      "tag": "0034_digest_update_guard",
+      "breakpoints": true
     }
   ]
 }

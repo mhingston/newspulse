@@ -76,6 +76,7 @@ export async function smoke() {
         JSON.stringify(
           [
             "explain_ranking",
+            "get_digest",
             "get_item",
             "get_sources",
             "get_status",

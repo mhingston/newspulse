@@ -12,7 +12,7 @@ Use Bun, strict TypeScript, Hono, SQLite through `bun:sqlite`, Drizzle migration
 
 ## D3 — Processing runs continuously, publication separately
 
-Persist/index at ingestion, then independently extract, analyse, score and expose availability. Pending/failed AI must not hide collected items or stop other sources. Publication selects already processed content. Scheduling callbacks only wake durable SQLite jobs; they do not own recoverable state. Preserve retries, bounded work, leases and fencing. Basis: §§4, 11. Extraction and deterministic scoring handlers run independently of optional analysis; existing extracted items are queued by migration and remain searchable while processing is pending.
+Persist/index at ingestion, then independently extract, analyse, score and expose availability. Pending/failed AI must not hide collected items or stop other sources. Publication selects already processed content. Developing digest reads use completed scores; freezing captures an immutable prepared snapshot and is not evidence of delivery. Scheduling callbacks only wake durable SQLite jobs; they do not own recoverable state. Preserve retries, bounded work, leases and fencing. Basis: §§4, 11. Extraction and deterministic scoring handlers run independently of optional analysis; existing extracted items are queued by migration and remain searchable while processing is pending.
 
 ## D4 — Identity and attribution are independent
 

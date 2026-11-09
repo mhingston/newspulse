@@ -1,6 +1,6 @@
 # Newspulse
 
-A self-hosted foundation for a personal discovery engine. **M1 is implemented:** RSS/Atom → durable SQLite ingestion → authenticated, read-only MCP search. There is no feed-reader UI. Optional analysis, deterministic story grouping and an initial scoring pipeline are part of the developing M2 milestone. Email, proactive discovery and daily briefings remain future milestones.
+A self-hosted foundation for a personal discovery engine. **M1 is implemented:** RSS/Atom → durable SQLite ingestion → authenticated, read-only MCP search. There is no feed-reader UI. Optional analysis, deterministic story grouping and an initial scoring pipeline are part of the developing M2 milestone. Email delivery, proactive discovery and daily briefings remain future milestones.
 
 ## Project decisions and remaining work
 
@@ -57,7 +57,7 @@ console.log(results);
 await client.close();
 ```
 
-Tools: `explain_ranking` (recorded score history and source references), `get_story_group` (development ID and preserved article references), `search_items` (literal keywords, limit, offset, optional `source_id`, `since` in epoch milliseconds), `get_item` (ID), `get_sources`, `get_status`. Search combines terms with AND. Results include canonical item URLs; `get_item` also returns all original resolved source references, including fragments and tracking context. Items without public URLs remain retrievable using their item ID and source-native reference. Source text is untrusted; model summaries and scores are estimates.
+Tools: `get_digest` (developing or frozen edition), `explain_ranking` (recorded score history and source references), `get_story_group` (development ID and preserved article references), `search_items` (literal keywords, limit, offset, optional `source_id`, `since` in epoch milliseconds), `get_item` (ID), `get_sources`, `get_status`. Search combines terms with AND. Results include canonical item URLs; `get_item` also returns all original resolved source references, including fragments and tracking context. Items without public URLs remain retrievable using their item ID and source-native reference. Source text is untrusted; model summaries and scores are estimates.
 
 Transport is stateless Streamable HTTP with JSON responses. Stdio is optional in the handoff and not implemented. There are no mutation tools. A client with a browser Origin must appear in `ALLOWED_ORIGINS`. Hosts must appear in `ALLOWED_HOSTS`; use hostnames without ports. No CORS policy is exposed for browser apps yet.
 
@@ -202,3 +202,11 @@ Profile imports, completed extraction or analysis, and grouping changes requeue 
 ### Offline scoring and grouping replay
 
 Run `bun run cli evaluate tests/fixtures/evaluation-corpus-v1.json 5` to replay the synthetic corpus without a database, provider or email. The [evaluation guide](docs/evaluation.md) describes recorded results, configurable gates, comparison, missing labels and timing. Synthetic interests are examples, not the user’s profile.
+
+### Developing and frozen digests
+
+`get_digest` reads a developing draft or an immutable frozen edition by date. Drafts consider recent ingestion, source observations and first scoring of a content generation in the 24 hours ending at preview time, using completed current scores. The requested date must match the preview time in Europe/London. Pending grouping or scores return `processing`; terminal failures are explained as exclusions. The newest 500 candidates are considered, with truncation explicitly reported in the snapshot. A development with more than 20 source references or more than 4 KB of citation data, or a score snapshot over 200 KB, is excluded with a reason. The initial defaults are at most ten items, at most four per interest, and a minimum score of 50. No active interests can produce a `no_digest` result. Search and ingestion continue independently.
+
+To prepare an edition locally, run `bun run cli digest-preview 2026-11-09` and inspect its decisions and rendered content. To freeze exactly that preview within five minutes, run `bun run cli digest-freeze 2026-11-09 AS_OF HASH`, using `confirmation.asOf` and `confirmation.hash` from the preview. Changed inputs, options or an expired confirmation require a new preview. A frozen date cannot be replaced; back up before upgrading and restore a pre-upgrade backup into a new stopped database path for rollback. Freezing prepares a snapshot and does not send email or establish delivery.
+
+Summaries are labeled as model-generated and original source identities remain available even without a public URL. Each frozen decision includes selected items, score snapshots and feedback targets; actionable scoped feedback links and delivery belong to later issues. Current production cannot distinguish previously delivered editions or identify outside-subscription discoveries: delivery history and its regression tests are assigned to #42 after #12, while discovery sources arrive in later milestones. The curator can test those explicit states without treating a frozen draft as delivered or inferring feedback from missing clicks.

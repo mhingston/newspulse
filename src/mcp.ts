@@ -2,6 +2,8 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { WebStandardStreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js";
 import { z } from "zod";
 import type { Store } from "./db/store";
+import { DigestStore } from "./db/digest-store";
+import { draftDigest, digestDefaults } from "./digest-service";
 export function createMcp(store: Store): McpServer {
   const server = new McpServer(
     { name: "newspulse", version: "0.1.0" },
@@ -93,6 +95,36 @@ export function createMcp(store: Store): McpServer {
       return group
         ? response(group)
         : { ...response({ error: "Story group not found" }), isError: true };
+    },
+  );
+  server.registerTool(
+    "get_digest",
+    {
+      description:
+        "Read a developing digest or a frozen edition. A frozen edition is not evidence of delivery.",
+      inputSchema: {
+        date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+        view: z.enum(["draft", "frozen"]).default("draft"),
+      },
+      annotations,
+    },
+    async ({ date, view }) => {
+      try {
+        if (view === "draft")
+          return response(draftDigest(store, digestDefaults(date)));
+        const edition = new DigestStore(store.sqlite).get(date);
+        return edition
+          ? response(edition)
+          : response({ status: "not_found", date });
+      } catch (error) {
+        return {
+          ...response({
+            error:
+              error instanceof Error ? error.message : "Invalid digest request",
+          }),
+          isError: true,
+        };
+      }
     },
   );
   server.registerTool(
