@@ -8,6 +8,12 @@ import { Worker } from "./worker";
 import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
+import {
+  compareEvaluations,
+  evaluateCorpus,
+  type EvaluationReport,
+  type Gate,
+} from "./evaluation";
 const [command, ...args] = process.argv.slice(2);
 const path = process.env.DB_PATH ?? "./data/newspulse.sqlite";
 function required(index: number, name: string): string {
@@ -16,6 +22,42 @@ function required(index: number, name: string): string {
   return arg;
 }
 async function main() {
+  if (command === "evaluate-compare") {
+    const baseline = JSON.parse(
+      await Bun.file(required(0, "baseline report")).text(),
+    ) as EvaluationReport;
+    const current = JSON.parse(
+      await Bun.file(required(1, "current report")).text(),
+    ) as EvaluationReport;
+    const gates = args[2]
+      ? (JSON.parse(await Bun.file(args[2]).text()) as Gate[])
+      : [];
+    if (!Array.isArray(gates)) throw new Error("Gates must be an array");
+    const comparison = compareEvaluations(baseline, current, gates);
+    console.log(JSON.stringify(comparison, null, 2));
+    if (comparison.passed === false) process.exitCode = 1;
+    return;
+  }
+  if (command === "evaluate") {
+    const input: unknown = JSON.parse(
+      await Bun.file(required(0, "evaluation corpus JSON path")).text(),
+    );
+    const kArg = args.slice(1).find((arg) => arg !== "--timing");
+    const k = kArg === undefined ? 10 : Number(kArg);
+    const start = performance.now();
+    const report = evaluateCorpus(input, { k });
+    const elapsed = performance.now() - start;
+    console.log(JSON.stringify(report, null, 2));
+    if (args.includes("--timing"))
+      console.error(
+        JSON.stringify({
+          elapsedMs: elapsed,
+          scope: "offline in-process replay",
+          deterministic: false,
+        }),
+      );
+    return;
+  }
   if (command === "restore") {
     const backup = required(0, "backup path");
     if (existsSync(path))
@@ -211,7 +253,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
