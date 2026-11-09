@@ -1,0 +1,1 @@
+ALTER TABLE `score_invalidation` ADD `generation` integer DEFAULT 0 NOT NULL;

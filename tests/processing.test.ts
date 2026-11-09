@@ -597,6 +597,66 @@ test("score refresh deadlines and rule changes use indexes", () => {
   store.close();
 });
 
+test("global score invalidation advances in durable bounded batches", () => {
+  const store = new Store(":memory:");
+  for (let i = 0; i < 65; i++) {
+    const id = `item-${String(i).padStart(3, "0")}`;
+    store.sqlite
+      .query("INSERT INTO items(id,identity,title,ingested_at) VALUES(?,?,?,0)")
+      .run(id, id, id);
+    store.sqlite
+      .query(
+        "INSERT INTO processing_jobs(id,item_id,stage,generation,status,available_at,created_at) VALUES(?,?,'extract',1,'done',0,0)",
+      )
+      .run(`extract-${id}`, id);
+    store.sqlite
+      .query(
+        "INSERT INTO processing_jobs(id,item_id,stage,generation,status,available_at,created_at) VALUES(?,?,'score',1,'done',0,0)",
+      )
+      .run(`score-${id}`, id);
+  }
+  invalidateScores(store.sqlite, 1);
+  expect(
+    store.sqlite
+      .query<{ n: number }, []>(
+        "SELECT count(*) n FROM processing_jobs WHERE stage='score' AND status='pending'",
+      )
+      .get()!.n,
+  ).toBe(0);
+  store.claimProcessing("score", 2);
+  expect(
+    store.sqlite
+      .query<{ n: number }, []>(
+        "SELECT count(*) n FROM processing_jobs WHERE stage='score' AND status IN ('pending','running')",
+      )
+      .get()!.n,
+  ).toBe(32);
+  expect(
+    store.sqlite
+      .query<{ pending: number }, []>(
+        "SELECT pending FROM score_invalidation WHERE id=1",
+      )
+      .get()!.pending,
+  ).toBe(1);
+  store.claimProcessing("score", 3);
+  store.claimProcessing("score", 4);
+  expect(
+    store.sqlite
+      .query<{ n: number }, []>(
+        "SELECT count(*) n FROM processing_jobs WHERE stage='score' AND status IN ('pending','running')",
+      )
+      .get()!.n,
+  ).toBe(65);
+  expect(
+    store.sqlite
+      .query<{ pending: number }, []>(
+        "SELECT pending FROM score_invalidation WHERE id=1",
+      )
+      .get()!.pending,
+  ).toBe(0);
+  store.close();
+});
+
 test("superseded generation cannot advance the current item", () => {
   const store = new Store(":memory:");
   store.addSource("https://example.com/feed");

@@ -3,7 +3,7 @@ import { StoryStore } from "./story-store";
 import { createHash } from "node:crypto";
 import { observedUpdate, type ObservedVersion } from "../observed-update";
 import { ProfileStore } from "../profiles";
-import { invalidateScores } from "./score-queue";
+import { advanceScoreInvalidation, invalidateScores } from "./score-queue";
 import {
   SCORING_CRITERIA_VERSION,
   scoreItem,
@@ -338,6 +338,7 @@ export class Store {
     return this.sqlite
       .transaction(() => {
         if (stage === "score") {
+          advanceScoreInvalidation(this.sqlite, now);
           // Move at most one indexed refresh into the work queue per claim.
           const refresh = this.sqlite
             .query<{ job_id: string }, [number, string, string]>(
@@ -600,6 +601,12 @@ export class Store {
       observedUpdateAt: update ? latestVersion!.observed_at : null,
     };
     const provenance = {
+      invalidationGeneration:
+        this.sqlite
+          .query<{ generation: number }, []>(
+            "SELECT generation FROM score_invalidation WHERE id=1",
+          )
+          .get()?.generation ?? 0,
       interests,
       editorial,
       analysis: item.analysis,

@@ -163,6 +163,7 @@ export const processingJobs = sqliteTable(
       t.availableAt,
       t.createdAt,
     ),
+    index("processing_stage_cursor_idx").on(t.stage, t.id),
   ],
 );
 
@@ -255,6 +256,13 @@ export const scoreRefresh = sqliteTable(
     index("score_refresh_criteria").on(t.criteriaVersion),
   ],
 );
+
+export const scoreInvalidation = sqliteTable("score_invalidation", {
+  id: integer().primaryKey(),
+  cursor: text(),
+  pending: integer().notNull().default(0),
+  generation: integer().notNull().default(0),
+});
 
 /** Development groups never replace items or original citations. */
 export const storyGroups = sqliteTable("story_groups", {
