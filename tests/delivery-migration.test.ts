@@ -115,3 +115,99 @@ test("populated pre-delivery database migrates and delivery state survives backu
     rmSync(dir, { recursive: true, force: true });
   }
 });
+
+test("reconcile a restored pending snapshot after a later confirmed provider acceptance", async () => {
+  const { acquireDeliveryLock } = await import("../src/delivery-lock");
+  const { previewDeliveryReconciliation, confirmDeliveryReconciliation } =
+    await import("../src/delivery-reconcile");
+  const dir = mkdtempSync(join(tmpdir(), "newspulse-pending-backup-"));
+  const path = join(dir, "live.sqlite");
+  const backup = join(dir, "backup.sqlite");
+  const now = Date.now();
+  let live: Store | undefined = new Store(path);
+  let restored: Store | undefined;
+  try {
+    live.sqlite.exec(
+      "INSERT INTO items(id,identity,title,ingested_at) VALUES('item','identity','Title',1)",
+    );
+    const digest = new DigestStore(live.sqlite).freeze(
+      {
+        date: "2026-11-09",
+        timezone: "Europe/London",
+        subject: "Digest",
+        html: "<p>Digest</p>",
+        text: "Digest",
+        decisionSnapshot: {},
+        items: [{ itemId: "item", groupId: null, scoreId: null, snapshot: {} }],
+      },
+      now,
+    );
+    const deliveries = new DeliveryStore(live.sqlite);
+    const pending = deliveries.prepare(
+      "2026-11-09",
+      "reader@example.com",
+      "sender@example.com",
+      () => digest,
+      now,
+    )!;
+    live.backup(backup);
+    const claim = deliveries.claim(now)!;
+    expect(deliveries.beginSend(claim, now)).toBe(true);
+    expect(deliveries.sent(claim, "provider-accepted", now + 1)).toBe(true);
+    live.close();
+    live = undefined;
+    const lock = acquireDeliveryLock(backup);
+    try {
+      restored = new Store(backup);
+      const prior = new DeliveryStore(restored.sqlite).get(pending.id)!;
+      expect(prior.status).toBe("pending");
+      const action = {
+        id: pending.id,
+        resolution: "accepted" as const,
+        providerId: "provider-accepted",
+      };
+      expect(() =>
+        previewDeliveryReconciliation(
+          restored!.sqlite,
+          { id: pending.id, resolution: "not_sent", providerId: null },
+          now + 2,
+        ),
+      ).toThrow("not eligible");
+      const preview = previewDeliveryReconciliation(
+        restored.sqlite,
+        action,
+        now + 2,
+      );
+      expect(() =>
+        confirmDeliveryReconciliation(
+          restored!.sqlite,
+          { ...action, providerId: "other" },
+          preview.confirmation.asOf,
+          preview.confirmation.hash,
+          now + 3,
+        ),
+      ).toThrow("does not match");
+      confirmDeliveryReconciliation(
+        restored.sqlite,
+        action,
+        preview.confirmation.asOf,
+        preview.confirmation.hash,
+        now + 3,
+      );
+      expect(new DeliveryStore(restored.sqlite).get(pending.id)).toMatchObject({
+        status: "sent",
+        provider_id: "provider-accepted",
+        idempotency_key: pending.idempotency_key,
+      });
+      expect(new DeliveryStore(restored.sqlite).claim(now + 4)).toBeNull();
+    } finally {
+      restored?.close();
+      restored = undefined;
+      lock.close();
+    }
+  } finally {
+    live?.close();
+    restored?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});

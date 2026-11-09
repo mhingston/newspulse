@@ -1,3 +1,8 @@
+import {
+  markRestoredDelivery,
+  previewDeliveryRestoreAcknowledgment,
+  confirmDeliveryRestoreAcknowledgment,
+} from "./delivery-restore-guard";
 import { DeliveryStore } from "./db/delivery-store";
 import { acquireDeliveryLock } from "./delivery-lock";
 import {
@@ -14,7 +19,7 @@ import { parseOpml, exportOpml } from "./adapters/opml";
 import { RssAdapter } from "./adapters/rss";
 import { Worker } from "./worker";
 import { Database } from "bun:sqlite";
-import { copyFileSync, existsSync, mkdirSync } from "node:fs";
+import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import {
   compareEvaluations,
@@ -89,7 +94,14 @@ async function main() {
       check.close();
     }
     mkdirSync(dirname(path), { recursive: true });
-    copyFileSync(backup, path);
+    const restoreLock =
+      process.platform === "linux" ? acquireDeliveryLock(path) : null;
+    try {
+      markRestoredDelivery(path);
+      copyFileSync(backup, path, constants.COPYFILE_EXCL);
+    } finally {
+      restoreLock?.close();
+    }
     console.log(`Restored to ${path}`);
     return;
   }
@@ -99,12 +111,30 @@ async function main() {
       ? acquireAnalysisLock(path)
       : null;
   const deliveryLock =
-    command === "delivery-reconcile" || command === "delivery-reconcile-preview"
+    command === "delivery-reconcile" ||
+    command === "delivery-reconcile-preview" ||
+    command === "delivery-restore-preview" ||
+    command === "delivery-restore-confirm"
       ? acquireDeliveryLock(path)
       : null;
   const store = new Store(path);
   try {
     switch (command) {
+      case "delivery-restore-preview": {
+        console.log(
+          JSON.stringify(previewDeliveryRestoreAcknowledgment(path), null, 2),
+        );
+        break;
+      }
+      case "delivery-restore-confirm": {
+        confirmDeliveryRestoreAcknowledgment(
+          path,
+          Number(required(0, "preview asOf")),
+          required(1, "preview hash"),
+        );
+        console.log("Delivery restore reconciliation acknowledged");
+        break;
+      }
       case "delivery-list": {
         console.log(
           JSON.stringify(new DeliveryStore(store.sqlite).list(), null, 2),
@@ -323,7 +353,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

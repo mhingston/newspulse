@@ -24,7 +24,9 @@ function snapshot(db: Database, action: Reconciliation, asOf: number) {
   const delivery = new DeliveryStore(db).get(action.id);
   if (
     !delivery ||
-    (delivery.status !== "ambiguous" && delivery.status !== "failed")
+    (delivery.status !== "ambiguous" &&
+      delivery.status !== "failed" &&
+      !(delivery.status === "pending" && action.resolution === "accepted"))
   )
     throw new Error("Delivery is not eligible for reconciliation");
   const hash = createHash("sha256")

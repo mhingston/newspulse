@@ -1,3 +1,4 @@
+import { assertDeliveryRestoreAcknowledged } from "./delivery-restore-guard";
 import { deliveryConfig } from "./delivery-config";
 import { acquireDeliveryLock } from "./delivery-lock";
 import { DeliveryStore } from "./db/delivery-store";
@@ -27,7 +28,10 @@ const delivery = deliveryConfig();
 // Keep it for the process lifetime even if a timed-out provider ignores abort.
 if (analysis) acquireAnalysisLock(cfg.DB_PATH);
 // Retain exclusive ownership through shutdown and any in-flight send.
-if (delivery) acquireDeliveryLock(cfg.DB_PATH);
+if (delivery) {
+  acquireDeliveryLock(cfg.DB_PATH);
+  assertDeliveryRestoreAcknowledged(cfg.DB_PATH);
+}
 const store = new Store(cfg.DB_PATH);
 const inboundStore =
   cfg.RESEND_API_KEY && cfg.RESEND_WEBHOOK_SECRET

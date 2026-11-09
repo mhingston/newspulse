@@ -212,7 +212,7 @@ export class DeliveryStore {
       throw new Error("Unexpected provider ID");
     const result = this.db
       .query(
-        "UPDATE deliveries SET status=?,provider_id=?,first_attempt_at=?,available_at=?,last_error=?,updated_at=?,attempts=CASE WHEN ?='not_sent' THEN 0 ELSE attempts END WHERE id=? AND status IN ('ambiguous','failed')",
+        "UPDATE deliveries SET status=?,provider_id=?,first_attempt_at=?,available_at=?,last_error=?,updated_at=?,attempts=CASE WHEN ?='not_sent' THEN 0 ELSE attempts END WHERE id=? AND (status IN ('ambiguous','failed') OR (status='pending' AND ?='accepted'))",
       )
       .run(
         resolution === "accepted" ? "sent" : "pending",
@@ -223,6 +223,7 @@ export class DeliveryStore {
         now,
         resolution,
         id,
+        resolution,
       );
     if (result.changes !== 1)
       throw new Error("Delivery is not eligible for reconciliation");
