@@ -145,34 +145,26 @@ test("timeout bounds stalled dispatch and stalled response streams", async () =>
   await expect(stalled.list()).rejects.toMatchObject({ kind: "transient" });
 });
 
-test("stream read errors are transient; bad payloads invalid", async () => {
+test("stream read errors retry; malformed payloads remain invalid", async () => {
   let reads = 0;
-  const reset = new ResendInbound("key", secret, async () =>
-    new Response(
-      new ReadableStream<Uint8Array>({
-        pull(controller) {
-          if (reads++ === 0) {
-            controller.enqueue(new TextEncoder().encode('{"object":"list",'));
-          } else {
-            controller.error(new Error("connection reset"));
-          }
-        },
-      }),
-    ),
-  );
+  const stream = new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (reads++ === 0) {
+        controller.enqueue(new TextEncoder().encode("partial"));
+      } else {
+        controller.error(new Error("connection reset"));
+      }
+    },
+  });
+  const getStream = async () => new Response(stream);
+  const reset = new ResendInbound("key", secret, getStream);
   await expect(reset.list()).rejects.toMatchObject({ kind: "transient" });
 
-  const invalidJson = new ResendInbound(
-    "key",
-    secret,
-    async () => new Response("{invalid json"),
-  );
+  const badJson = async () => new Response("{");
+  const invalidJson = new ResendInbound("key", secret, badJson);
   await expect(invalidJson.list()).rejects.toMatchObject({ kind: "invalid" });
 
-  const invalidUtf8 = new ResendInbound(
-    "key",
-    secret,
-    async () => new Response(new Uint8Array([0xc3, 0x28])),
-  );
+  const badUtf8 = async () => new Response(new Uint8Array([0xc3, 0x28]));
+  const invalidUtf8 = new ResendInbound("key", secret, badUtf8);
   await expect(invalidUtf8.list()).rejects.toMatchObject({ kind: "invalid" });
 });
