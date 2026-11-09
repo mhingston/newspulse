@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { z } from "zod";
+import { invalidateScores } from "./db/score-queue";
 
 const id = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/);
 const label = z.string().trim().min(1).max(500);
@@ -69,6 +70,7 @@ export class ProfileStore {
     const parsed = z.array(profileSchema).parse(input);
     return this.db
       .transaction(() => {
+        let changed = false;
         for (const p of parsed) {
           const existing = this.get(p.kind, p.id, p.version);
           if (existing) {
@@ -88,7 +90,9 @@ export class ProfileStore {
               "INSERT INTO profiles(kind,id,version,document) VALUES(?,?,?,?)",
             )
             .run(p.kind, p.id, p.version, JSON.stringify(p));
+          changed = true;
         }
+        if (changed) invalidateScores(this.db, Date.now());
         return parsed;
       })
       .immediate();

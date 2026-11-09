@@ -163,6 +163,7 @@ export const processingJobs = sqliteTable(
       t.availableAt,
       t.createdAt,
     ),
+    index("processing_stage_cursor_idx").on(t.stage, t.id),
   ],
 );
 
@@ -218,6 +219,50 @@ export const analysisReservations = sqliteTable("analysis_reservations", {
 export const analysisControl = sqliteTable("analysis_control", {
   id: integer().primaryKey(),
   envelopeBreach: integer("envelope_breach").notNull().default(0),
+});
+
+/** Immutable, reproducible scoring runs; a new input creates a new row. */
+export const itemScores = sqliteTable(
+  "item_scores",
+  {
+    id: text().primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    generation: integer().notNull(),
+    inputHash: text("input_hash").notNull(),
+    criteriaVersion: text("criteria_version").notNull(),
+    provenance: text().notNull(),
+    result: text().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("item_score_identity").on(t.itemId, t.generation, t.inputHash),
+    index("item_scores_item").on(t.itemId, t.createdAt),
+  ],
+);
+
+export const scoreRefresh = sqliteTable(
+  "score_refresh",
+  {
+    jobId: text("job_id")
+      .primaryKey()
+      .references(() => processingJobs.id),
+    criteriaVersion: text("criteria_version").notNull(),
+    dueAt: integer("due_at"),
+  },
+  (t) => [
+    index("score_refresh_due").on(t.dueAt),
+    index("score_refresh_criteria").on(t.criteriaVersion),
+  ],
+);
+
+export const scoreInvalidation = sqliteTable("score_invalidation", {
+  id: integer().primaryKey(),
+  cursor: text(),
+  pending: integer().notNull().default(0),
+  generation: integer().notNull().default(0),
+  passGeneration: integer("pass_generation").notNull().default(0),
 });
 
 /** Development groups never replace items or original citations. */

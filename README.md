@@ -1,12 +1,12 @@
 # Newspulse
 
-A self-hosted foundation for a personal discovery engine. **M1 is implemented:** RSS/Atom → durable SQLite ingestion → authenticated, read-only MCP search. There is no feed-reader UI. Email, relevance scoring, proactive discovery and daily briefings remain future milestones; optional analysis and deterministic story grouping are part of the developing M2 milestone.
+A self-hosted foundation for a personal discovery engine. **M1 is implemented:** RSS/Atom → durable SQLite ingestion → authenticated, read-only MCP search. There is no feed-reader UI. Optional analysis, deterministic story grouping and an initial scoring pipeline are part of the developing M2 milestone. Email, proactive discovery and daily briefings remain future milestones.
 
 ## Project decisions and remaining work
 
 Start with [AGENTS.md](AGENTS.md) for contributor guidance, [decisions](docs/decisions.md) for architectural/product constraints, and the [roadmap and coverage map](docs/roadmap.md) for implementation order and dependencies. The [original handoff](docs/handoff.md) is preserved in full.
 
-[Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) links 22 required implementation/acceptance issues and 9 conditional refinement issues. Required issues need merged, verified behavior; optional ideas retain the handoff's evaluation gates. The initial “M1 only” instruction scoped PR #1; future sessions should implement a selected issue and its authorized scope rather than restart the entire handoff.
+[Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) links 23 required implementation/acceptance issues and 9 conditional refinement issues. Required issues need merged, verified behavior; optional ideas retain the handoff's evaluation gates. The initial “M1 only” instruction scoped PR #1; future sessions should implement a selected issue and its authorized scope rather than restart the entire handoff.
 
 ## Run locally
 
@@ -57,7 +57,7 @@ console.log(results);
 await client.close();
 ```
 
-Tools: `get_story_group` (development ID and preserved article references), `search_items` (literal keywords, limit, offset, optional `source_id`, `since` in epoch milliseconds), `get_item` (ID), `get_sources`, `get_status`. Search combines terms with AND. Results include canonical item URLs; `get_item` also returns all original resolved source references, including fragments and tracking context. Items without public URLs remain retrievable using their item ID and source-native reference. Source text is untrusted; AI summaries and scores are explicitly unavailable.
+Tools: `explain_ranking` (recorded score history and source references), `get_story_group` (development ID and preserved article references), `search_items` (literal keywords, limit, offset, optional `source_id`, `since` in epoch milliseconds), `get_item` (ID), `get_sources`, `get_status`. Search combines terms with AND. Results include canonical item URLs; `get_item` also returns all original resolved source references, including fragments and tracking context. Items without public URLs remain retrievable using their item ID and source-native reference. Source text is untrusted; model summaries and scores are estimates.
 
 Transport is stateless Streamable HTTP with JSON responses. Stdio is optional in the handoff and not implemented. There are no mutation tools. A client with a browser Origin must appear in `ALLOWED_ORIGINS`. Hosts must appear in `ALLOWED_HOSTS`; use hostnames without ports. No CORS policy is exposed for browser apps yet.
 
@@ -100,7 +100,7 @@ DB_PATH=./data/restored.sqlite bun run cli search robotics
 
 Backup destinations must not already exist. Back up regularly and copy snapshots off-host; raw live database-file copies can omit WAL data. Treat backups as private content. In Compose, create snapshots under `/app/data/backups` and use `docker compose cp` to export them. Stop Compose before restoring into a new file in its volume, then configure the container's DB_PATH to that file. Never overwrite a running database or its WAL/SHM sidecars.
 
-Logs are JSON on stderr with source ID, outcome, item count, attempt and duration. `get_status` / `cli status` report source errors, poll queue totals and processing job counts grouped by stage and state. `get_item` reports processing attempts, retry deadlines and errors for each generation. Extraction runs automatically; analysis is optional and scoring remains pending until implemented. HTTP `/health` requires the bearer token. SQLite uses WAL, 5-second busy timeout and short transactions. Job leases expire after 60 seconds; retry backoff starts at 30 seconds, max five attempts per poll cycle. Reclaimed jobs and repeat polling are idempotent.
+Logs are JSON on stderr with source ID, outcome, item count, attempt and duration. `get_status` / `cli status` report source errors, poll queue totals and processing job counts grouped by stage and state. `get_item` reports processing attempts, retry deadlines and errors for each generation. Extraction and scoring run automatically; analysis is optional. HTTP `/health` requires the bearer token. SQLite uses WAL, 5-second busy timeout and short transactions. Job leases expire after 60 seconds; retry backoff starts at 30 seconds, max five attempts per poll cycle. Reclaimed jobs and repeat polling are idempotent.
 
 If a feed fails, inspect `last_error`, check its URL and network access, and allow the persisted retry. A terminally failed polling cycle is retried as a new cycle when that source is next due. No public endpoint changes subscriptions. Disabling or removing a source cancels pending polls and fences any in-flight poll; network work already started may finish, but its results cannot be committed. Removal hides the subscription and retains its source record, item references and history. Re-adding the same URL restores it; importing an already disabled feed leaves it disabled.
 
@@ -120,7 +120,7 @@ The smoke test uses local RSS/Atom HTTP fixtures, imports OPML, ingests duplicat
 
 Feed decoding follows [RFC 7303 §3.2](https://www.rfc-editor.org/rfc/rfc7303#section-3.2): BOM first, then HTTP charset, then XML declaration/autodetection, defaulting to UTF-8. UTF-16LE/BE and legacy encodings supported by Bun's TextDecoder are covered; unsupported encodings (including UTF-32) and invalid bytes produce explicit feed-health errors instead of silent replacement characters.
 
-See [architecture and roadmap](docs/architecture.md) for the initial schema, reference-project findings, compatibility evidence, defaults and limitations. Semantic deduplication, editorial ranking and proactive discoveries are not available yet. This release has no relevance-quality baseline: those evaluations require the M2 scoring pipeline and representative labeled data.
+See [architecture and roadmap](docs/architecture.md) for the initial schema, reference-project findings, compatibility evidence, defaults and limitations. Semantic deduplication and proactive discoveries are not available yet. This release has no measured relevance-quality baseline; representative labeled data and offline evaluation are tracked by #8.
 
 ### Interest and editorial profiles
 
@@ -157,7 +157,7 @@ Create a JSON array such as the following, then import it using `bun run cli imp
 
 Priority ranges from 1 to 5. A temporary interest requires `expiresAt`, an epoch millisecond timestamp; at and after expiry it is excluded from active interests while historical versions remain available. Persistent interests omit `expiresAt`. Editorial criteria are separate from interests. Query scheduling, feedback records and analysis references are implemented in later milestones; `feedbackRefs` contains explicit external identifiers and does not infer feedback from reading behavior. No discovery is scheduled by profile import alone.
 
-Optional, deterministic starting editorial criteria for six content types are in `examples/editorial-profiles.json`; import them explicitly if useful. They are configuration for later scoring, not claims that scoring is implemented.
+Optional, deterministic starting editorial criteria for six content types are in `examples/editorial-profiles.json`; import them explicitly if useful. The scoring baseline applies recognized component weights when an analysis classification matches a profile; unknown dimensions are reported as uncertainty.
 Article extraction runs asynchronously after ingestion for public HTTP(S) item URLs. Search and MCP retain feed text while full text is pending or unavailable. See [architecture notes](docs/architecture.md#http-article-extraction) for destination restrictions, limits and extraction behavior.
 
 ### Optional structured analysis
@@ -188,3 +188,13 @@ Evidence is deterministic: long, varied, identical source text identifies syndic
 Existing databases enqueue one backfill job when upgraded. Grouping jobs do not block ingested items from being searchable, and unchanged snapshots do not create new membership history or paid analysis work. Back up before migration, and if rollback is needed, restore that backup to a **new stopped database path** rather than downgrading an upgraded database in place. Future immutable newsletter editions will not be rewritten by regrouping.
 
 **Limitations:** The initial rule is deliberately conservative and uncalibrated; some real shared events will remain distinct, especially if titles lack explicit event verbs or identifiers. Long identical boilerplate may be ambiguous. The initial snapshot-wide reconciler needs further scalability evaluation for large libraries and may require more focused invalidation later. No model, vector database or external queue is required.
+
+### Initial scoring (M2 issue #7)
+
+After extraction, a durable score job evaluates the item even when analysis is disabled or unavailable. `explain_ranking` returns saved runs, source references, component values, weights, eligibility, reasons, uncertainty and the input/profile/analysis provenance. Historical runs are retained; a historical score is not necessarily current. The explanation tool returns up to 20 runs by default (maximum 100); pass `next_before` as `before` to retrieve older runs. Search remains available during processing and is not ordered by these scores.
+
+The deterministic baseline uses explicit active interests, lexical matches and preferences, publication age, text length and simple indicators for the other components. Matching editorial criteria adjust known component weights when an analysis classification is available. Components and totals range from 0 to 100; ties in the domain comparator use item ID. No interest is enabled by default, and missing clicks or unread state are not inputs. Citations and keyword indicators do not establish factual accuracy or source credibility. The optional specialist interface is disabled in the running service; its absence is recorded as uncertainty and requires no binary or provider.
+
+Scoring is a development baseline, not a validated ranking. A conservative update rule compares successive non-backfilled observations of the same source-native item: a changed title and at least 20 new distinct body terms representing at least 20% of the current vocabulary raise novelty for seven days after observation. Incidental changes and other source references do not restart or erase that window. A lexical reversion to a retained comparison observation, or removal of more than half the new terms, cancels that source's evidence. The saved explanation includes the source, version IDs, new terms and rule version. This heuristic can miss meaningful updates and can mistake extensive unrelated changes for one; it does not verify claims. It does not compare different publishers' copies or infer that a user saw earlier coverage. Production has no publication history yet, so presentation history remains unavailable and historical redundancy against previously published editions cannot yet be assessed. Required follow-up [#42](https://github.com/mhingston/newspulse/issues/42) owns that integration and its production tests after immutable editions and delivery state exist. There is no quality or cost-per-discovery measurement until the offline evaluation in #8.
+
+Profile imports, completed extraction or analysis, and grouping changes requeue affected scores; temporary-interest expiry, publication-age boundaries and expiry of an observed-update boost also trigger re-scoring. The score history remains available for comparison. Back up before upgrading: the migration adds score storage and queues existing extracted items. If rollback is needed, restore a pre-upgrade backup into a new stopped database path and verify it before switching. Inspect processing job counts and per-item stage status if scoring fails; ingestion and search do not wait for scoring.
