@@ -103,6 +103,14 @@ export function normalizeNewsletter(email: ReceivedEmail): {
       }
       consider(href, label);
     }
+    // textContent concatenates adjacent elements in linkedom, which can join
+    // words across paragraph and link boundaries and make them unsearchable.
+    for (const element of document.querySelectorAll(
+      "p,div,br,li,blockquote,h1,h2,h3,h4,h5,h6,section,article,tr,a",
+    )) {
+      element.insertBefore(document.createTextNode(" "), element.firstChild);
+      element.appendChild(document.createTextNode(" "));
+    }
     text = (document.body?.textContent || document.textContent || plain)
       .replace(/\s+/g, " ")
       .trim();

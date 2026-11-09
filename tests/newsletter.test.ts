@@ -59,6 +59,7 @@ describe("newsletter normalization", () => {
       ),
     );
     expect(fragment.candidate.text).toContain("Original fragment text");
+    expect(fragment.candidate.text).toContain("text Article");
     expect(fragment.candidate.children).toHaveLength(1);
     const essay = normalizeNewsletter(
       email(null, "An entire newsletter essay without links."),
