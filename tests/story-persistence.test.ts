@@ -315,7 +315,14 @@ test("grouping ignores an obsolete extraction after a correction and unavailable
     for (let i = 0; i < 2; i++) {
       const job = store.claimProcessing("extract", start + 1002)!;
       expect(job).not.toBeNull();
-      expect(store.completeProcessing(job, "extracted", start + 1003, JSON.stringify({ text: syndicated }))).toBe(true);
+      expect(
+        store.completeProcessing(
+          job,
+          "extracted",
+          start + 1003,
+          JSON.stringify({ text: syndicated }),
+        ),
+      ).toBe(true);
     }
     expect(store.stories.reconcile().groups).toBe(1);
     const originalGroup = current(store)[0]!.group_id;
@@ -323,18 +330,31 @@ test("grouping ignores an obsolete extraction after a correction and unavailable
     ingest(
       store,
       "https://feed-one.example/rss",
-      [candidate("b", "Acme releases Orion 2 robotics model", 0, "Updated feed body about Orion.")],
+      [
+        candidate(
+          "b",
+          "Acme releases Orion 2 robotics model",
+          0,
+          "Updated feed body about Orion.",
+        ),
+      ],
       start + 5000,
     );
     // The previous successful extraction remains stored but is no longer
     // current while the correction's extraction generation is pending.
     expect(store.stories.reconcile().groups).toBe(2);
-    expect(new Set(current(store).map((member) => member.group_id)).size).toBe(2);
+    expect(new Set(current(store).map((member) => member.group_id)).size).toBe(
+      2,
+    );
     const job = store.claimProcessing("extract", start + 5002)!;
     expect(job.generation).toBe(2);
-    expect(store.completeProcessing(job, "unavailable", start + 5003)).toBe(true);
+    expect(store.completeProcessing(job, "unavailable", start + 5003)).toBe(
+      true,
+    );
     expect(store.stories.reconcile().groups).toBe(2);
-    expect(current(store).some((member) => member.group_id === originalGroup)).toBe(true);
+    expect(
+      current(store).some((member) => member.group_id === originalGroup),
+    ).toBe(true);
   } finally {
     store.close();
   }
