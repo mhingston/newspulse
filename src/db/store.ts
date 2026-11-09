@@ -156,6 +156,8 @@ export class Store {
       .transaction(() => {
         const source = this.source(id);
         if (!source || source.removed) throw new Error("Source not found");
+        if (source.kind !== "rss")
+          throw new Error("Only RSS sources can be managed here");
         const title = changes.title ?? source.title;
         if (!title.trim() || title.length > 1000)
           throw new Error("Invalid source title");
@@ -238,7 +240,7 @@ export class Store {
         if (
           !this.sqlite
             .query(
-              "UPDATE sources SET removed=1,enabled=0 WHERE id=? AND removed=0",
+              "UPDATE sources SET removed=1,enabled=0 WHERE id=? AND removed=0 AND kind='rss'",
             )
             .run(id).changes
         )
@@ -274,7 +276,7 @@ export class Store {
       .transaction(() => {
         let count = 0;
         for (const s of this.sources().filter(
-          (s) => s.enabled && (force || s.next_poll <= now),
+          (s) => s.kind === "rss" && s.enabled && (force || s.next_poll <= now),
         )) {
           count += this.sqlite
             .query(
@@ -297,7 +299,7 @@ export class Store {
         return this.sqlite
           .query<Job, [string, number, number]>(
             `UPDATE jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=?
-        WHERE id=(SELECT j.id FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 1)
+        WHERE id=(SELECT j.id FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind='rss' AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 1)
         RETURNING id,source_id,attempts,lease_token`,
           )
           .get(crypto.randomUUID(), now + 60_000, now);
@@ -877,6 +879,9 @@ export class Store {
       .query("UPDATE item_sources SET item_id=? WHERE item_id=?")
       .run(winner, loser);
     this.sqlite
+      .query("UPDATE inbound_messages SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
+    this.sqlite
       .query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?")
       .run(winner, loser);
     // Preserve the membership trail when an exact-identity alias is reconciled.
@@ -944,6 +949,12 @@ export class Store {
     now: number,
     parentId?: string,
   ): string {
+    const inbound =
+      this.sqlite
+        .query<{ kind: string }, [string]>(
+          "SELECT kind FROM sources WHERE id=?",
+        )
+        .get(sourceId)?.kind === "inbound";
     const previousRef = this.sqlite
       .query<{ item_id: string; url: string | null }, [string, string]>(
         "SELECT item_id,url FROM item_sources WHERE source_id=? AND native_id=?",
@@ -1023,7 +1034,7 @@ export class Store {
           now,
           generation,
           sourceId,
-          originalUrl,
+          inbound ? (candidate.url ?? null) : originalUrl,
         );
       } else this.enqueueProcessing("extract", prior.item_id, now);
       this.insertChildren(candidate, sourceId, now, prior.item_id);
@@ -1119,7 +1130,9 @@ export class Store {
       now,
       generation,
       sourceId,
-      candidate.sourceUrl ?? candidate.url ?? null,
+      inbound
+        ? (candidate.url ?? null)
+        : (candidate.sourceUrl ?? candidate.url ?? null),
     );
     this.insertChildren(candidate, sourceId, now, item.id);
     this.markGroupingDirty(item.id, now);
@@ -1144,6 +1157,80 @@ export class Store {
         now,
         parentId,
       );
+  }
+  /** Normalize outside the transaction, then atomically index the unchanged body. */
+  indexNextNewsletter(
+    normalize: (email: import("../inbound").ReceivedEmail) => {
+      candidate: Candidate;
+      bodyUnavailable: boolean;
+      linksTruncated: boolean;
+    },
+    now = Date.now(),
+  ): boolean {
+    const row = this.sqlite
+      .query<
+        { id: string; provider: string; provider_id: string; body: string },
+        []
+      >(
+        "SELECT id,provider,provider_id,body FROM inbound_messages WHERE status='complete' AND item_id IS NULL AND index_diagnostics IS NULL AND body IS NOT NULL ORDER BY id LIMIT 1",
+      )
+      .get();
+    if (!row) return false;
+    let normalized: ReturnType<typeof normalize>;
+    try {
+      const email = JSON.parse(row.body) as import("../inbound").ReceivedEmail;
+      if (email.metadata.providerId !== row.provider_id)
+        throw new Error("Inbound message identity mismatch");
+      normalized = normalize(email);
+    } catch {
+      this.sqlite
+        .query(
+          "UPDATE inbound_messages SET index_diagnostics=? WHERE id=? AND status='complete' AND item_id IS NULL AND index_diagnostics IS NULL AND body=?",
+        )
+        .run(
+          JSON.stringify({ error: "normalization_failed" }),
+          row.id,
+          row.body,
+        );
+      return true;
+    }
+    return this.sqlite
+      .transaction(() => {
+        const current = this.sqlite
+          .query(
+            "SELECT 1 FROM inbound_messages WHERE id=? AND status='complete' AND item_id IS NULL AND index_diagnostics IS NULL AND body=?",
+          )
+          .get(row.id, row.body);
+        if (!current) return false;
+        const url = `inbound:${row.provider}`;
+        this.sqlite
+          .query(
+            "INSERT OR IGNORE INTO sources(id,kind,url,title,enabled) VALUES(?,'inbound',?,?,0)",
+          )
+          .run(crypto.randomUUID(), url, `Incoming email (${row.provider})`);
+        const source = this.sqlite
+          .query<{ id: string }, [string]>(
+            "SELECT id FROM sources WHERE url=? AND kind='inbound'",
+          )
+          .get(url);
+        if (!source) throw new Error("Inbound source identity conflict");
+        const itemId = this.insert(normalized.candidate, source.id, now);
+        this.sqlite
+          .query(
+            "UPDATE inbound_messages SET item_id=?,index_diagnostics=? WHERE id=?",
+          )
+          .run(
+            itemId,
+            JSON.stringify({
+              bodyUnavailable: normalized.bodyUnavailable,
+              linksTruncated: normalized.linksTruncated,
+              attachments: "unsupported",
+            }),
+            row.id,
+          );
+        return true;
+      })
+      .immediate();
   }
   complete(job: Job, result: PollResult, now = Date.now()): boolean {
     return this.sqlite
@@ -1303,7 +1390,15 @@ export class Store {
       ...item,
       references: this.sqlite
         .query(
-          "SELECT r.*,s.title AS source_title,s.url AS feed_url FROM item_sources r JOIN sources s ON s.id=r.source_id WHERE r.item_id=?",
+          `SELECT r.*,s.title AS source_title,s.url AS feed_url,
+            json_extract(m.body,'$.metadata.from') AS newsletter_sender,
+            m.received_at AS newsletter_received_at,
+            m.provider AS newsletter_provider,
+            m.provider_id AS newsletter_message_id,
+            m.index_diagnostics AS newsletter_diagnostics
+           FROM item_sources r JOIN sources s ON s.id=r.source_id
+           LEFT JOIN inbound_messages m ON s.kind='inbound' AND m.item_id=coalesce(r.parent_item_id,r.item_id)
+           WHERE r.item_id=?`,
         )
         .all(id),
       content_versions: this.sqlite
@@ -1396,6 +1491,11 @@ export class Store {
       jobs: this.sqlite
         .query("SELECT status,count(*) AS count FROM jobs GROUP BY status")
         .all(),
+      inbound_indexing: this.sqlite
+        .query(
+          "SELECT count(*) AS total, coalesce(sum(CASE WHEN item_id IS NULL AND index_diagnostics IS NULL THEN 1 ELSE 0 END),0) AS pending, coalesce(sum(CASE WHEN item_id IS NULL AND index_diagnostics IS NOT NULL THEN 1 ELSE 0 END),0) AS failed FROM inbound_messages WHERE status='complete'",
+        )
+        .get(),
       processing_jobs: this.sqlite
         .query(
           "SELECT stage,status,count(*) AS count FROM processing_jobs GROUP BY stage,status ORDER BY stage,status",

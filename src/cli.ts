@@ -249,7 +249,9 @@ async function main() {
         break;
       }
       case "export-opml":
-        console.log(exportOpml(store.sources()));
+        console.log(
+          exportOpml(store.sources().filter((source) => source.kind === "rss")),
+        );
         break;
       case "poll":
         store.enqueueDue(Date.now(), args.includes("--force"));

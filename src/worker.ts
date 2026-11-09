@@ -1,6 +1,7 @@
 import type { SourceAdapter } from "./domain";
 import { HttpError } from "./adapters/rss";
 import { Store } from "./db/store";
+import { normalizeNewsletter } from "./adapters/newsletter";
 export function log(event: string, details: Record<string, unknown> = {}) {
   console.error(
     JSON.stringify({ at: new Date().toISOString(), event, ...details }),
@@ -65,6 +66,11 @@ export function schedule(
   let inboundNext = 0;
   const tick = () => {
     if (stopping) return;
+    try {
+      store.indexNextNewsletter(normalizeNewsletter);
+    } catch (error) {
+      log("newsletter_index_error", { error: String(error) });
+    }
     if (inbound && Date.now() >= inboundNext && !stageActive.has("inbound")) {
       inboundNext = Date.now() + 2_000;
       const task = inbound
