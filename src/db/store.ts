@@ -1,6 +1,7 @@
 import { Database } from "bun:sqlite";
 import { StoryStore } from "./story-store";
 import { createHash } from "node:crypto";
+import { observedUpdate, type ObservedVersion } from "../observed-update";
 import { ProfileStore } from "../profiles";
 import { invalidateScores } from "./score-queue";
 import {
@@ -337,61 +338,52 @@ export class Store {
     return this.sqlite
       .transaction(() => {
         if (stage === "score") {
-          this.sqlite
-            .query(
-              `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
-               WHERE stage='score' AND status='done' AND COALESCE((
-                 SELECT s.criteria_version FROM item_scores s WHERE s.item_id=processing_jobs.item_id
-                   AND s.generation=processing_jobs.generation ORDER BY s.created_at DESC,s.rowid DESC LIMIT 1
-               ), '')<>?`,
+          // Move at most one indexed refresh into the work queue per claim.
+          const refresh = this.sqlite
+            .query<{ job_id: string }, [number, string, string]>(
+              `SELECT job_id FROM score_refresh WHERE due_at<=?
+             UNION ALL SELECT job_id FROM score_refresh WHERE criteria_version<?
+             UNION ALL SELECT job_id FROM score_refresh WHERE criteria_version>?
+             LIMIT 1`,
             )
-            .run(now, SCORING_CRITERIA_VERSION);
-          this.sqlite
-            .query(
-              `UPDATE processing_jobs SET status='done',outcome='superseded',lease_token=NULL,lease_until=NULL
-            WHERE stage='score' AND status IN ('pending','running') AND generation <
-              (SELECT max(e.generation) FROM processing_jobs e WHERE e.item_id=processing_jobs.item_id AND e.stage='extract')`,
-            )
-            .run();
-          this.sqlite
-            .query(
-              `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
-            WHERE stage='score' AND status='done' AND EXISTS (
-              SELECT 1 FROM item_scores s JOIN profiles p ON p.kind='interest'
-              WHERE s.item_id=processing_jobs.item_id AND s.generation=processing_jobs.generation
-                AND s.id=(SELECT id FROM item_scores WHERE item_id=s.item_id AND generation=s.generation ORDER BY created_at DESC,rowid DESC LIMIT 1)
-                AND p.version=(SELECT max(q.version) FROM profiles q WHERE q.kind=p.kind AND q.id=p.id)
-                AND json_extract(p.document,'$.expiresAt')>s.created_at AND json_extract(p.document,'$.expiresAt')<=?
-            )`,
-            )
-            .run(now, now);
-          this.sqlite
-            .query(
-              `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
-            WHERE stage='score' AND status='done' AND EXISTS (
-              SELECT 1 FROM item_scores s JOIN items i ON i.id=s.item_id
-              WHERE s.item_id=processing_jobs.item_id AND s.generation=processing_jobs.generation
-                AND s.id=(SELECT id FROM item_scores WHERE item_id=s.item_id AND generation=s.generation ORDER BY created_at DESC,rowid DESC LIMIT 1)
-                AND i.published_at IS NOT NULL AND (
-                  (i.published_at>s.created_at AND i.published_at<=?) OR
-                  (i.published_at+172800001>s.created_at AND i.published_at+172800001<=?) OR
-                  (i.published_at+604800001>s.created_at AND i.published_at+604800001<=?) OR
-                  (i.published_at+2592000001>s.created_at AND i.published_at+2592000001<=?)
-                )
-            )`,
-            )
-            .run(now, now, now, now, now);
+            .get(now, SCORING_CRITERIA_VERSION, SCORING_CRITERIA_VERSION);
+          if (refresh) {
+            this.sqlite
+              .query("DELETE FROM score_refresh WHERE job_id=?")
+              .run(refresh.job_id);
+            this.sqlite
+              .query(
+                "UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL WHERE id=? AND status='done' AND outcome='scored'",
+              )
+              .run(now, refresh.job_id);
+          }
         }
         this.sqlite
           .query(
             "UPDATE processing_jobs SET status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END,lease_token=NULL,lease_until=NULL WHERE status='running' AND lease_until<=?",
           )
           .run(now);
-        return this.sqlite
+        const claimed = this.sqlite
           .query<ProcessingJob, [string, number, string, number]>(
             `UPDATE processing_jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=? WHERE id=(SELECT id FROM processing_jobs WHERE stage=? AND status='pending' AND available_at<=? ORDER BY available_at,created_at LIMIT 1) RETURNING id,item_id,stage,generation,attempts,lease_token,origin_source_id,origin_url`,
           )
           .get(crypto.randomUUID(), now + 60_000, stage, now);
+        if (claimed && stage === "score") {
+          const latest = this.sqlite
+            .query<{ n: number }, [string]>(
+              "SELECT max(generation) AS n FROM processing_jobs WHERE stage='extract' AND item_id=?",
+            )
+            .get(claimed.item_id)?.n;
+          if (latest !== claimed.generation) {
+            this.sqlite
+              .query(
+                "UPDATE processing_jobs SET status='done',outcome='superseded',lease_token=NULL,lease_until=NULL WHERE id=? AND lease_token=?",
+              )
+              .run(claimed.id, claimed.lease_token);
+            return null;
+          }
+        }
+        return claimed;
       })
       .immediate();
   }
@@ -579,6 +571,22 @@ export class Store {
     const profiles = new ProfileStore(this.sqlite);
     const interests = profiles.activeInterests(now);
     const editorial = profiles.latestEditorial();
+    const versions = this.sqlite
+      .query<ObservedVersion & { observed_at: number }, [string]>(
+        "SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM content_versions WHERE item_id=? ORDER BY id DESC",
+      )
+      .all(job.item_id);
+    const latestVersion = versions[0];
+    const previousVersion =
+      latestVersion &&
+      versions
+        .slice(1)
+        .find(
+          (version) =>
+            version.source_id === latestVersion.source_id &&
+            version.native_id === latestVersion.native_id,
+        );
+    const update = observedUpdate(previousVersion, latestVersion);
     const input: ScoringInput = {
       itemId: item.id,
       title: item.title,
@@ -589,6 +597,7 @@ export class Store {
       editorialProfiles: editorial,
       analysis: (item.analysis?.result ?? null) as ScoringInput["analysis"],
       history: null,
+      observedUpdateAt: update ? latestVersion!.observed_at : null,
     };
     const provenance = {
       interests,
@@ -598,6 +607,7 @@ export class Store {
       story: item.story,
       generation: job.generation,
       history: null,
+      observedUpdate: update,
     };
     const inputHash = createHash("sha256")
       .update(
@@ -661,6 +671,31 @@ export class Store {
             JSON.stringify(record.provenance),
             JSON.stringify(record.result),
             now,
+          );
+        const published = current.input.publishedAt;
+        const deadlines = current.input.interests.flatMap((interest) =>
+          interest.expiresAt === undefined ? [] : [interest.expiresAt],
+        );
+        if (published !== null)
+          deadlines.push(
+            published,
+            published + 172800001,
+            published + 604800001,
+            published + 2592000001,
+          );
+        if (current.input.observedUpdateAt != null)
+          deadlines.push(current.input.observedUpdateAt + 604800001);
+        const future = deadlines.filter(
+          (deadline) => Number.isSafeInteger(deadline) && deadline > now,
+        );
+        this.sqlite
+          .query(
+            "INSERT INTO score_refresh(job_id,criteria_version,due_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET criteria_version=excluded.criteria_version,due_at=excluded.due_at",
+          )
+          .run(
+            job.id,
+            record.criteriaVersion,
+            future.length ? Math.min(...future) : null,
           );
         return true;
       })

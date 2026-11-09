@@ -53,6 +53,9 @@ test("scoring runs without an analysis provider and exposes its explanation", as
     // A software upgrade must re-evaluate completed jobs without rewriting
     // the historical result, even when no item or profile changed.
     store.sqlite
+      .query("UPDATE score_refresh SET criteria_version='older-rules'")
+      .run();
+    store.sqlite
       .query("UPDATE item_scores SET criteria_version='older-rules'")
       .run();
     expect(await worker.drain("score")).toBeGreaterThan(0);

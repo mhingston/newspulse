@@ -176,6 +176,13 @@
       "when": 1794211600769,
       "tag": "0024_cuddly_mister_sinister",
       "breakpoints": true
+    },
+    {
+      "idx": 25,
+      "version": "6",
+      "when": 1794212738196,
+      "tag": "0025_giant_sunspot",
+      "breakpoints": true
     }
   ]
 }

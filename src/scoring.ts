@@ -31,6 +31,7 @@ export interface ScoringInput {
   }[];
   analysis: ScoringAnalysis | null;
   history: { sameDevelopment: boolean; meaningfulUpdate: boolean } | null;
+  observedUpdateAt?: number | null;
 }
 export interface ScoreResult {
   criteriaVersion: string;
@@ -108,9 +109,16 @@ export function scoreItem(input: ScoringInput): ScoreResult {
     const days = (input.now - input.publishedAt) / 86_400_000;
     novelty = days <= 2 ? 100 : days <= 7 ? 75 : days <= 30 ? 40 : 10;
   }
-  if (input.history?.meaningfulUpdate) novelty = Math.max(novelty, 80);
+  if (
+    (input.observedUpdateAt != null &&
+      input.observedUpdateAt <= input.now &&
+      input.now - input.observedUpdateAt <= 7 * 86_400_000) ||
+    input.history?.meaningfulUpdate
+  )
+    novelty = Math.max(novelty, 80);
   else if (input.history?.sameDevelopment) novelty = Math.min(novelty, 20);
   if (!input.history) uncertainty.push("history_unavailable");
+  if (input.observedUpdateAt != null) reasons.push("observed_source_update");
   if (!input.analysis) uncertainty.push("analysis_unavailable");
   else if (input.analysis.uncertainty.length)
     uncertainty.push("analysis_reports_uncertainty");

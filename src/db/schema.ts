@@ -241,6 +241,21 @@ export const itemScores = sqliteTable(
   ],
 );
 
+export const scoreRefresh = sqliteTable(
+  "score_refresh",
+  {
+    jobId: text("job_id")
+      .primaryKey()
+      .references(() => processingJobs.id),
+    criteriaVersion: text("criteria_version").notNull(),
+    dueAt: integer("due_at"),
+  },
+  (t) => [
+    index("score_refresh_due").on(t.dueAt),
+    index("score_refresh_criteria").on(t.criteriaVersion),
+  ],
+);
+
 /** Development groups never replace items or original citations. */
 export const storyGroups = sqliteTable("story_groups", {
   id: text().primaryKey(),

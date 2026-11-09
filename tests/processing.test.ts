@@ -581,6 +581,22 @@ test("score invalidation creates a job without waiting for analysis", () => {
   store.close();
 });
 
+test("score refresh deadlines and rule changes use indexes", () => {
+  const store = new Store(":memory:");
+  const plan = store.sqlite
+    .query<{ detail: string }, []>(
+      `EXPLAIN QUERY PLAN SELECT job_id FROM score_refresh WHERE due_at<=100
+    UNION ALL SELECT job_id FROM score_refresh WHERE criteria_version<'v1'
+    UNION ALL SELECT job_id FROM score_refresh WHERE criteria_version>'v1' LIMIT 1`,
+    )
+    .all()
+    .map((row) => row.detail)
+    .join(" ");
+  expect(plan).toContain("score_refresh_due");
+  expect(plan).toContain("score_refresh_criteria");
+  store.close();
+});
+
 test("superseded generation cannot advance the current item", () => {
   const store = new Store(":memory:");
   store.addSource("https://example.com/feed");
