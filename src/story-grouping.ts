@@ -167,7 +167,9 @@ function namedSubjectsAgree(left: string, right: string): boolean {
     [
       ...new Set(
         (title.match(/[\p{L}\p{N}]+/gu) ?? [])
-          .filter((word) => /^\p{Lu}/u.test(word) || /[\p{Ll}][\p{Lu}]/u.test(word))
+          .filter(
+            (word) => /^\p{Lu}/u.test(word) || /[\p{Ll}][\p{Lu}]/u.test(word),
+          )
           .map((word) => word.toLocaleLowerCase("en"))
           .filter(
             (word) =>
@@ -179,7 +181,11 @@ function namedSubjectsAgree(left: string, right: string): boolean {
     ].sort();
   const a = names(left);
   const b = names(right);
-  return a.length >= 2 && a.length === b.length && a.every((name, i) => name === b[i]);
+  return (
+    a.length >= 2 &&
+    a.length === b.length &&
+    a.every((name, i) => name === b[i])
+  );
 }
 
 function actionOf(title: string): string | null {
@@ -292,14 +298,17 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
   // Precompute these lookups to keep pair planning quadratic in group count.
   const byId = new Map(ordered.map((article) => [article.id, article]));
   const earliestByGroup = new Map(
-    groups.map((group) => [
-      group.id,
-      group.members
-        .map((member) => byId.get(member.itemId)!)
-        .reduce((earliest, candidate) =>
-          at(candidate) < at(earliest) ? candidate : earliest,
-        ),
-    ] as const),
+    groups.map(
+      (group) =>
+        [
+          group.id,
+          group.members
+            .map((member) => byId.get(member.itemId)!)
+            .reduce((earliest, candidate) =>
+              at(candidate) < at(earliest) ? candidate : earliest,
+            ),
+        ] as const,
+    ),
   );
   const relations: StoryRelation[] = [];
   for (let i = 0; i < groups.length; i++) {
