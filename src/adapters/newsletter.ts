@@ -35,12 +35,7 @@ function queryIsChrome(parsed: URL): boolean {
   const action =
     /^(?:unsubscribe|opt[-_]?out|manage[-_]?(?:preferences|subscription)|preferences)$/i;
   for (const [key, value] of parsed.searchParams) {
-    if (action.test(key)) return true;
-    if (
-      /^(?:action|act|do|cmd|mode|page|type|op|operation|task)$/i.test(key) &&
-      action.test(value)
-    )
-      return true;
+    if (action.test(key) || action.test(value)) return true;
   }
   return false;
 }
@@ -89,7 +84,7 @@ function destination(
       wrapper(parsed) ||
       opaqueTrackers.test(parsed.hostname) ||
       advertisingHosts.test(parsed.hostname) ||
-      chromeUrl.test(parsed.pathname) ||
+      chromeUrl.test(decodeURIComponent(parsed.pathname)) ||
       queryIsChrome(parsed)
     )
       return undefined;
@@ -198,7 +193,7 @@ export function normalizeNewsletter(email: ReceivedEmail): {
       text,
       children: [...children.values()],
     },
-    bodyUnavailable: !html.trim() && !plain.trim(),
+    bodyUnavailable: !text.trim(),
     linksTruncated,
   };
 }

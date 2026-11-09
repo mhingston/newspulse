@@ -121,12 +121,14 @@ describe("newsletter normalization", () => {
       email(`
       <a href="https://example.org/manage?action=unsubscribe">Manage</a>
       <a href="https://example.org/manage?%70references=1">Manage</a>
+      <a href="https://example.org/%75nsubscribe?token=123">Manage</a>
+      <a href="https://example.org/manage?email_action=unsubscribe">Manage</a>
       <a href="https://www.google.com/url?action=unsubscribe&amp;q=https%3A%2F%2Fexample.org%2Fstory">Read</a>
       <a href="https://www.google.com/url?q=https%3A%2F%2Fexample.org%2Fmanage%3Fmode%3Dpreferences">Read</a>
-      <a href="https://example.org/article?q=unsubscribe">An article</a>`),
+      <a href="https://example.org/article?q=unsubscribe%20policies">An article</a>`),
     );
     expect(result.candidate.children?.map((item) => item.url)).toEqual([
-      "https://example.org/article?q=unsubscribe",
+      "https://example.org/article?q=unsubscribe+policies",
     ]);
   });
 
@@ -142,6 +144,11 @@ describe("newsletter normalization", () => {
     expect(result.candidate.children?.map((item) => item.url)).toEqual([
       "https://example.org/article",
     ]);
+    expect(result.bodyUnavailable).toBe(false);
+    expect(
+      normalizeNewsletter(email("<html><body>   </body></html>"))
+        .bodyUnavailable,
+    ).toBe(true);
   });
 
   test("preserves balanced URL parentheses and removes surrounding punctuation", () => {
