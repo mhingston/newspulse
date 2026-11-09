@@ -144,3 +144,33 @@ test("timeout bounds stalled dispatch and stalled response streams", async () =>
   );
   await expect(stalled.list()).rejects.toMatchObject({ kind: "transient" });
 });
+
+test("response stream read failures are transient, but malformed content is invalid", async () => {
+  let reads = 0;
+  const reset = new ResendInbound("key", secret, async () =>
+    new Response(
+      new ReadableStream<Uint8Array>({
+        pull(controller) {
+          if (reads++ === 0)
+            controller.enqueue(new TextEncoder().encode('{"object":"list",'));
+          else controller.error(new Error("connection reset"));
+        },
+      }),
+    ),
+  );
+  await expect(reset.list()).rejects.toMatchObject({ kind: "transient" });
+
+  const invalidJson = new ResendInbound(
+    "key",
+    secret,
+    async () => new Response("{invalid json"),
+  );
+  await expect(invalidJson.list()).rejects.toMatchObject({ kind: "invalid" });
+
+  const invalidUtf8 = new ResendInbound(
+    "key",
+    secret,
+    async () => new Response(new Uint8Array([0xc3, 0x28])),
+  );
+  await expect(invalidUtf8.list()).rejects.toMatchObject({ kind: "invalid" });
+});
