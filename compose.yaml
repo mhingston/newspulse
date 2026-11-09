@@ -18,6 +18,11 @@ services:
       ANALYSIS_CALL_MICROS: ${ANALYSIS_CALL_MICROS:-}
       RESEND_API_KEY: ${RESEND_API_KEY:-}
       RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
+      DELIVERY_ENABLED: ${DELIVERY_ENABLED:-false}
+      DELIVERY_FROM: ${DELIVERY_FROM:-}
+      DELIVERY_TO: ${DELIVERY_TO:-}
+      DELIVERY_TIMEZONE: ${DELIVERY_TIMEZONE:-Europe/London}
+      DELIVERY_TIME: ${DELIVERY_TIME:-06:00}
     volumes:
       - newspulse-data:/app/data
     healthcheck:

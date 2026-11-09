@@ -22,11 +22,9 @@ const schema = z
       .or(z.literal("").transform(() => undefined)),
   })
   .refine(
-    (value) =>
-      Boolean(value.RESEND_API_KEY) === Boolean(value.RESEND_WEBHOOK_SECRET),
+    (value) => !value.RESEND_WEBHOOK_SECRET || Boolean(value.RESEND_API_KEY),
     {
-      message:
-        "RESEND_API_KEY and RESEND_WEBHOOK_SECRET must be configured together",
+      message: "RESEND_WEBHOOK_SECRET requires RESEND_API_KEY",
     },
   );
 export function config(env: Record<string, string | undefined> = process.env) {

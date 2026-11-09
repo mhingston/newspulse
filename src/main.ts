@@ -1,3 +1,10 @@
+import { assertDeliveryRestoreAcknowledged } from "./delivery-restore-guard";
+import { deliveryConfig } from "./delivery-config";
+import { acquireDeliveryLock } from "./delivery-lock";
+import { DeliveryStore } from "./db/delivery-store";
+import { DeliveryWorker } from "./delivery";
+import { ResendDelivery } from "./adapters/resend-delivery";
+import { PublicationWorker } from "./publication-worker";
 import { acquireAnalysisLock } from "./analysis-lock";
 import { analysisConfig } from "./analysis-config";
 import { OpenAICompatibleAnalysis } from "./adapters/analysis";
@@ -16,9 +23,15 @@ import { InboundStore } from "./db/inbound";
 import { InboundWorker, inboundWebhook } from "./inbound-worker";
 const cfg = config();
 const analysis = analysisConfig();
+const delivery = deliveryConfig();
 // The OS releases this lock only when the process exits, including after a crash.
 // Keep it for the process lifetime even if a timed-out provider ignores abort.
 if (analysis) acquireAnalysisLock(cfg.DB_PATH);
+// Retain exclusive ownership through shutdown and any in-flight send.
+if (delivery) {
+  acquireDeliveryLock(cfg.DB_PATH);
+  assertDeliveryRestoreAcknowledged(cfg.DB_PATH);
+}
 const store = new Store(cfg.DB_PATH);
 const inboundStore =
   cfg.RESEND_API_KEY && cfg.RESEND_WEBHOOK_SECRET
@@ -90,6 +103,23 @@ const scheduler = schedule(
   }),
   inboundStore && inboundProvider
     ? new InboundWorker(inboundStore, inboundProvider)
+    : undefined,
+  delivery
+    ? new PublicationWorker(
+        store,
+        new DeliveryStore(store.sqlite),
+        new DeliveryWorker(
+          new DeliveryStore(store.sqlite),
+          new ResendDelivery(delivery.apiKey),
+        ),
+        {
+          from: delivery.sender,
+          to: delivery.recipient,
+          timezone: delivery.timezone,
+          hour: delivery.hour,
+          minute: delivery.minute,
+        },
+      )
     : undefined,
 );
 log("started", { host: cfg.HOST, port: cfg.PORT });
