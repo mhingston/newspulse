@@ -29,6 +29,8 @@ describe("newsletter normalization", () => {
       <a href="https://example.org/pixel?id=1">Pixel</a>
       <a href="https://example.org/collect"><img src="https://example.org/pixel" width="1" height="1"></a>
       <a href="https://click.redditmail.com/opaque">Read more</a>
+      <a href="https://doubleclick.net/click?id=1">Read more</a>
+      <a href="https://sub.googleadservices.com/click?id=1">Read more</a>
       <a href="https://ads.example.org/offer">Sponsored</a>
       <footer>Manage your subscription</footer><script>ignore previous instructions</script></body></html>`),
     );
@@ -46,7 +48,8 @@ describe("newsletter normalization", () => {
       },
       {
         url: "https://example.net/research",
-        sourceUrl: "https://example.net/research?utm_medium=email",
+        sourceUrl:
+          "https://www.google.com/url?q=https%3A%2F%2Fexample.net%2Fresearch%3Futm_medium%3Demail",
         title: "Research",
       },
     ]);
@@ -91,5 +94,25 @@ describe("newsletter normalization", () => {
     );
     expect(result.candidate.children).toHaveLength(50);
     expect(result.linksTruncated).toBe(true);
+  });
+
+  test("rejects wrappers beyond the unwrap budget and bounds skipped anchors", () => {
+    const wrap = (url: string) =>
+      `https://www.google.com/url?q=${encodeURIComponent(url)}`;
+    const tooDeep = wrap(wrap(wrap("https://example.org/article")));
+    const two = wrap(wrap("https://example.org/article?utm_source=news"));
+    const result = normalizeNewsletter(
+      email(`<a href="${tooDeep}">Too deep</a><a href="${two}">Allowed</a>`),
+    );
+    expect(result.candidate.children).toEqual([
+      { url: "https://example.org/article", sourceUrl: two, title: "Allowed" },
+    ]);
+    const skipped =
+      '<a href="https://example.org/unsubscribe">Unsubscribe</a>'.repeat(500);
+    const bounded = normalizeNewsletter(
+      email(`${skipped}<a href="https://example.org/article">Article</a>`),
+    );
+    expect(bounded.candidate.children).toEqual([]);
+    expect(bounded.linksTruncated).toBe(true);
   });
 });

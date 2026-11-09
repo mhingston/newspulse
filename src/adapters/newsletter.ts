@@ -14,32 +14,47 @@ const chromeUrl =
   /(?:^|[\/_.-])(unsubscribe|optout|preferences|tracking|track|pixel|beacon|advert|ads)(?:[\/_.?=&-]|$)/i;
 const opaqueTrackers =
   /(?:^|\.)(?:list-manage\.com|mailchi\.mp|click\.redditmail\.com|email\.mg\.substack\.com)$/i;
+const advertisingHosts =
+  /(?:^|\.)(?:doubleclick\.net|googlesyndication\.com|googleadservices\.com|adservice\.google\.com|adnxs\.com|taboola\.com|outbrain\.com)$/i;
+
+function wrapper(parsed: URL): "google" | "facebook" | undefined {
+  if (
+    /^(?:www\.)?google\.com$/i.test(parsed.hostname) &&
+    parsed.pathname === "/url"
+  )
+    return "google";
+  if (
+    /^(?:l|lm)\.facebook\.com$/i.test(parsed.hostname) &&
+    parsed.pathname === "/l.php"
+  )
+    return "facebook";
+  return undefined;
+}
 
 function destination(
   raw: string,
 ): { sourceUrl: string; url: string } | undefined {
   try {
-    let sourceUrl = resolvedUrl(raw);
+    const sourceUrl = resolvedUrl(raw);
     let parsed = new URL(sourceUrl);
     // Only documented, named wrappers are unwrapped; no redirect requests are made.
     for (let i = 0; i < 2; i++) {
-      const google =
-        /^(?:www\.)?google\.com$/i.test(parsed.hostname) &&
-        parsed.pathname === "/url";
-      const facebook =
-        /^(?:l|lm)\.facebook\.com$/i.test(parsed.hostname) &&
-        parsed.pathname === "/l.php";
-      if (!google && !facebook) break;
+      const kind = wrapper(parsed);
+      if (!kind) break;
       const target =
-        parsed.searchParams.get(google ? "q" : "u") ??
-        (google ? parsed.searchParams.get("url") : null);
+        parsed.searchParams.get(kind === "google" ? "q" : "u") ??
+        (kind === "google" ? parsed.searchParams.get("url") : null);
       if (!target) return undefined;
-      sourceUrl = resolvedUrl(target);
-      parsed = new URL(sourceUrl);
+      parsed = new URL(resolvedUrl(target));
     }
-    if (opaqueTrackers.test(parsed.hostname) || chromeUrl.test(parsed.pathname))
+    if (
+      wrapper(parsed) ||
+      opaqueTrackers.test(parsed.hostname) ||
+      advertisingHosts.test(parsed.hostname) ||
+      chromeUrl.test(parsed.pathname)
+    )
       return undefined;
-    const cleaned = new URL(sourceUrl);
+    const cleaned = new URL(parsed.href);
     for (const key of [...cleaned.searchParams.keys()])
       if (/^(?:mc_cid|mc_eid|mkt_tok|_hsenc|_hsmi)$/i.test(key))
         cleaned.searchParams.delete(key);
@@ -66,11 +81,6 @@ export function normalizeNewsletter(email: ReceivedEmail): {
     (email.html?.length ?? 0) > MAX_BODY ||
     (email.text?.length ?? 0) > MAX_BODY;
   const consider = (raw: string, label: string) => {
-    scanned++;
-    if (scanned > MAX_LINKS_SCANNED || children.size >= MAX_CHILDREN) {
-      linksTruncated = true;
-      return;
-    }
     if (chrome.test(label)) return;
     const link = destination(raw);
     if (link && !children.has(link.url))
@@ -94,10 +104,11 @@ export function normalizeNewsletter(email: ReceivedEmail): {
         linksTruncated = true;
         break;
       }
+      scanned++;
       const label = (anchor.textContent ?? "").replace(/\s+/g, " ").trim();
       const href = anchor.getAttribute("href") ?? "";
       const attrs = `${anchor.getAttribute("class") ?? ""} ${anchor.getAttribute("id") ?? ""} ${anchor.getAttribute("aria-label") ?? ""}`;
-      if (!label || chrome.test(`${label} ${attrs}`) || chromeUrl.test(href)) {
+      if (!label || chrome.test(`${label} ${attrs}`)) {
         anchor.remove();
         continue;
       }
@@ -127,6 +138,7 @@ export function normalizeNewsletter(email: ReceivedEmail): {
           linksTruncated = true;
           break;
         }
+        scanned++;
         const raw = match[0].replace(/[.,;!?\])}]+$/, "");
         consider(raw, line.replace(match[0], "").trim());
       }
