@@ -49,7 +49,7 @@ export class InboundWorker {
         job,
         kind,
         RETRY_INTERVAL,
-        kind === "unavailable" || kind === "invalid",
+        kind === "unavailable",
         Date.now(),
       );
     }

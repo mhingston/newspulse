@@ -69,7 +69,7 @@ export function schedule(
       inboundNext = Date.now() + 2_000;
       const task = inbound
         .reconcile()
-        .then(() => inbound.retrieve())
+        .then(() => (stopping ? undefined : inbound.retrieve()))
         .catch((e) => log("inbound_worker_error", { error: String(e) }))
         .finally(() => stageActive.delete("inbound"));
       stageActive.set("inbound", task);

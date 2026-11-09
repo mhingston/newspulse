@@ -80,3 +80,40 @@ test("webhook and paginated reconciliation share durable identities across retri
     db.close();
   }
 });
+
+test("shutdown does not claim a retrieval after an active reconciliation finishes", async () => {
+  const { schedule, Worker } = await import("../src/worker");
+  const db = new Store(":memory:");
+  let release!: () => void;
+  let began!: () => void;
+  const started = new Promise<void>((resolve) => {
+    began = resolve;
+  });
+  const pending = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  let retrievals = 0;
+  const scheduler = schedule(
+    db,
+    new Worker(db, { poll: async () => ({ items: [] }) }),
+    undefined,
+    {
+      reconcile: async () => {
+        began();
+        await pending;
+      },
+      retrieve: async () => {
+        retrievals++;
+      },
+    },
+  );
+  try {
+    await started;
+    const stopped = scheduler.stop();
+    release();
+    await stopped;
+    expect(retrievals).toBe(0);
+  } finally {
+    db.close();
+  }
+});
