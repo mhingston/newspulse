@@ -1,8 +1,8 @@
 # Implementation roadmap and handoff coverage
 
-**M2 implementation snapshot (2026-11-09):** #5 and #6 have merged implementations. #7 has a scoring slice under development; its production history/update acceptance remains open, and it must not be closed until the complete contract is merged and verified. GitHub issues and merged code remain authoritative for execution state.
+**M2 implementation snapshot (2026-11-09):** #5 and #6 have merged implementations. #7 has a scoring baseline under review. Prior-presentation redundancy and its production acceptance are deferred to required follow-up #42, after #9 and #12 provide immutable editions and delivery state. GitHub issues and merged code remain authoritative for execution state.
 
-[Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) is the entry point for the complete backlog. It links **22 required core issues and 9 conditional refinement issues**. The original request is preserved in [handoff.md](handoff.md), durable constraints in [decisions.md](decisions.md), and contributor instructions in [AGENTS.md](../AGENTS.md).
+[Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) is the entry point for the complete backlog. It links **23 required core issues and 9 conditional refinement issues**. The original request is preserved in [handoff.md](handoff.md), durable constraints in [decisions.md](decisions.md), and contributor instructions in [AGENTS.md](../AGENTS.md).
 
 ## Current implementation and evidence
 

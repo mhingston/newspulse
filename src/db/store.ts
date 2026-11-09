@@ -4,11 +4,7 @@ import { createHash } from "node:crypto";
 import { observedUpdate, type ObservedVersion } from "../observed-update";
 import { ProfileStore } from "../profiles";
 import { advanceScoreInvalidation, invalidateScores } from "./score-queue";
-import {
-  SCORING_CRITERIA_VERSION,
-  scoreItem,
-  type ScoringInput,
-} from "../scoring";
+import { SCORING_CRITERIA_VERSION, type ScoringInput } from "../scoring";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { mkdirSync } from "node:fs";
@@ -68,6 +64,21 @@ export interface ScoreRecord {
   provenance: unknown;
   result: unknown;
   capturedAt: number;
+}
+function scoreDeadlines(input: ScoringInput): number[] {
+  const deadlines = input.interests.flatMap((interest) =>
+    interest.expiresAt === undefined ? [] : [interest.expiresAt],
+  );
+  if (input.publishedAt !== null)
+    deadlines.push(
+      input.publishedAt,
+      input.publishedAt + 172800001,
+      input.publishedAt + 604800001,
+      input.publishedAt + 2592000001,
+    );
+  if (input.observedUpdateAt != null)
+    deadlines.push(input.observedUpdateAt + 604800001);
+  return deadlines.filter(Number.isSafeInteger);
 }
 export interface Item {
   id: string;
@@ -561,7 +572,11 @@ export class Store {
       .immediate();
   }
   scoringSnapshot(job: ProcessingJob, now = Date.now()) {
-    const item = this.getItem(job.item_id);
+    const item = this.sqlite
+      .query<Item, [string]>(
+        "SELECT i.*,c.text FROM items i LEFT JOIN content c ON c.item_id=i.id WHERE i.id=?",
+      )
+      .get(job.item_id);
     if (!item || job.stage !== "score") return null;
     const latest = this.sqlite
       .query<{ n: number }, [string]>(
@@ -572,31 +587,79 @@ export class Store {
     const profiles = new ProfileStore(this.sqlite);
     const interests = profiles.activeInterests(now);
     const editorial = profiles.latestEditorial();
-    const versions = this.sqlite
+    const latestVersion = this.sqlite
       .query<ObservedVersion & { observed_at: number }, [string]>(
-        "SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM content_versions WHERE item_id=? ORDER BY id DESC",
+        "SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM content_versions WHERE item_id=? ORDER BY id DESC LIMIT 1",
       )
-      .all(job.item_id);
-    const latestVersion = versions[0];
+      .get(job.item_id);
     const previousVersion =
       latestVersion &&
-      versions
-        .slice(1)
-        .find(
-          (version) =>
-            version.source_id === latestVersion.source_id &&
-            version.native_id === latestVersion.native_id,
+      this.sqlite
+        .query<ObservedVersion, [string, string, number]>(
+          "SELECT id,source_id,native_id,title,text,backfilled FROM content_versions WHERE source_id=? AND native_id=? AND id<? ORDER BY id DESC LIMIT 1",
+        )
+        .get(
+          latestVersion.source_id,
+          latestVersion.native_id,
+          latestVersion.id,
         );
-    const update = observedUpdate(previousVersion, latestVersion);
+    const update = observedUpdate(
+      previousVersion ?? undefined,
+      latestVersion ?? undefined,
+    );
+    const extractionRaw = this.processingResult(
+      "extract",
+      job.item_id,
+      job.generation,
+    );
+    let extraction: { text?: string; status?: string } | null = null;
+    if (extractionRaw) {
+      try {
+        extraction = JSON.parse(extractionRaw) as {
+          text?: string;
+          status?: string;
+        };
+      } catch {
+        /* Historical opaque extraction. */
+      }
+    }
+    const analysisRow = this.sqlite
+      .query<
+        {
+          id: string;
+          result: string;
+          profiles: string;
+          provider: string;
+          model: string;
+          prompt_version: string;
+          input_hash: string;
+        },
+        [string, number]
+      >(
+        "SELECT id,result,profiles,provider,model,prompt_version,input_hash FROM analyses WHERE item_id=? AND generation=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+      )
+      .get(job.item_id, job.generation);
+    const analysis = analysisRow
+      ? {
+          ...analysisRow,
+          result: JSON.parse(analysisRow.result) as ScoringInput["analysis"],
+          profiles: JSON.parse(analysisRow.profiles) as unknown,
+        }
+      : null;
+    const story = this.sqlite
+      .query(
+        "SELECT group_id,evidence,rule_version,started_at FROM story_memberships WHERE item_id=? AND ended_at IS NULL",
+      )
+      .get(job.item_id);
     const input: ScoringInput = {
       itemId: item.id,
       title: item.title,
-      text: item.extraction?.text?.trim() || item.text || "",
+      text: extraction?.text?.trim() || item.text || "",
       publishedAt: item.published_at,
       now,
       interests,
       editorialProfiles: editorial,
-      analysis: (item.analysis?.result ?? null) as ScoringInput["analysis"],
+      analysis: analysis?.result ?? null,
       history: null,
       observedUpdateAt: update ? latestVersion!.observed_at : null,
     };
@@ -609,9 +672,9 @@ export class Store {
           .get()?.generation ?? 0,
       interests,
       editorial,
-      analysis: item.analysis,
-      extraction: item.extraction,
-      story: item.story,
+      analysis,
+      extraction,
+      story,
       generation: job.generation,
       history: null,
       observedUpdate: update,
@@ -636,15 +699,12 @@ export class Store {
     return this.sqlite
       .transaction(() => {
         const captured = this.scoringSnapshot(job, record.capturedAt);
-        const current = this.scoringSnapshot(job, now);
         if (
           !captured ||
           captured.inputHash !== record.inputHash ||
-          !current ||
-          JSON.stringify(captured.input.interests) !==
-            JSON.stringify(current.input.interests) ||
-          JSON.stringify(scoreItem(captured.input)) !==
-            JSON.stringify(scoreItem(current.input))
+          scoreDeadlines(captured.input).some(
+            (deadline) => deadline > record.capturedAt && deadline <= now,
+          )
         ) {
           if (!captured) {
             this.sqlite
@@ -679,21 +739,8 @@ export class Store {
             JSON.stringify(record.result),
             now,
           );
-        const published = current.input.publishedAt;
-        const deadlines = current.input.interests.flatMap((interest) =>
-          interest.expiresAt === undefined ? [] : [interest.expiresAt],
-        );
-        if (published !== null)
-          deadlines.push(
-            published,
-            published + 172800001,
-            published + 604800001,
-            published + 2592000001,
-          );
-        if (current.input.observedUpdateAt != null)
-          deadlines.push(current.input.observedUpdateAt + 604800001);
-        const future = deadlines.filter(
-          (deadline) => Number.isSafeInteger(deadline) && deadline > now,
+        const future = scoreDeadlines(captured.input).filter(
+          (deadline) => deadline > now,
         );
         this.sqlite
           .query(

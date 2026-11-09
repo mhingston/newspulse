@@ -24,6 +24,10 @@ test("actual source corrections produce auditable update evidence without implyi
     const at = 40 * 86_400_000;
     ingest("Robotics initial findings", original, at);
     ingest("Robotics revised findings", update, at + 100);
+    // Scoring needs two source observations, not the full item/history response.
+    store.getItem = () => {
+      throw new Error("unbounded item retrieval");
+    };
     const job =
       store.claimProcessing("score", at + 101) ??
       store.claimProcessing("score", at + 101)!;
