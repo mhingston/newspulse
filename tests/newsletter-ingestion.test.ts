@@ -221,6 +221,30 @@ test("newsletter extraction fetches cleaned URL while retaining original citatio
   }
 });
 
+test("newsletter redirect wrappers remain citations while extraction uses the cleaned destination", () => {
+  const store = new Store(":memory:");
+  try {
+    const message = email("wrapper", "sender@example.com");
+    message.html =
+      '<a href="https://www.google.com/url?q=https%3A%2F%2Fexample.com%2Farticle%3Futm_source%3Demail">Unusual wrapped article</a>';
+    complete(store, message);
+    store.indexNextNewsletter(normalizeNewsletter, 4);
+    const child = store.search("unusual").find((item) => item.url)!;
+    const item = store.getItem(child.id)!;
+    expect((item.references as { url: string }[])[0]!.url).toStartWith(
+      "https://www.google.com/url?",
+    );
+    const job = store.sqlite
+      .query<{ origin_url: string }, [string]>(
+        "SELECT origin_url FROM processing_jobs WHERE stage='extract' AND item_id=?",
+      )
+      .get(child.id)!;
+    expect(job.origin_url).toBe("https://example.com/article");
+  } finally {
+    store.close();
+  }
+});
+
 test("indexed originals and provenance survive backup and restore", () => {
   const dir = mkdtempSync(join(tmpdir(), "newsletter-"));
   const store = new Store(join(dir, "live.sqlite"));
