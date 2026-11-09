@@ -135,6 +135,53 @@ function terms(value: string): string[] {
     ),
   ].sort();
 }
+/**
+ * Keep dotted release versions intact; a shared calendar year is not evidence
+ * that two product versions agree.
+ */
+function versions(title: string): string[] {
+  const matches = title
+    .toLocaleLowerCase("en")
+    .matchAll(/(?<![\p{L}\p{N}])v?\d+(?:\.\d+)*(?![\p{L}\p{N}])/gu);
+  return [
+    ...new Set(
+      [...matches]
+        .map((match) => match[0]!.replace(/^v(?=\d)/, ""))
+        .filter((token) => !/^(?:19|20)\d{2}$/.test(token)),
+    ),
+  ].sort();
+}
+function versionsAgree(left: string, right: string): boolean {
+  const a = versions(left);
+  const b = versions(right);
+  return a.length === b.length && a.every((version, i) => version === b[i]);
+}
+
+/**
+ * Shared vendor, number and topic terms alone cannot identify a product.
+ * Require at least two agreeing explicit named identifiers, with no conflicts.
+ * This deliberately favours splitting ambiguous coverage over false merges.
+ */
+function namedSubjectsAgree(left: string, right: string): boolean {
+  const names = (title: string) =>
+    [
+      ...new Set(
+        (title.match(/[\p{L}\p{N}]+/gu) ?? [])
+          .filter((word) => /^\p{Lu}/u.test(word) || /[\p{Ll}][\p{Lu}]/u.test(word))
+          .map((word) => word.toLocaleLowerCase("en"))
+          .filter(
+            (word) =>
+              !uninformative.has(word) &&
+              !broadTopic.has(word) &&
+              !actions.has(word),
+          ),
+      ),
+    ].sort();
+  const a = names(left);
+  const b = names(right);
+  return a.length >= 2 && a.length === b.length && a.every((name, i) => name === b[i]);
+}
+
 function actionOf(title: string): string | null {
   const found = new Set(words(title).map((word) => actions.get(word)));
   found.delete(undefined);
@@ -176,16 +223,8 @@ function sameDevelopment(
   const leftTerms = terms(left.title);
   const rightTerms = terms(right.title);
   const shared = common(leftTerms, rightTerms);
-  // Product/version identifiers must agree; two releases from the same vendor
-  // are not the same event merely because their titles mention the vendor.
-  const leftVersions = leftTerms.filter((word) => /\d/.test(word));
-  const rightVersions = rightTerms.filter((word) => /\d/.test(word));
-  if (
-    leftVersions.length &&
-    rightVersions.length &&
-    !common(leftVersions, rightVersions).length
-  )
-    return null;
+  if (!versionsAgree(left.title, right.title)) return null;
+  if (!namedSubjectsAgree(left.title, right.title)) return null;
   if (
     shared.length < 2 ||
     shared.length / Math.max(leftTerms.length, rightTerms.length) < 0.7
@@ -205,14 +244,8 @@ function followUp(earlier: StoryInput, later: StoryInput): string[] | null {
   if (gap < 4 * DAY || gap > 90 * DAY) return null;
   const olderTerms = terms(earlier.title);
   const newerTerms = terms(later.title);
-  const olderVersions = olderTerms.filter((term) => /\d/.test(term));
-  const newerVersions = newerTerms.filter((term) => /\d/.test(term));
-  if (
-    olderVersions.length &&
-    newerVersions.length &&
-    !common(olderVersions, newerVersions).length
-  )
-    return null;
+  if (!versionsAgree(earlier.title, later.title)) return null;
+  if (!namedSubjectsAgree(earlier.title, later.title)) return null;
   const overlap = common(olderTerms, newerTerms);
   return overlap.length >= 2 &&
     overlap.length / Math.max(olderTerms.length, newerTerms.length) >= 0.7
@@ -254,6 +287,20 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
       lastAt: Math.max(...members.map(at)),
     };
   });
+  // A canonical-identity anchor can be a later syndicated copy, so use each
+  // group's chronological first member when evaluating directional links.
+  // Precompute these lookups to keep pair planning quadratic in group count.
+  const byId = new Map(ordered.map((article) => [article.id, article]));
+  const earliestByGroup = new Map(
+    groups.map((group) => [
+      group.id,
+      group.members
+        .map((member) => byId.get(member.itemId)!)
+        .reduce((earliest, candidate) =>
+          at(candidate) < at(earliest) ? candidate : earliest,
+        ),
+    ] as const),
+  );
   const relations: StoryRelation[] = [];
   for (let i = 0; i < groups.length; i++) {
     for (let j = i + 1; j < groups.length; j++) {
@@ -261,12 +308,8 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
       const right = groups[j]!;
       const older = left.firstAt <= right.firstAt ? left : right;
       const newer = older === left ? right : left;
-      const first = ordered.find(
-        (item) => item.id === older.members[0]!.itemId,
-      )!;
-      const next = ordered.find(
-        (item) => item.id === newer.members[0]!.itemId,
-      )!;
+      const first = earliestByGroup.get(older.id)!;
+      const next = earliestByGroup.get(newer.id)!;
       const shared = followUp(first, next);
       if (shared)
         relations.push({
