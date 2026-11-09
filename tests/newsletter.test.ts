@@ -115,4 +115,45 @@ describe("newsletter normalization", () => {
     expect(bounded.candidate.children).toEqual([]);
     expect(bounded.linksTruncated).toBe(true);
   });
+
+  test("rejects preference and unsubscribe query actions with neutral labels", () => {
+    const result = normalizeNewsletter(
+      email(`
+      <a href="https://example.org/manage?action=unsubscribe">Manage</a>
+      <a href="https://example.org/manage?%70references=1">Manage</a>
+      <a href="https://www.google.com/url?action=unsubscribe&amp;q=https%3A%2F%2Fexample.org%2Fstory">Read</a>
+      <a href="https://www.google.com/url?q=https%3A%2F%2Fexample.org%2Fmanage%3Fmode%3Dpreferences">Read</a>
+      <a href="https://example.org/article?q=unsubscribe">An article</a>`),
+    );
+    expect(result.candidate.children?.map((item) => item.url)).toEqual([
+      "https://example.org/article?q=unsubscribe",
+    ]);
+  });
+
+  test("falls back from empty rendered HTML to normalized plain text and links", () => {
+    const result = normalizeNewsletter(
+      email(
+        "<html><body>  <style>body { color: red }</style>  </body></html>",
+        "Plain searchable text\nA useful article: https://example.org/article\nUnsubscribe https://example.org/leave",
+      ),
+    );
+    expect(result.candidate.text).toContain("Plain searchable text");
+    expect(result.candidate.text).not.toContain("Unsubscribe");
+    expect(result.candidate.children?.map((item) => item.url)).toEqual([
+      "https://example.org/article",
+    ]);
+  });
+
+  test("preserves balanced URL parentheses and removes surrounding punctuation", () => {
+    const result = normalizeNewsletter(
+      email(
+        null,
+        "Read (https://en.wikipedia.org/wiki/Example_(disambiguation)).\nMore https://example.org/story_(part_1)!.",
+      ),
+    );
+    expect(result.candidate.children?.map((item) => item.url)).toEqual([
+      "https://en.wikipedia.org/wiki/Example_(disambiguation)",
+      "https://example.org/story_(part_1)",
+    ]);
+  });
 });

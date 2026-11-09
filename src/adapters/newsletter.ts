@@ -31,6 +31,43 @@ function wrapper(parsed: URL): "google" | "facebook" | undefined {
   return undefined;
 }
 
+function queryIsChrome(parsed: URL): boolean {
+  const action =
+    /^(?:unsubscribe|opt[-_]?out|manage[-_]?(?:preferences|subscription)|preferences)$/i;
+  for (const [key, value] of parsed.searchParams) {
+    if (action.test(key)) return true;
+    if (
+      /^(?:action|act|do|cmd|mode|page|type|op|operation|task)$/i.test(key) &&
+      action.test(value)
+    )
+      return true;
+  }
+  return false;
+}
+
+function trimUrlPunctuation(raw: string): string {
+  const pairs: Record<string, string> = { ")": "(", "]": "[", "}": "{" };
+  const counts: Record<string, number> = {};
+  for (const char of raw)
+    if ("()[]{}".includes(char)) counts[char] = (counts[char] ?? 0) + 1;
+  let end = raw.length;
+  while (end > 0) {
+    const char = raw[end - 1]!;
+    if (/[.,;!?]/.test(char)) {
+      end--;
+      continue;
+    }
+    const opening = pairs[char];
+    if (opening && (counts[char] ?? 0) > (counts[opening] ?? 0)) {
+      counts[char]!--;
+      end--;
+      continue;
+    }
+    break;
+  }
+  return raw.slice(0, end);
+}
+
 function destination(
   raw: string,
 ): { sourceUrl: string; url: string } | undefined {
@@ -39,6 +76,7 @@ function destination(
     let parsed = new URL(sourceUrl);
     // Only documented, named wrappers are unwrapped; no redirect requests are made.
     for (let i = 0; i < 2; i++) {
+      if (queryIsChrome(parsed)) return undefined;
       const kind = wrapper(parsed);
       if (!kind) break;
       const target =
@@ -51,7 +89,8 @@ function destination(
       wrapper(parsed) ||
       opaqueTrackers.test(parsed.hostname) ||
       advertisingHosts.test(parsed.hostname) ||
-      chromeUrl.test(parsed.pathname)
+      chromeUrl.test(parsed.pathname) ||
+      queryIsChrome(parsed)
     )
       return undefined;
     const cleaned = new URL(parsed.href);
@@ -89,6 +128,26 @@ export function normalizeNewsletter(email: ReceivedEmail): {
         title: label.trim().slice(0, MAX_TITLE) || link.url,
       });
   };
+  const parsePlain = () => {
+    const clean = plain
+      .split(/\r?\n/)
+      .filter((line) => !chrome.test(line))
+      .join("\n")
+      .trim();
+    for (const line of clean.split(/\r?\n/)) {
+      for (const match of line.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
+        if (scanned >= MAX_LINKS_SCANNED || children.size >= MAX_CHILDREN) {
+          linksTruncated = true;
+          break;
+        }
+        scanned++;
+        const raw = trimUrlPunctuation(match[0]);
+        consider(raw, line.replace(match[0], "").trim());
+      }
+      if (scanned >= MAX_LINKS_SCANNED || children.size >= MAX_CHILDREN) break;
+    }
+    return clean;
+  };
   let text = plain;
   if (html.trim()) {
     // linkedom does not populate document.body for standalone HTML fragments.
@@ -122,28 +181,13 @@ export function normalizeNewsletter(email: ReceivedEmail): {
       element.insertBefore(document.createTextNode(" "), element.firstChild);
       element.appendChild(document.createTextNode(" "));
     }
-    text = (document.body?.textContent || document.textContent || plain)
+    const htmlText = (document.body?.textContent || document.textContent || "")
       .replace(/\s+/g, " ")
       .trim();
+    text = htmlText || parsePlain();
   } else {
     // Plain-text newsletters often include a label on the same line as each URL.
-    text = plain
-      .split(/\r?\n/)
-      .filter((line) => !chrome.test(line))
-      .join("\n")
-      .trim();
-    for (const line of text.split(/\r?\n/)) {
-      for (const match of line.matchAll(/https?:\/\/[^\s<>"']+/gi)) {
-        if (scanned >= MAX_LINKS_SCANNED || children.size >= MAX_CHILDREN) {
-          linksTruncated = true;
-          break;
-        }
-        scanned++;
-        const raw = match[0].replace(/[.,;!?\])}]+$/, "");
-        consider(raw, line.replace(match[0], "").trim());
-      }
-      if (scanned >= MAX_LINKS_SCANNED || children.size >= MAX_CHILDREN) break;
-    }
+    text = parsePlain();
   }
   return {
     candidate: {
