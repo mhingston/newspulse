@@ -108,6 +108,9 @@ test("populated pre-delivery database migrates and delivery state survives backu
         .query("SELECT date,status FROM publication_schedule_history")
         .all(),
     ).toEqual([{ date: "2026-11-09", status: "prepared" }]);
+    expect(restoredDeliveries.claim(now + 60_001)).toBeNull();
+    expect(restoredDeliveries.get(claim.id)?.status).toBe("ambiguous");
+    restoredDeliveries.reconcile(claim.id, "not_sent", null, now + 60_001);
     expect(restoredDeliveries.claim(now + 60_001)?.id).toBe(claim.id);
   } finally {
     store?.close();

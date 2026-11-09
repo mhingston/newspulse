@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { invalidateScores } from "./score-queue";
 
 // Resend retains keys for 24 hours; stop early to leave room for request time and clock drift.
 export const DELIVERY_RETRY_WINDOW = 23 * 60 * 60_000;
@@ -123,10 +124,10 @@ export class DeliveryStore {
           )
           .run(now, DELIVERY_MAX_ATTEMPTS);
         const row = this.db
-          .query<Delivery, [number, number, number]>(
-            "SELECT * FROM deliveries WHERE (status='pending' OR (status='ambiguous' AND first_attempt_at IS NOT NULL AND first_attempt_at>?)) AND available_at<=? AND attempts<? ORDER BY available_at,id LIMIT 1",
+          .query<Delivery, [number, number]>(
+            "SELECT * FROM deliveries WHERE status='pending' AND available_at<=? AND attempts<? ORDER BY available_at,id LIMIT 1",
           )
-          .get(now - DELIVERY_RETRY_WINDOW, now, DELIVERY_MAX_ATTEMPTS);
+          .get(now, DELIVERY_MAX_ATTEMPTS);
         if (!row) return null;
         const token = crypto.randomUUID();
         this.db
@@ -139,19 +140,24 @@ export class DeliveryStore {
       .immediate();
   }
   beginSend(claim: DeliveryClaim, now = Date.now()) {
-    const result = this.db
-      .query(
-        "UPDATE deliveries SET first_attempt_at=COALESCE(first_attempt_at,?),updated_at=? WHERE id=? AND status='sending' AND lease_token=? AND lease_until>? AND (first_attempt_at IS NULL OR first_attempt_at>?)",
-      )
-      .run(
-        now,
-        now,
-        claim.id,
-        claim.lease_token,
-        now,
-        now - DELIVERY_RETRY_WINDOW,
-      );
-    return result.changes === 1;
+    return this.db
+      .transaction(() => {
+        const result = this.db
+          .query(
+            "UPDATE deliveries SET first_attempt_at=COALESCE(first_attempt_at,?),updated_at=? WHERE id=? AND status='sending' AND lease_token=? AND lease_until>? AND (first_attempt_at IS NULL OR first_attempt_at>?)",
+          )
+          .run(
+            now,
+            now,
+            claim.id,
+            claim.lease_token,
+            now,
+            now - DELIVERY_RETRY_WINDOW,
+          );
+        if (result.changes === 1) invalidateScores(this.db, now);
+        return result.changes === 1;
+      })
+      .immediate();
   }
   message(claim: DeliveryClaim) {
     return this.db
@@ -172,30 +178,41 @@ export class DeliveryStore {
   sent(claim: DeliveryClaim, providerId: string, now = Date.now()) {
     if (!/^[A-Za-z0-9_-]{1,200}$/.test(providerId))
       throw new Error("Invalid provider ID");
-    return (
-      this.db
-        .query(
-          "UPDATE deliveries SET status='sent',provider_id=?,lease_token=NULL,lease_until=NULL,last_error=NULL,updated_at=? WHERE id=? AND status='sending' AND lease_token=? AND lease_until>?",
-        )
-        .run(providerId, now, claim.id, claim.lease_token, now).changes === 1
-    );
+    return this.db
+      .transaction(() => {
+        const changed =
+          this.db
+            .query(
+              "UPDATE deliveries SET status='sent',provider_id=?,lease_token=NULL,lease_until=NULL,last_error=NULL,updated_at=? WHERE id=? AND status='sending' AND lease_token=? AND lease_until>?",
+            )
+            .run(providerId, now, claim.id, claim.lease_token, now).changes ===
+          1;
+        if (changed) invalidateScores(this.db, now);
+        return changed;
+      })
+      .immediate();
   }
   fail(claim: DeliveryClaim, kind: "rejected" | "ambiguous", now = Date.now()) {
-    return (
-      this.db
-        .query(
-          "UPDATE deliveries SET status=?,available_at=?,lease_token=NULL,lease_until=NULL,last_error=?,updated_at=? WHERE id=? AND status='sending' AND lease_token=? AND lease_until>?",
-        )
-        .run(
-          kind === "rejected" ? "failed" : "ambiguous",
-          now + RETRY,
-          kind,
-          now,
-          claim.id,
-          claim.lease_token,
-          now,
-        ).changes === 1
-    );
+    return this.db
+      .transaction(() => {
+        const changed =
+          this.db
+            .query(
+              "UPDATE deliveries SET status=?,available_at=?,lease_token=NULL,lease_until=NULL,last_error=?,updated_at=? WHERE id=? AND status='sending' AND lease_token=? AND lease_until>?",
+            )
+            .run(
+              kind === "rejected" ? "failed" : "ambiguous",
+              now + RETRY,
+              kind,
+              now,
+              claim.id,
+              claim.lease_token,
+              now,
+            ).changes === 1;
+        if (changed) invalidateScores(this.db, now);
+        return changed;
+      })
+      .immediate();
   }
   reconcile(
     id: string,
@@ -210,22 +227,27 @@ export class DeliveryStore {
       throw new Error("Provider ID required");
     if (resolution === "not_sent" && providerId !== null)
       throw new Error("Unexpected provider ID");
-    const result = this.db
-      .query(
-        "UPDATE deliveries SET status=?,provider_id=?,first_attempt_at=?,available_at=?,last_error=?,updated_at=?,attempts=CASE WHEN ?='not_sent' THEN 0 ELSE attempts END WHERE id=? AND (status IN ('ambiguous','failed') OR (status='pending' AND ?='accepted'))",
-      )
-      .run(
-        resolution === "accepted" ? "sent" : "pending",
-        providerId,
-        resolution === "not_sent" ? null : now,
-        now,
-        `operator_${resolution}`,
-        now,
-        resolution,
-        id,
-        resolution,
-      );
-    if (result.changes !== 1)
-      throw new Error("Delivery is not eligible for reconciliation");
+    this.db
+      .transaction(() => {
+        const result = this.db
+          .query(
+            "UPDATE deliveries SET status=?,provider_id=?,first_attempt_at=?,available_at=?,last_error=?,updated_at=?,attempts=CASE WHEN ?='not_sent' THEN 0 ELSE attempts END WHERE id=? AND (status IN ('ambiguous','failed') OR (status='pending' AND ?='accepted'))",
+          )
+          .run(
+            resolution === "accepted" ? "sent" : "pending",
+            providerId,
+            resolution === "not_sent" ? null : now,
+            now,
+            `operator_${resolution}`,
+            now,
+            resolution,
+            id,
+            resolution,
+          );
+        if (result.changes !== 1)
+          throw new Error("Delivery is not eligible for reconciliation");
+        invalidateScores(this.db, now);
+      })
+      .immediate();
   }
 }

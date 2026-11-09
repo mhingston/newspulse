@@ -1,7 +1,7 @@
 import type { Interest } from "./profiles";
 
 /** Version this whenever a rule, range or weight changes. */
-export const SCORING_CRITERIA_VERSION = "deterministic-v1";
+export const SCORING_CRITERIA_VERSION = "deterministic-v2";
 export type ScoreComponent =
   | "relevance"
   | "novelty"
@@ -30,7 +30,11 @@ export interface ScoringInput {
     criteria: { dimension: string; weight: number }[];
   }[];
   analysis: ScoringAnalysis | null;
-  history: { sameDevelopment: boolean; meaningfulUpdate: boolean } | null;
+  history: {
+    sameDevelopment: boolean;
+    meaningfulUpdate: boolean;
+    snapshotUnavailable?: boolean;
+  } | null;
   observedUpdateAt?: number | null;
 }
 export interface ScoreResult {
@@ -110,7 +114,8 @@ export function scoreItem(input: ScoringInput): ScoreResult {
     novelty = days <= 2 ? 100 : days <= 7 ? 75 : days <= 30 ? 40 : 10;
   }
   if (
-    (input.observedUpdateAt != null &&
+    (!input.history?.sameDevelopment &&
+      input.observedUpdateAt != null &&
       input.observedUpdateAt <= input.now &&
       input.now - input.observedUpdateAt <= 7 * 86_400_000) ||
     input.history?.meaningfulUpdate
@@ -118,6 +123,14 @@ export function scoreItem(input: ScoringInput): ScoreResult {
     novelty = Math.max(novelty, 80);
   else if (input.history?.sameDevelopment) novelty = Math.min(novelty, 20);
   if (!input.history) uncertainty.push("history_unavailable");
+  if (input.history?.snapshotUnavailable)
+    uncertainty.push("historical_snapshot_unavailable");
+  if (input.history?.sameDevelopment)
+    reasons.push(
+      input.history.meaningfulUpdate
+        ? "previously_accepted_meaningful_update"
+        : "previously_accepted_development",
+    );
   if (input.observedUpdateAt != null) reasons.push("observed_source_update");
   if (!input.analysis) uncertainty.push("analysis_unavailable");
   else if (input.analysis.uncertainty.length)

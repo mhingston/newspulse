@@ -78,6 +78,85 @@ function setup(path = ":memory:") {
   return store;
 }
 
+test("draft uses fenced acceptance and unresolved history from scored evidence", () => {
+  const s = setup();
+  try {
+    add(s, "one", now - 1000, now - 900);
+    const options = { ...digestDefaults("2026-11-09", now), minScore: 0 };
+    const setHistory = (history: unknown) =>
+      s.sqlite
+        .query("UPDATE item_scores SET provenance=? WHERE id='s-one'")
+        .run(JSON.stringify({ history }));
+    setHistory({
+      state: "accepted",
+      editionId: "prior",
+      acceptedAt: now - 2000,
+      update: null,
+    });
+    expect(draftDigest(s, options)).toMatchObject({
+      status: "no_digest",
+      decisions: [
+        {
+          itemId: "one",
+          reasons: ["previously_published_without_documented_update"],
+          priorEditionId: "prior",
+        },
+      ],
+    });
+    setHistory({
+      state: "accepted",
+      editionId: "prior",
+      acceptedAt: now - 2000,
+      update: { observedAt: now - 1000 },
+    });
+    expect(draftDigest(s, options)).toMatchObject({
+      status: "ready",
+      decisions: [
+        {
+          itemId: "one",
+          included: true,
+          reasons: ["meets_quality_threshold", "documented_update"],
+          priorEditionId: "prior",
+        },
+      ],
+    });
+    setHistory({
+      state: "unknown",
+      reason: "ambiguous_delivery",
+      editionId: "uncertain",
+    });
+    expect(draftDigest(s, options)).toMatchObject({
+      status: "no_digest",
+      decisions: [
+        {
+          itemId: "one",
+          reasons: ["prior_delivery_ambiguous"],
+          priorEditionId: "uncertain",
+        },
+      ],
+    });
+    setHistory({
+      state: "unknown",
+      reason: "historical_snapshot_limit",
+      editionId: "large-prior",
+    });
+    expect(draftDigest(s, options)).toMatchObject({
+      status: "no_digest",
+      decisions: [
+        {
+          itemId: "one",
+          reasons: ["prior_delivery_ambiguous"],
+          priorEditionId: "large-prior",
+        },
+      ],
+    });
+    setHistory({ state: "unknown", reason: "no_confirmed_delivery" });
+    expect(draftDigest(s, options).status).toBe("ready");
+  } finally {
+    s.close();
+  }
+});
+
 test("draft reads one WAL snapshot during concurrent writes", () => {
   const dir = mkdtempSync(join(tmpdir(), "digest-snapshot-"));
   const path = join(dir, "database.sqlite"),

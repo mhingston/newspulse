@@ -196,10 +196,8 @@ export class StoryStore {
               .run(now, group.id);
 
         this.reconcileRelations(plan, now);
-        // Scoring snapshots contain the item's own membership, not other
-        // members or relations. Requeue only changed snapshot inputs.
-        for (const itemId of changedItems)
-          invalidateScores(this.sqlite, now, itemId);
+        // A regrouping can change the delivery history of any member.
+        if (changedItems.size) invalidateScores(this.sqlite, now);
         this.sqlite
           .query(
             "INSERT INTO story_grouping_state(id,fingerprint,updated_at) VALUES(1,?,?) " +
