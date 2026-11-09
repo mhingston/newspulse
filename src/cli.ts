@@ -1,3 +1,4 @@
+import { previewDigest, freezeDigest, digestDefaults } from "./digest-service";
 import { acquireAnalysisLock } from "./analysis-lock";
 import { AnalysisBudget } from "./analysis-budget";
 import { ProfileStore } from "./profiles";
@@ -93,6 +94,25 @@ async function main() {
   const store = new Store(path);
   try {
     switch (command) {
+      case "digest-preview": {
+        const options = digestDefaults(required(0, "edition date"));
+        console.log(JSON.stringify(previewDigest(store, options), null, 2));
+        break;
+      }
+      case "digest-freeze": {
+        const date = required(0, "edition date");
+        const asOf = Number(required(1, "preview asOf"));
+        const hash = required(2, "preview confirmation hash");
+        console.log(
+          JSON.stringify(
+            freezeDigest(store, digestDefaults(date, asOf), hash),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+
       case "import-profiles": {
         const input: unknown = JSON.parse(
           await Bun.file(required(0, "profile JSON path")).text(),
@@ -253,7 +273,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

@@ -83,6 +83,17 @@ export const items = sqliteTable("items", {
   ingestedAt: integer("ingested_at").notNull(),
   status: text().notNull().default("ingested"),
 });
+/** Indexed activity cursor for bounded digest intake, independent of rescoring. */
+export const digestActivity = sqliteTable(
+  "digest_activity",
+  {
+    itemId: text("item_id")
+      .primaryKey()
+      .references(() => items.id, { onDelete: "cascade" }),
+    activityAt: integer("activity_at").notNull(),
+  },
+  (t) => [index("digest_activity_time").on(t.activityAt, t.itemId)],
+);
 export const itemSources = sqliteTable(
   "item_sources",
   {
@@ -97,7 +108,10 @@ export const itemSources = sqliteTable(
     url: text(),
     parentItemId: text("parent_item_id").references(() => items.id),
   },
-  (t) => [uniqueIndex("source_native_unique").on(t.sourceId, t.nativeId)],
+  (t) => [
+    uniqueIndex("source_native_unique").on(t.sourceId, t.nativeId),
+    index("item_sources_item").on(t.itemId, t.sourceId, t.nativeId),
+  ],
 );
 export const content = sqliteTable("content", {
   itemId: text("item_id")
@@ -321,3 +335,36 @@ export const storyGroupingState = sqliteTable("story_grouping_state", {
   fingerprint: text().notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+
+/** Frozen content is historical evidence, not proof of delivery. */
+export const digests = sqliteTable("digests", {
+  id: text().primaryKey(),
+  editionDate: text("edition_date").notNull().unique(),
+  timezone: text().notNull(),
+  subject: text().notNull(),
+  html: text().notNull(),
+  plainText: text("plain_text").notNull(),
+  decisions: text().notNull(),
+  fingerprint: text().notNull(),
+  frozenAt: integer("frozen_at").notNull(),
+  sealed: integer().notNull().default(0),
+});
+
+/** IDs and evidence are snapshots, retained across canonical item merges. */
+export const digestItems = sqliteTable(
+  "digest_items",
+  {
+    digestId: text("digest_id")
+      .notNull()
+      .references(() => digests.id),
+    position: integer().notNull(),
+    itemId: text("item_id").notNull(),
+    groupId: text("group_id"),
+    scoreId: text("score_id"),
+    snapshot: text().notNull(),
+  },
+  (t) => [
+    uniqueIndex("digest_item_position").on(t.digestId, t.position),
+    uniqueIndex("digest_item_identity").on(t.digestId, t.itemId),
+  ],
+);
