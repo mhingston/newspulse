@@ -41,7 +41,18 @@ export function previewDeliveryReconciliation(
   action: Reconciliation,
   now = Date.now(),
 ) {
-  return snapshot(db, action, now);
+  if (!Number.isSafeInteger(now) || now < 0)
+    throw new Error("Invalid confirmation time");
+  // Caller holds the exclusive delivery lock while the service is stopped.
+  // Materialize an expired crash state without claiming or sending it.
+  return db
+    .transaction(() => {
+      db.query(
+        "UPDATE deliveries SET status='ambiguous',lease_token=NULL,lease_until=NULL,last_error='lease_expired',updated_at=? WHERE id=? AND status='sending' AND lease_until<=? AND first_attempt_at IS NOT NULL",
+      ).run(now, action.id, now);
+      return snapshot(db, action, now);
+    })
+    .immediate();
 }
 export function confirmDeliveryReconciliation(
   db: Database,

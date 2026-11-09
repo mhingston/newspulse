@@ -22,24 +22,25 @@ export class DeliveryWorker {
   constructor(
     private readonly store: DeliveryStore,
     private readonly provider: DeliveryEmailProvider,
+    private readonly clock: () => number = Date.now,
   ) {}
-  async send(now = Date.now()): Promise<void> {
+  async send(now = this.clock()): Promise<void> {
     const claim = this.store.claim(now);
     if (!claim) return;
     const message = this.store.message(claim);
-    if (!message || !this.store.beginSend(claim, now)) return;
+    if (!message || !this.store.beginSend(claim, this.clock())) return;
     try {
       const result = await this.provider.send(
         message,
         claim.idempotency_key,
         AbortSignal.timeout(20_000),
       );
-      this.store.sent(claim, result.id, Date.now());
+      this.store.sent(claim, result.id, this.clock());
     } catch (error) {
       this.store.fail(
         claim,
         error instanceof DeliveryProviderError ? error.kind : "ambiguous",
-        Date.now(),
+        this.clock(),
       );
     }
   }

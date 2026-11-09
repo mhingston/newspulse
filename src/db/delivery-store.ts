@@ -29,12 +29,25 @@ export interface DeliveryClaim extends Delivery {
 }
 
 export function validateEmailAddress(value: string): string {
+  const parts = value.split("@");
+  const [local, domain] = parts;
   if (
     value.length > 254 ||
-    !/^[A-Za-z0-9.!#$%&'*+/=?^_`{|}~-]+@[A-Za-z0-9](?:[A-Za-z0-9.-]*[A-Za-z0-9])?$/.test(
-      value,
+    parts.length !== 2 ||
+    !local ||
+    !domain ||
+    local.length > 64 ||
+    !/^[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+(?:\.[A-Za-z0-9!#$%&'*+/=?^_`{|}~-]+)*$/.test(
+      local,
     ) ||
-    value.includes("..")
+    domain
+      .split(".")
+      .some(
+        (label) =>
+          label.length < 1 ||
+          label.length > 63 ||
+          !/^[A-Za-z0-9](?:[A-Za-z0-9-]*[A-Za-z0-9])?$/.test(label),
+      )
   )
     throw new Error("Invalid email address");
   const at = value.lastIndexOf("@");

@@ -111,3 +111,54 @@ test("reconciliation confirmation binds action and current state and expires", (
     store.close();
   }
 });
+
+test("preview recovers expired attempted sends while leaving active leases alone", () => {
+  const store = new Store(":memory:");
+  try {
+    const deliveries = new DeliveryStore(store.sqlite);
+    const row = deliveries.prepare(
+      "2026-11-09",
+      "reader@example.test",
+      "sender@example.test",
+      () =>
+        new DigestStore(store.sqlite).freeze(
+          {
+            date: "2026-11-09",
+            timezone: "UTC",
+            subject: "News",
+            html: "x",
+            text: "x",
+            decisionSnapshot: {},
+            items: [
+              { itemId: "id", groupId: null, scoreId: null, snapshot: {} },
+            ],
+          },
+          1,
+        ),
+      1000,
+    )!;
+    const claim = deliveries.claim(1000)!;
+    deliveries.beginSend(claim, 1000);
+    const action = {
+      id: row.id,
+      resolution: "not_sent" as const,
+      providerId: null,
+    };
+    expect(() =>
+      previewDeliveryReconciliation(store.sqlite, action, 60_999),
+    ).toThrow();
+    expect(deliveries.get(row.id)?.status).toBe("sending");
+    const preview = previewDeliveryReconciliation(store.sqlite, action, 61_000);
+    expect(preview.delivery.status).toBe("ambiguous");
+    confirmDeliveryReconciliation(
+      store.sqlite,
+      action,
+      61_000,
+      preview.confirmation.hash,
+      61_001,
+    );
+    expect(deliveries.get(row.id)?.status).toBe("pending");
+  } finally {
+    store.close();
+  }
+});

@@ -164,3 +164,49 @@ test("repeated crashes before calling provider exhaust the bounded claim budget"
     store.close();
   }
 });
+
+test("dispatch checks the live clock after claiming and never sends an expired lease", async () => {
+  const { store, deliveries, prepare } = fixture();
+  try {
+    prepare();
+    let calls = 0;
+    const provider: DeliveryEmailProvider = {
+      async send() {
+        calls++;
+        return { id: "provider" };
+      },
+    };
+    const worker = new DeliveryWorker(deliveries, provider, () => 61_001);
+    await worker.send(1000);
+    expect(calls).toBe(0);
+    expect(deliveries.list()[0]?.first_attempt_at).toBeNull();
+  } finally {
+    store.close();
+  }
+});
+
+test("email addresses require dot-separated atoms and valid domain labels", () => {
+  for (const address of [
+    ".reader@example.com",
+    "reader.@example.com",
+    "reader@foo-.example.com",
+    "reader@-foo.example.com",
+    "reader..name@example.com",
+    "reader@example..com",
+  ]) {
+    const { store, deliveries } = fixture();
+    try {
+      expect(() =>
+        deliveries.prepare(
+          date,
+          address,
+          "sender@example.com",
+          () => null,
+          1000,
+        ),
+      ).toThrow();
+    } finally {
+      store.close();
+    }
+  }
+});
