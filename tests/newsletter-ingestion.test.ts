@@ -206,6 +206,7 @@ test("newsletter extraction fetches cleaned URL while retaining original citatio
     store.indexNextNewsletter(normalizeNewsletter, 4);
     const child = store.search("unusual").find((item) => item.url)!;
     const item = store.getItem(child.id)!;
+    expect(store.scoreReferences(child.id)).toEqual(item.references);
     expect((item.references as { url: string }[])[0]!.url).toContain(
       "utm_source=email",
     );

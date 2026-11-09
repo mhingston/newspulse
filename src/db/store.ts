@@ -762,7 +762,15 @@ export class Store {
       return null;
     return this.sqlite
       .query(
-        "SELECT r.*,s.title AS source_title,s.url AS feed_url FROM item_sources r JOIN sources s ON s.id=r.source_id WHERE r.item_id=?",
+        `SELECT r.*,s.title AS source_title,s.url AS feed_url,
+          json_extract(m.body,'$.metadata.from') AS newsletter_sender,
+          m.received_at AS newsletter_received_at,
+          m.provider AS newsletter_provider,
+          m.provider_id AS newsletter_message_id,
+          m.index_diagnostics AS newsletter_diagnostics
+         FROM item_sources r JOIN sources s ON s.id=r.source_id
+         LEFT JOIN inbound_messages m ON s.kind='inbound' AND m.item_id=coalesce(r.parent_item_id,r.item_id)
+         WHERE r.item_id=?`,
       )
       .all(id);
   }
@@ -1388,19 +1396,7 @@ export class Store {
       : null;
     return {
       ...item,
-      references: this.sqlite
-        .query(
-          `SELECT r.*,s.title AS source_title,s.url AS feed_url,
-            json_extract(m.body,'$.metadata.from') AS newsletter_sender,
-            m.received_at AS newsletter_received_at,
-            m.provider AS newsletter_provider,
-            m.provider_id AS newsletter_message_id,
-            m.index_diagnostics AS newsletter_diagnostics
-           FROM item_sources r JOIN sources s ON s.id=r.source_id
-           LEFT JOIN inbound_messages m ON s.kind='inbound' AND m.item_id=coalesce(r.parent_item_id,r.item_id)
-           WHERE r.item_id=?`,
-        )
-        .all(id),
+      references: this.scoreReferences(id)!,
       content_versions: this.sqlite
         .query<
           {
