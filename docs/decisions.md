@@ -57,3 +57,5 @@ A specific-development group is a _relationship_ among canonical items, not a re
 ## Updating decisions
 
 For a consequential change, record the affected D-number, evidence, chosen alternative, compatibility/data consequences and rollback. Update the affected issue and operator-facing README. Do not silently change the product toward reader UI, uncontrolled discovery spend or a provider-specific conversational system. The original handoff is an archived requirement source; new approved decisions are recorded here, not retroactively edited into it.
+
+Inbound implementation: verified raw Resend webhooks commit message/event identities before acknowledgement; bounded background Receiving get/list requests use durable fenced leases and a paginated full rescan for overlap. Provider IDs remain distinct from RFC Message-ID. Bodies remain untrusted; attachments are not fetched. This is inbound storage only; #11 owns newsletter item indexing and attributed fan-out. A single service instance enforces the configured request cadence.

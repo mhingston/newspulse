@@ -57,12 +57,23 @@ export function schedule(
   store: Store,
   worker: Worker,
   processing?: ProcessingWorker,
+  inbound?: { retrieve(): Promise<void>; reconcile(): Promise<void> },
 ): { stop(): Promise<void> } {
   let active: Promise<unknown> | undefined;
   let stopping = false;
   const stageActive = new Map<string, Promise<unknown>>();
+  let inboundNext = 0;
   const tick = () => {
     if (stopping) return;
+    if (inbound && Date.now() >= inboundNext && !stageActive.has("inbound")) {
+      inboundNext = Date.now() + 2_000;
+      const task = inbound
+        .reconcile()
+        .then(() => (stopping ? undefined : inbound.retrieve()))
+        .catch((e) => log("inbound_worker_error", { error: String(e) }))
+        .finally(() => stageActive.delete("inbound"));
+      stageActive.set("inbound", task);
+    }
     if (processing)
       for (const stage of ["extract", "analyse", "group", "score"] as const) {
         if (stageActive.has(stage)) continue;

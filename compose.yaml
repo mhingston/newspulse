@@ -16,6 +16,8 @@ services:
       ANALYSIS_TOTAL_TOKENS: ${ANALYSIS_TOTAL_TOKENS:-}
       ANALYSIS_TOTAL_MICROS: ${ANALYSIS_TOTAL_MICROS:-}
       ANALYSIS_CALL_MICROS: ${ANALYSIS_CALL_MICROS:-}
+      RESEND_API_KEY: ${RESEND_API_KEY:-}
+      RESEND_WEBHOOK_SECRET: ${RESEND_WEBHOOK_SECRET:-}
     volumes:
       - newspulse-data:/app/data
     healthcheck:

@@ -129,3 +129,5 @@ The handoff proposes entities, not a mandate to prebuild every empty table. Add 
 Required children need merged implementation, linked acceptance evidence and updated operating docs. The core release gate is #23; full handoff coverage and conditional decisions are tracked by #32. A closed issue is not proof by itself: the parent must verify no required work was closed as not planned, replaced with a stub, or left behind in an unmerged PR. Maintain issue links when splitting or superseding work so no requirement loses its owner.
 
 If current provider terms, schema ownership or dependency contracts invalidate an issue, record evidence and replan before introducing a new service or security boundary. A missing live credential blocks live verification, not deterministic implementation and contract tests. M1 is not the complete product; the remaining backlog makes that boundary explicit.
+
+The #10 inbound slice persists verified event/message identities and retrieved bodies, and reconciles the provider's paginated received list. Searchable newsletter originals and linked-article attribution remain #11; receiving alone does not complete the M3 briefing.
