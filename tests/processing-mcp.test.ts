@@ -72,6 +72,41 @@ test("MCP serves ingested item while analysis is blocked and reports queue healt
     expect(ranking.item_id).toBe(payload.items[0].id);
     expect(ranking.references).toEqual(item.references);
     expect(ranking.scores).toEqual([]);
+    for (let n = 0; n < 3; n++) {
+      store.sqlite
+        .query(
+          "INSERT INTO item_scores(id,item_id,generation,input_hash,criteria_version,provenance,result,created_at) VALUES(?,?,?,?,?,?,?,?)",
+        )
+        .run(
+          `score-${n}`,
+          payload.items[0].id,
+          1,
+          `hash-${n}`,
+          "v1",
+          "{}",
+          "{}",
+          n,
+        );
+    }
+    const page = async (before?: number) => {
+      const result = await client.callTool({
+        name: "explain_ranking",
+        arguments: {
+          id: payload.items[0].id,
+          limit: 2,
+          ...(before === undefined ? {} : { before }),
+        },
+      });
+      return JSON.parse((result.content as { text: string }[])[0]!.text);
+    };
+    const first = await page();
+    const second = await page(first.next_before);
+    expect(first.scores.map((s: { id: string }) => s.id)).toEqual([
+      "score-2",
+      "score-1",
+    ]);
+    expect(second.scores.map((s: { id: string }) => s.id)).toEqual(["score-0"]);
+    expect(second.next_before).toBeNull();
     const missing = await client.callTool({
       name: "explain_ranking",
       arguments: { id: "missing" },

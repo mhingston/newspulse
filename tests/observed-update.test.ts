@@ -1,6 +1,8 @@
 import { expect, test } from "bun:test";
 import { Store } from "../src/db/store";
 import { scoreItem } from "../src/scoring";
+import { currentObservedUpdate } from "../src/observed-update";
+import { createHash } from "node:crypto";
 
 test("actual source corrections produce auditable update evidence without implying presentation", () => {
   const store = new Store(":memory:");
@@ -46,6 +48,18 @@ test("actual source corrections produce auditable update evidence without implyi
         .novelty,
     ).toBe(10);
     const scored = scoreItem(snapshot.input);
+    expect(snapshot.provenance.input).toEqual(snapshot.input);
+    expect(
+      createHash("sha256")
+        .update(
+          JSON.stringify({
+            criteriaVersion: scored.criteriaVersion,
+            input: snapshot.provenance.input,
+            provenance: snapshot.provenance,
+          }),
+        )
+        .digest("hex"),
+    ).toBe(snapshot.inputHash);
     expect(
       store.completeScore(
         job,
@@ -80,6 +94,54 @@ test("actual source corrections produce auditable update evidence without implyi
   }
 });
 
+test("update evidence survives incidental changes and unrelated references but cancels on reversion", () => {
+  const original = {
+    id: 1,
+    source_id: "s",
+    native_id: "n",
+    title: "Original robotics research",
+    text: "Robotics original report and research methods",
+    backfilled: 0,
+    observed_at: 1,
+  };
+  const changed = {
+    ...original,
+    id: 2,
+    title: "Revised robotics research",
+    text: "Robotics revised research alpha bravo charlie delta echo foxtrot golf hotel india juliet kilo lima mike november oscar papa quebec romeo sierra tango uniform victor whiskey xray yankee zulu",
+    observed_at: 2,
+  };
+  const incidental = {
+    ...changed,
+    id: 3,
+    text: `${changed.text}!`,
+    observed_at: 3,
+  };
+  const anotherSource = {
+    ...original,
+    id: 4,
+    source_id: "other",
+    observed_at: 4,
+  };
+  const result = currentObservedUpdate([
+    original,
+    changed,
+    incidental,
+    anotherSource,
+  ]);
+  expect(result?.currentVersionId).toBe(2);
+  expect(result?.observedAt).toBe(2);
+  expect(
+    currentObservedUpdate([
+      original,
+      changed,
+      incidental,
+      anotherSource,
+      { ...original, id: 5, observed_at: 5 },
+    ]),
+  ).toBeNull();
+});
+
 test("small title or formatting changes do not imply meaningful updates", () => {
   const version = {
     id: 1,
@@ -88,6 +150,7 @@ test("small title or formatting changes do not imply meaningful updates", () => 
     title: "Research initial findings",
     text: "Original long research report about the topic.",
     backfilled: 0,
+    observed_at: 1,
   };
   const { observedUpdate } =
     require("../src/observed-update") as typeof import("../src/observed-update");

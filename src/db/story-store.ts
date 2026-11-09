@@ -169,8 +169,14 @@ export class StoryStore {
             })
             .map((row) => row.item_id),
         );
+        const changedItems = new Set(
+          current
+            .filter((row) => !unchanged.has(row.item_id))
+            .map((row) => row.item_id),
+        );
         for (const [itemId, next] of target) {
           if (unchanged.has(itemId)) continue;
+          changedItems.add(itemId);
           this.sqlite
             .query(
               "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES(?,?,?,?,?)",
@@ -190,7 +196,10 @@ export class StoryStore {
               .run(now, group.id);
 
         this.reconcileRelations(plan, now);
-        invalidateScores(this.sqlite, now);
+        // Scoring snapshots contain the item's own membership, not other
+        // members or relations. Requeue only changed snapshot inputs.
+        for (const itemId of changedItems)
+          invalidateScores(this.sqlite, now, itemId);
         this.sqlite
           .query(
             "INSERT INTO story_grouping_state(id,fingerprint,updated_at) VALUES(1,?,?) " +

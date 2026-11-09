@@ -1,7 +1,10 @@
 import { Database } from "bun:sqlite";
 import { StoryStore } from "./story-store";
 import { createHash } from "node:crypto";
-import { observedUpdate, type ObservedVersion } from "../observed-update";
+import {
+  currentObservedUpdate,
+  type ObservedVersion,
+} from "../observed-update";
 import { ProfileStore } from "../profiles";
 import { advanceScoreInvalidation, invalidateScores } from "./score-queue";
 import { SCORING_CRITERIA_VERSION, type ScoringInput } from "../scoring";
@@ -587,26 +590,16 @@ export class Store {
     const profiles = new ProfileStore(this.sqlite);
     const interests = profiles.activeInterests(now);
     const editorial = profiles.latestEditorial();
-    const latestVersion = this.sqlite
-      .query<ObservedVersion & { observed_at: number }, [string]>(
-        "SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM content_versions WHERE item_id=? ORDER BY id DESC LIMIT 1",
+    const versions = this.sqlite
+      .query<ObservedVersion & { observed_at: number }, [string, number]>(
+        `WITH recent AS (SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM content_versions WHERE item_id=? AND observed_at>=?),
+        anchors AS (SELECT DISTINCT (SELECT max(p.id) FROM content_versions p WHERE p.source_id=r.source_id AND p.native_id=r.native_id AND p.id<r.id) AS id FROM recent r
+          WHERE r.id=(SELECT min(q.id) FROM recent q WHERE q.source_id=r.source_id AND q.native_id=r.native_id))
+        SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM recent
+        UNION ALL SELECT v.id,v.source_id,v.native_id,v.title,v.text,v.backfilled,v.observed_at FROM content_versions v JOIN anchors a ON a.id=v.id ORDER BY id`,
       )
-      .get(job.item_id);
-    const previousVersion =
-      latestVersion &&
-      this.sqlite
-        .query<ObservedVersion, [string, string, number]>(
-          "SELECT id,source_id,native_id,title,text,backfilled FROM content_versions WHERE source_id=? AND native_id=? AND id<? ORDER BY id DESC LIMIT 1",
-        )
-        .get(
-          latestVersion.source_id,
-          latestVersion.native_id,
-          latestVersion.id,
-        );
-    const update = observedUpdate(
-      previousVersion ?? undefined,
-      latestVersion ?? undefined,
-    );
+      .all(job.item_id, now - 7 * 86_400_000);
+    const update = currentObservedUpdate(versions);
     const extractionRaw = this.processingResult(
       "extract",
       job.item_id,
@@ -661,9 +654,10 @@ export class Store {
       editorialProfiles: editorial,
       analysis: analysis?.result ?? null,
       history: null,
-      observedUpdateAt: update ? latestVersion!.observed_at : null,
+      observedUpdateAt: update?.observedAt ?? null,
     };
     const provenance = {
+      input,
       invalidationGeneration:
         this.sqlite
           .query<{ generation: number }, []>(
@@ -755,7 +749,22 @@ export class Store {
       })
       .immediate();
   }
-  scoreHistory(itemId: string) {
+  scoreReferences(itemId: string) {
+    const id =
+      this.sqlite
+        .query<{ item_id: string }, [string]>(
+          "SELECT item_id FROM item_redirects WHERE old_id=?",
+        )
+        .get(itemId)?.item_id ?? itemId;
+    if (!this.sqlite.query("SELECT 1 FROM items WHERE id=?").get(id))
+      return null;
+    return this.sqlite
+      .query(
+        "SELECT r.*,s.title AS source_title,s.url AS feed_url FROM item_sources r JOIN sources s ON s.id=r.source_id WHERE r.item_id=?",
+      )
+      .all(id);
+  }
+  scoreHistory(itemId: string, limit = 20, before?: number) {
     const resolved =
       this.sqlite
         .query<{ item_id: string }, [string]>(
@@ -773,12 +782,13 @@ export class Store {
           provenance: string;
           result: string;
           created_at: number;
+          cursor: number;
         },
-        [string]
+        [string, number, number]
       >(
-        "SELECT * FROM item_scores WHERE item_id=? ORDER BY created_at DESC, rowid DESC",
+        "SELECT rowid AS cursor, * FROM item_scores WHERE item_id=? AND rowid<? ORDER BY rowid DESC LIMIT ?",
       )
-      .all(resolved)
+      .all(resolved, before ?? Number.MAX_SAFE_INTEGER, limit)
       .map((row) => ({
         ...row,
         provenance: JSON.parse(row.provenance) as unknown,

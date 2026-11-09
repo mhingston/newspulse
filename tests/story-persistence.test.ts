@@ -107,6 +107,40 @@ test("cross-source coverage forms a group without collapsing any source or analy
   }
 });
 
+test("unrelated grouping changes do not invalidate an unchanged membership", () => {
+  const store = new Store(":memory:");
+  try {
+    ingest(store, "https://feed-one.example/rss", [
+      candidate("a", "Acme releases Atlas robotics model"),
+    ]);
+    store.stories.reconcile(start + 2000);
+    const id = store.search("Atlas")[0]!.id;
+    const extraction = store.claimProcessing("extract", start + 2001)!;
+    store.completeProcessing(extraction, "extracted", start + 2002);
+    store.sqlite
+      .query(
+        "UPDATE processing_jobs SET status='done',outcome='scored' WHERE stage='score' AND item_id=?",
+      )
+      .run(id);
+    ingest(
+      store,
+      "https://feed-two.example/rss",
+      [candidate("b", "Mars probe measures distant solar wind")],
+      start + 3000,
+    );
+    store.stories.reconcile(start + 4000);
+    expect(
+      store.sqlite
+        .query<{ status: string }, [string]>(
+          "SELECT status FROM processing_jobs WHERE item_id=? AND stage='score'",
+        )
+        .get(id)?.status,
+    ).toBe("done");
+  } finally {
+    store.close();
+  }
+});
+
 test("corrections split a development without losing citations or audited memberships", () => {
   const store = new Store(":memory:");
   try {

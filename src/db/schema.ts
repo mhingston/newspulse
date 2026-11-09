@@ -262,6 +262,7 @@ export const scoreInvalidation = sqliteTable("score_invalidation", {
   cursor: text(),
   pending: integer().notNull().default(0),
   generation: integer().notNull().default(0),
+  passGeneration: integer("pass_generation").notNull().default(0),
 });
 
 /** Development groups never replace items or original citations. */

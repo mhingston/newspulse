@@ -578,6 +578,14 @@ test("score invalidation creates a job without waiting for analysis", () => {
     .run(id);
   invalidateScores(store.sqlite, 5, id);
   expect(store.claimProcessing("score", 5)?.item_id).toBe(id);
+  const plan = store.sqlite
+    .query<{ detail: string }, [string]>(
+      "EXPLAIN QUERY PLAN SELECT * FROM processing_jobs WHERE stage='score' AND item_id=?",
+    )
+    .all(id)
+    .map((row) => row.detail)
+    .join(" ");
+  expect(plan).toContain("processing_stage_item_unique");
   store.close();
 });
 
@@ -638,6 +646,19 @@ test("global score invalidation advances in durable bounded batches", () => {
       )
       .get()!.pending,
   ).toBe(1);
+  const beforeRepeat = store.sqlite
+    .query<{ cursor: string }, []>(
+      "SELECT cursor FROM score_invalidation WHERE id=1",
+    )
+    .get()!.cursor;
+  invalidateScores(store.sqlite, 2);
+  expect(
+    store.sqlite
+      .query<{ cursor: string }, []>(
+        "SELECT cursor FROM score_invalidation WHERE id=1",
+      )
+      .get()!.cursor,
+  ).toBe(beforeRepeat);
   store.claimProcessing("score", 3);
   store.claimProcessing("score", 4);
   expect(
@@ -647,6 +668,16 @@ test("global score invalidation advances in durable bounded batches", () => {
       )
       .get()!.n,
   ).toBe(65);
+  expect(
+    store.sqlite
+      .query<{ pending: number }, []>(
+        "SELECT pending FROM score_invalidation WHERE id=1",
+      )
+      .get()!.pending,
+  ).toBe(1);
+  store.claimProcessing("score", 5);
+  store.claimProcessing("score", 6);
+  store.claimProcessing("score", 7);
   expect(
     store.sqlite
       .query<{ pending: number }, []>(

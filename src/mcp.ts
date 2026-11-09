@@ -58,16 +58,24 @@ export function createMcp(store: Store): McpServer {
     {
       description:
         "Retrieve an item's recorded scoring runs, components, exclusions and provenance. Earlier runs are historical and do not imply current eligibility.",
-      inputSchema: { id: z.string() },
+      inputSchema: {
+        id: z.string(),
+        limit: z.number().int().min(1).max(100).default(20),
+        before: z.number().int().positive().optional(),
+      },
       annotations,
     },
-    async ({ id }) => {
-      const item = store.getItem(id);
-      return item
+    async ({ id, limit, before }) => {
+      const references = store.scoreReferences(id);
+      const page = store.scoreHistory(id, limit + 1, before);
+      const scores = page.slice(0, limit);
+      return references
         ? response({
             item_id: id,
-            references: item.references,
-            scores: store.scoreHistory(id),
+            references,
+            scores,
+            next_before:
+              page.length > limit ? scores[scores.length - 1]!.cursor : null,
           })
         : { ...response({ error: "Item not found" }), isError: true };
     },
