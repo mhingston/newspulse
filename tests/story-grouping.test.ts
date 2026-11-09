@@ -69,6 +69,62 @@ test("a week-later recall is a new development with a historical relationship", 
     }),
   ]);
 });
+test("shared calendar years cannot override conflicting versions", () => {
+  const atlas2 = item("atlas-2", "Acme releases Atlas 2 robotics model in 2026");
+  const atlas3 = item("atlas-3", "Acme releases Atlas 3 robotics model in 2026");
+  const recall3 = item("recall-3", "Acme recalls Atlas 3 robotics model in 2026", 7);
+  expect(partition([atlas2, atlas3])).toEqual(["atlas-2", "atlas-3"]);
+  const plan = planStories([atlas2, recall3]);
+  expect(plan.relations).toHaveLength(0);
+});
+
+test("complete dotted versions must match for grouping and follow-up", () => {
+  const first = item("first", "Acme releases Atlas v2.1 robotics model");
+  const second = item("second", "Acme releases Atlas v2.2 robotics model");
+  const recall = item("recall", "Acme recalls Atlas v2.2 robotics model", 7);
+  expect(partition([first, second])).toEqual(["first", "second"]);
+  expect(planStories([first, recall]).relations).toHaveLength(0);
+  expect(partition([
+    first,
+    item("same", "Atlas 2.1 robotics model launched by Acme"),
+  ])).toEqual(["first,same"]);
+});
+
+test("same vendor and version do not merge different named products", () => {
+  const atlas = item("atlas", "Acme releases Atlas 2 robotics model");
+  const orion = item("orion", "Acme releases Orion 2 robotics model");
+  const orionRecall = item("orion-recall", "Acme recalls Orion 2 robotics model", 7);
+  expect(partition([atlas, orion])).toEqual(["atlas", "orion"]);
+  expect(planStories([atlas, orionRecall]).relations).toHaveLength(0);
+});
+
+test("follow-up chronology uses earliest group member, not syndicated anchor", () => {
+  const text =
+    "The release announcement includes reproducible benchmark results, evaluation methodology, hardware latency measurements and detailed licensing information for researchers. ".repeat(
+      2,
+    );
+  // Canonical identities sort the later copy first, unlike publication times.
+  const first = item("z-release", "Acme releases Atlas 2 robotics model", 0, text);
+  const copy = item("a-copy", "Atlas 2 robotics model launched by Acme", 8, text);
+  const recall = item("m-recall", "Acme recalls Atlas 2 robotics model", 7);
+  const plan = planStories([copy, recall, first]);
+  const releaseGroup = plan.groups.find((group) =>
+    group.members.some((member) => member.itemId === first.id),
+  )!;
+  const recallGroup = plan.groups.find((group) =>
+    group.members.some((member) => member.itemId === recall.id),
+  )!;
+  expect(releaseGroup.members).toHaveLength(2);
+  expect(releaseGroup.members[0]!.itemId).toBe(copy.id);
+  expect(releaseGroup.firstAt).toBe(first.publishedAt!);
+  expect(plan.relations).toContainEqual(
+    expect.objectContaining({
+      olderGroupId: releaseGroup.id,
+      newerGroupId: recallGroup.id,
+    }),
+  );
+});
+
 test("replay and arrival order produce stable partitions and canonical group keys", () => {
   const a = item("a", "Acme releases Atlas 2 robotics model");
   const b = item("b", "Atlas 2 robotics model launched by Acme");
@@ -108,7 +164,7 @@ test("recorded evaluation fixture distinguishes developments and historical link
     );
     expect(new Set(labels).size).toBe(1);
   }
-  expect(plan.groups).toHaveLength(4);
+  expect(plan.groups).toHaveLength(8);
   const release = plan.groups.find((group) =>
     group.members.some((member) => member.itemId === "atlas-release"),
   )!;
