@@ -369,6 +369,56 @@ export const digestItems = sqliteTable(
   ],
 );
 
+/** An immutable outbound envelope and fenced provider acceptance state. */
+export const deliveries = sqliteTable(
+  "deliveries",
+  {
+    id: text().primaryKey(),
+    digestId: text("digest_id")
+      .notNull()
+      .references(() => digests.id),
+    editionDate: text("edition_date").notNull(),
+    recipient: text().notNull(),
+    sender: text().notNull(),
+    idempotencyKey: text("idempotency_key").notNull().unique(),
+    status: text().notNull().default("pending"),
+    attempts: integer().notNull().default(0),
+    availableAt: integer("available_at").notNull(),
+    firstAttemptAt: integer("first_attempt_at"),
+    leaseUntil: integer("lease_until"),
+    leaseToken: text("lease_token"),
+    providerId: text("provider_id"),
+    lastError: text("last_error"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("delivery_edition_recipient").on(t.editionDate, t.recipient),
+    index("delivery_due").on(t.status, t.availableAt, t.leaseUntil),
+  ],
+);
+
+export const publicationScheduleState = sqliteTable(
+  "publication_schedule_state",
+  {
+    id: integer().primaryKey(),
+    nextDate: text("next_date").notNull(),
+    timezone: text().notNull(),
+    hour: integer().notNull(),
+    minute: integer().notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+);
+export const publicationScheduleHistory = sqliteTable(
+  "publication_schedule_history",
+  {
+    date: text().primaryKey(),
+    dueAt: integer("due_at"),
+    status: text().notNull(),
+    recordedAt: integer("recorded_at").notNull(),
+  },
+);
+
 /** Provider message identity and its independently leased body retrieval. */
 export const inboundMessages = sqliteTable(
   "inbound_messages",

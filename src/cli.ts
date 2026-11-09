@@ -1,3 +1,10 @@
+import { DeliveryStore } from "./db/delivery-store";
+import { acquireDeliveryLock } from "./delivery-lock";
+import {
+  confirmDeliveryReconciliation,
+  previewDeliveryReconciliation,
+  type Reconciliation,
+} from "./delivery-reconcile";
 import { previewDigest, freezeDigest, digestDefaults } from "./digest-service";
 import { acquireAnalysisLock } from "./analysis-lock";
 import { AnalysisBudget } from "./analysis-budget";
@@ -91,9 +98,50 @@ async function main() {
     command === "analysis-acknowledge-envelope"
       ? acquireAnalysisLock(path)
       : null;
+  const deliveryLock =
+    command === "delivery-reconcile" || command === "delivery-reconcile-preview"
+      ? acquireDeliveryLock(path)
+      : null;
   const store = new Store(path);
   try {
     switch (command) {
+      case "delivery-list": {
+        console.log(
+          JSON.stringify(new DeliveryStore(store.sqlite).list(), null, 2),
+        );
+        break;
+      }
+      case "delivery-reconcile-preview":
+      case "delivery-reconcile": {
+        const id = required(0, "delivery ID");
+        const resolution = required(1, "accepted or not_sent");
+        if (resolution !== "accepted" && resolution !== "not_sent")
+          throw new Error("Resolution must be accepted or not_sent");
+        const providerArg = required(2, "provider ID, or - for not_sent");
+        const action: Reconciliation = {
+          id,
+          resolution,
+          providerId: providerArg === "-" ? null : providerArg,
+        };
+        if (command === "delivery-reconcile-preview") {
+          console.log(
+            JSON.stringify(
+              previewDeliveryReconciliation(store.sqlite, action),
+              null,
+              2,
+            ),
+          );
+        } else {
+          confirmDeliveryReconciliation(
+            store.sqlite,
+            action,
+            Number(required(3, "preview asOf")),
+            required(4, "preview hash"),
+          );
+          console.log("Delivery reconciled");
+        }
+        break;
+      }
       case "digest-preview": {
         const options = digestDefaults(required(0, "edition date"));
         console.log(JSON.stringify(previewDigest(store, options), null, 2));
@@ -275,12 +323,13 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
     store.close();
     analysisLock?.close();
+    deliveryLock?.close();
   }
 }
 main().catch((e) => {
