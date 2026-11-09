@@ -130,4 +130,6 @@ Required children need merged implementation, linked acceptance evidence and upd
 
 If current provider terms, schema ownership or dependency contracts invalidate an issue, record evidence and replan before introducing a new service or security boundary. A missing live credential blocks live verification, not deterministic implementation and contract tests. M1 is not the complete product; the remaining backlog makes that boundary explicit.
 
-The #10 and #11 inbound slices persist and reconcile received messages, index newsletter originals and ingest attributed linked articles. They do not send a briefing; outbound delivery remains #12.
+The #10 and #11 inbound slices persist and reconcile received messages, index newsletter originals and ingest attributed linked articles. #12 adds opt-in outbound delivery. Reconstructing unfrozen missed editions remains required in [#48](https://github.com/mhingston/newspulse/issues/48); working feedback links remain required in [#18](https://github.com/mhingston/newspulse/issues/18).
+
+The user-authorized #12 scope split preserves unfrozen historical catch-up as required follow-up [#48](https://github.com/mhingston/newspulse/issues/48) and the complete-edition feedback-link test in [#18](https://github.com/mhingston/newspulse/issues/18). Same-day recovery, already-frozen missed editions and mixed RSS/inbound citations remain in #12.

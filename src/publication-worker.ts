@@ -20,41 +20,50 @@ export class PublicationWorker {
     },
   ) {}
   async tick(now = Date.now()) {
-    runPublicationSchedule(
-      this.store.sqlite,
-      this.options,
-      (date, asOf, isHistorical) => {
-        const existing = new DigestStore(this.store.sqlite).get(date);
-        if (existing) {
+    try {
+      runPublicationSchedule(
+        this.store.sqlite,
+        this.options,
+        (date, asOf, isHistorical) => {
+          const existing = new DigestStore(this.store.sqlite).get(date);
+          if (existing) {
+            this.deliveries.prepare(
+              date,
+              this.options.to,
+              this.options.from,
+              () => existing,
+              asOf,
+            );
+            return "prepared";
+          }
+          if (isHistorical) return "skipped";
+          const options = {
+            ...digestDefaults(date, asOf),
+            timezone: this.options.timezone,
+          };
+          const preview = previewDigest(this.store, options);
+          if (preview.draft.status === "no_digest") return "empty";
+          if (preview.draft.status !== "ready") return "processing";
           this.deliveries.prepare(
             date,
             this.options.to,
             this.options.from,
-            () => existing,
+            () =>
+              freezeDigest(
+                this.store,
+                options,
+                preview.confirmation.hash,
+                asOf,
+              ),
             asOf,
           );
           return "prepared";
-        }
-        if (isHistorical) return "skipped";
-        const options = {
-          ...digestDefaults(date, asOf),
-          timezone: this.options.timezone,
-        };
-        const preview = previewDigest(this.store, options);
-        if (preview.draft.status === "no_digest") return "empty";
-        if (preview.draft.status !== "ready") return "processing";
-        this.deliveries.prepare(
-          date,
-          this.options.to,
-          this.options.from,
-          () =>
-            freezeDigest(this.store, options, preview.confirmation.hash, asOf),
-          asOf,
-        );
-        return "prepared";
-      },
-      now,
-    );
-    await this.sender.send(now);
+        },
+        now,
+      );
+    } finally {
+      // A damaged new draft must not starve a previously persisted outbox.
+      await this.sender.send(now);
+    }
   }
 }

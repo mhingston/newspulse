@@ -1,6 +1,6 @@
 # Newspulse
 
-A self-hosted foundation for a personal discovery engine. **M1 is implemented:** RSS/Atom → durable SQLite ingestion → authenticated, read-only MCP search. There is no feed-reader UI. Optional analysis, deterministic story grouping and an initial scoring pipeline are part of the developing M2 milestone. Email delivery, proactive discovery and daily briefings remain future milestones.
+A self-hosted foundation for a personal discovery engine. **M1 is implemented:** RSS/Atom → durable SQLite ingestion → authenticated, read-only MCP search. There is no feed-reader UI. Optional analysis, deterministic story grouping and an initial scoring pipeline are part of the developing M2 milestone. Optional daily email delivery is available; proactive discovery remains a future milestone.
 
 ## Project decisions and remaining work
 
@@ -221,10 +221,10 @@ The private SQLite tables `inbound_messages`, `inbound_events`, and `inbound_rec
 
 Before enabling, back up the database as above. For a live contract check, use a dedicated Resend test inbox/domain and key, configure a TLS webhook, send a non-sensitive test message, confirm the event and completed body in the private database and search for the original and eligible linked articles through MCP, then temporarily disable the webhook and confirm a second test message is found by list reconciliation. This is an operator-run check requiring configured credentials and DNS; automated tests use fixtures only. To roll back, stop the service and restore the pre-upgrade backup into a new path.
 
-### Daily email delivery (in development)
+### Daily email delivery
 
 Outbound delivery is opt-in. Set `DELIVERY_ENABLED=true`, `RESEND_API_KEY`, `DELIVERY_FROM` and `DELIVERY_TO`; the sender must be authorized on a verified Resend domain. `DELIVERY_TIMEZONE` defaults to `Europe/London` and `DELIVERY_TIME` to `06:00`. Use plain email addresses. Inbound webhooks additionally require `RESEND_WEBHOOK_SECRET`. An empty edition is recorded without sending. A frozen edition and its outbox entry commit before the network call, and retries reuse the same frozen message and idempotency key. Resend acceptance means acceptance by the provider, not inbox delivery.
 
 Resend [retains idempotency keys for 24 hours](https://resend.com/docs/dashboard/emails/idempotency-keys); Newspulse conservatively stops automatic ambiguous retries after 23 hours or ten claims, whichever comes first. Repeated crashes before a send also stop after ten claims. Inspect `bun run cli delivery-list`. Stop the service and check provider records before reconciling an unknown outcome. Never assert `not_sent` without evidence; it permits another attempt. Check `bun run cli` usage for the reconciliation confirmation protocol. Keep system clocks synchronized and do not move them backwards. A restored backup can predate a send: reconcile provider activity before enabling outbound delivery on the restored database. The delivery lock requires Linux/glibc, a local filesystem with working `flock`, and an ordinary file database. Do not delete its lock file or access the database through hard links.
 
-The scheduler catches up frozen missed editions, but cannot recreate a historical draft from mutable current scores and grouping; it records unfrozen missed dates as skipped. Scoped feedback links are not yet available and remain owned by issue #18. Do not interpret a missing click as feedback. Back up before migration or enabling sending, and restore only to a new stopped path. Tests use fake providers and never send real email.
+The scheduler catches up frozen missed editions, but cannot recreate a historical draft from mutable current scores and grouping; it records unfrozen missed dates as skipped. Unfrozen historical catch-up is tracked in [#48](https://github.com/mhingston/newspulse/issues/48). Scoped feedback links are not yet available and remain owned by [#18](https://github.com/mhingston/newspulse/issues/18). Do not interpret a missing click as feedback. Back up before migration or enabling sending, and restore only to a new stopped path. Tests use fake providers and never send real email.
