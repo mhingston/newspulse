@@ -11,18 +11,33 @@ import { RssAdapter } from "./adapters/rss";
 import { Worker, ProcessingWorker, schedule, log } from "./worker";
 import { HttpContentExtractor, extractionHandler } from "./adapters/extraction";
 import { createApp } from "./http";
+import { ResendInbound } from "./adapters/resend-inbound";
+import { InboundStore } from "./db/inbound";
+import { InboundWorker, inboundWebhook } from "./inbound-worker";
 const cfg = config();
 const analysis = analysisConfig();
 // The OS releases this lock only when the process exits, including after a crash.
 // Keep it for the process lifetime even if a timed-out provider ignores abort.
 if (analysis) acquireAnalysisLock(cfg.DB_PATH);
 const store = new Store(cfg.DB_PATH);
+const inboundStore =
+  cfg.RESEND_API_KEY && cfg.RESEND_WEBHOOK_SECRET
+    ? new InboundStore(store.sqlite)
+    : undefined;
+const inboundProvider =
+  cfg.RESEND_API_KEY && cfg.RESEND_WEBHOOK_SECRET
+    ? new ResendInbound(cfg.RESEND_API_KEY, cfg.RESEND_WEBHOOK_SECRET)
+    : undefined;
 const app = createApp(store, {
   token: cfg.MCP_TOKEN,
   allowedHosts: cfg.ALLOWED_HOSTS.split(",").map((s) => s.trim()),
   allowedOrigins: cfg.ALLOWED_ORIGINS.split(",")
     .map((s) => s.trim())
     .filter(Boolean),
+  inboundWebhook:
+    inboundStore && inboundProvider
+      ? inboundWebhook(inboundStore, inboundProvider)
+      : undefined,
 });
 const server = Bun.serve({
   hostname: cfg.HOST,
@@ -73,6 +88,9 @@ const scheduler = schedule(
         .filter(Boolean),
     ),
   }),
+  inboundStore && inboundProvider
+    ? new InboundWorker(inboundStore, inboundProvider)
+    : undefined,
 );
 log("started", { host: cfg.HOST, port: cfg.PORT });
 let stopping = false;

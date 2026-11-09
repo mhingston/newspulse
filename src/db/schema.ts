@@ -368,3 +368,59 @@ export const digestItems = sqliteTable(
     uniqueIndex("digest_item_identity").on(t.digestId, t.itemId),
   ],
 );
+
+/** Provider message identity and its independently leased body retrieval. */
+export const inboundMessages = sqliteTable(
+  "inbound_messages",
+  {
+    id: text().primaryKey(),
+    provider: text().notNull(),
+    providerId: text("provider_id").notNull(),
+    receivedAt: integer("received_at").notNull(),
+    metadata: text().notNull(),
+    body: text(),
+    status: text().notNull().default("pending"),
+    attempts: integer().notNull().default(0),
+    availableAt: integer("available_at").notNull(),
+    leaseUntil: integer("lease_until"),
+    leaseToken: text("lease_token"),
+    lastError: text("last_error"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("inbound_message_identity").on(t.provider, t.providerId),
+    index("inbound_message_due").on(t.status, t.availableAt, t.id),
+    index("inbound_message_lease").on(t.status, t.leaseUntil),
+  ],
+);
+
+export const inboundEvents = sqliteTable(
+  "inbound_events",
+  {
+    id: text().primaryKey(),
+    provider: text().notNull(),
+    eventId: text("event_id").notNull(),
+    messageId: text("message_id")
+      .notNull()
+      .references(() => inboundMessages.id),
+    receivedAt: integer("received_at").notNull(),
+    metadata: text().notNull(),
+  },
+  (t) => [uniqueIndex("inbound_event_identity").on(t.provider, t.eventId)],
+);
+
+/** One fenced reconciliation cursor per provider/inbox; state is opaque to persistence. */
+export const inboundReconciliation = sqliteTable(
+  "inbound_reconciliation",
+  {
+    key: text().primaryKey(),
+    state: text().notNull(),
+    availableAt: integer("available_at").notNull(),
+    leaseUntil: integer("lease_until"),
+    leaseToken: text("lease_token"),
+    attempts: integer().notNull().default(0),
+    lastError: text("last_error"),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("inbound_reconciliation_due").on(t.availableAt, t.leaseUntil)],
+);
