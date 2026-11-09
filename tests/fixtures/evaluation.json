@@ -69,8 +69,32 @@
         "title": "New robotics model trends across industry",
         "day": 0,
         "development": "unrelated"
+      },
+      {
+        "id": "atlas-3-shared-year",
+        "title": "Acme releases Atlas 3 robotics model in 2026",
+        "day": 0,
+        "development": "atlas-3-release"
+      },
+      {
+        "id": "orion-2-same-version",
+        "title": "Acme releases Orion 2 robotics model",
+        "day": 0,
+        "development": "orion-2-release"
+      },
+      {
+        "id": "atlas-2.1-release",
+        "title": "Acme releases Atlas v2.1 robotics model",
+        "day": 0,
+        "development": "atlas-2.1-release"
+      },
+      {
+        "id": "atlas-2.2-release",
+        "title": "Acme releases Atlas v2.2 robotics model",
+        "day": 0,
+        "development": "atlas-2.2-release"
       }
     ],
-    "notes": "Negative controls distinguish different products, generic topics and substantive follow-ups. Deterministic rules prioritize precision over recall."
+    "notes": "Negative controls cover shared years, conflicting dotted versions, same-version different products, generic topics, and chronological follow-ups. Rules deliberately prioritize precision."
   }
 }
