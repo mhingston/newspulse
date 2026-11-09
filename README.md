@@ -71,7 +71,7 @@ docker compose exec newspulse bun src/cli.ts status
 docker compose logs -f newspulse
 ```
 
-Compose mounts a named persistent volume and publishes only on host loopback. The process runs as the image's `bun` user. Keep MCP and health endpoints on a private network or behind an authenticated private tunnel. This release has no public webhook route. Do not publish port 3000 on a public interface. For a private domain, add its hostname to `ALLOWED_HOSTS`, use TLS and retain bearer authentication. Anyone controlling CLI subscriptions can direct outbound HTTP requests; only import trusted subscription lists. Feed bodies and link text cannot alter source configuration.
+Compose mounts a named persistent volume and publishes only on host loopback. The process runs as the image's `bun` user. Keep MCP and health endpoints on a private network or behind an authenticated private tunnel. When incoming email is enabled, expose only the signature-verified POST webhook through a TLS reverse proxy. Do not publish port 3000 on a public interface. For a private domain, add its hostname to `ALLOWED_HOSTS`, use TLS and retain bearer authentication. Anyone controlling CLI subscriptions can direct outbound HTTP requests; only import trusted subscription lists. Feed bodies and link text cannot alter source configuration.
 
 ## Configuration
 
