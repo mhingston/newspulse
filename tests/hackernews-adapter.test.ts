@@ -452,6 +452,31 @@ describe("Hacker News discussion adapter", () => {
     }
   });
 
+  test("a slow request is a retryable error, not a poll-deadline partial result", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    // Compress the per-request timeout to a few milliseconds.
+    globalThis.setTimeout = ((handler: () => void) =>
+      realSetTimeout(handler, 5)) as unknown as typeof setTimeout;
+    try {
+      const { fetcher } = recordingFetcher(({ url }, init) => {
+        if (url.pathname.endsWith("/item/100.json"))
+          return json(story({ kids: [101], descendants: 1 }));
+        // Never settles by itself; only the adapter's per-request timeout
+        // can abort it, and the poll deadline is still ~45s away.
+        return new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () =>
+            reject(new Error("aborted")),
+          );
+        });
+      });
+      const error = await poll(fetcher, itemUrl).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(HttpError);
+      expect((error as Error).message).toContain("request timed out");
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  }, 10_000);
+
   test("a provider failure on the root still propagates as a failure", async () => {
     await expect(
       poll(

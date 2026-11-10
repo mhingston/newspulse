@@ -333,9 +333,15 @@ export class HackerNewsAdapter implements SourceAdapter {
     if (remainingBytes <= 0) throw new BudgetExhausted("byte");
     budget.requests++;
     const url = new URL(`${hnApiRoot}/${path}`);
+    // Two distinct causes share one signal: the poll deadline is a local
+    // ingestion bound, while a single slow request is a retryable error.
     const controller = new AbortController();
-    const timeout = AbortSignal.timeout(Math.min(15_000, remaining));
-    timeout.addEventListener("abort", () => controller.abort(timeout.reason));
+    const perRequestMs = Math.min(15_000, remaining);
+    let reason: "request" | "deadline" | undefined;
+    const timer = setTimeout(() => {
+      reason ??= perRequestMs < remaining ? "request" : "deadline";
+      controller.abort();
+    }, perRequestMs);
     let response: Response;
     try {
       response = await this.fetcher(url, {
@@ -345,11 +351,12 @@ export class HackerNewsAdapter implements SourceAdapter {
         signal: controller.signal,
       });
     } catch {
-      // Hitting the poll deadline is a local ingestion bound for any request;
-      // a single slow request below the deadline is a retryable provider error.
-      if (timeout.aborted) throw new BudgetExhausted("time");
-      if (required) throw new HttpError("Hacker News API request timed out");
+      if (reason === "deadline") throw new BudgetExhausted("time");
+      if (reason === "request")
+        throw new HttpError("Hacker News API request timed out");
       throw new HttpError("Hacker News API request failed or timed out");
+    } finally {
+      clearTimeout(timer);
     }
     if (!response.ok) {
       const status = response.status;
