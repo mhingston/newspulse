@@ -799,17 +799,20 @@ export class GithubSearchProvider implements SearchProvider {
     if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 250)
       throw new Error("Invalid GitHub search result limit");
     const perPage = Math.min(input.limit, 100);
-    let page = 1;
+    // Cursors carry the absolute result offset, so a changed per-page
+    // reservation (the discovery budget can shrink between pages) still
+    // resumes at the right result instead of shifting the API page.
+    let offset = 0;
     if (input.cursor !== undefined) {
-      const match = /^([1-9]\d{0,2}):([1-9]\d{0,2})$/.exec(input.cursor);
-      if (!match || Number(match[1]) > maxSearchPages || Number(match[2]) > 100)
+      const match = /^(\d{1,4}):([1-9]\d{0,2})$/.exec(input.cursor);
+      if (!match || Number(match[2]) > 100)
         throw new Error("Invalid GitHub search cursor");
-      page = Number(match[1]);
-      // The numeric page offset only means the same thing for the same page
-      // size; reject a changed reservation instead of silently shifting it.
-      if (Number(match[2]) !== perPage)
-        throw new Error("GitHub search cursor page size changed");
+      offset = Number(match[1]);
+      if (offset > 1000) throw new Error("Invalid GitHub search cursor");
     }
+    const page = Math.floor(offset / perPage) + 1;
+    if (page > maxSearchPages) throw new Error("Invalid GitHub search cursor");
+    const skip = offset % perPage;
     const url = new URL(`${apiRoot}/search/repositories`);
     url.searchParams.set("q", query);
     url.searchParams.set("per_page", String(perPage));
@@ -860,17 +863,18 @@ export class GithubSearchProvider implements SearchProvider {
     if (rows.length > perPage)
       throw new Error("GitHub search response exceeds result limit");
     const results: SearchResult[] = [];
-    for (const row of rows) {
+    for (const row of rows.slice(skip)) {
       const result = this.parseRepository(row);
       if (result) results.push(result);
     }
     const exhausted = page >= maxSearchPages;
+    const nextOffset = offset + Math.max(0, rows.length - skip);
     return {
       results,
       truncated: rows.length === perPage,
       nextCursor:
         rows.length === perPage && !exhausted
-          ? `${page + 1}:${perPage}`
+          ? `${nextOffset}:${perPage}`
           : undefined,
     };
   }

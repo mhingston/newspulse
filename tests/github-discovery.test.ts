@@ -86,25 +86,48 @@ describe("GitHub repository search provider", () => {
     const first = await provider.search({ query: "widgets", limit: 150 });
     expect(requests[0]!.url.searchParams.get("per_page")).toBe("100");
     expect(first.results).toHaveLength(100);
-    expect(first.nextCursor).toBe("2:100");
+    expect(first.nextCursor).toBe("100:100");
     const second = await provider.search({
       query: "widgets",
       limit: 150,
-      cursor: "2:100",
+      cursor: "100:100",
     });
     expect(second.results.map((result) => result.title)).toEqual([
       "acme/second — Description for acme/second",
     ]);
     expect(second.nextCursor).toBeUndefined();
     await expect(
-      provider.search({ query: "widgets", limit: 150, cursor: "11:100" }),
+      provider.search({ query: "widgets", limit: 150, cursor: "1001:100" }),
     ).rejects.toThrow("Invalid GitHub search cursor");
     await expect(
       provider.search({ query: "widgets", limit: 150, cursor: "page" }),
     ).rejects.toThrow("Invalid GitHub search cursor");
-    await expect(
-      provider.search({ query: "widgets", limit: 50, cursor: "2:100" }),
-    ).rejects.toThrow("GitHub search cursor page size changed");
+  });
+
+  test("a changed page size resumes at the same absolute offset", async () => {
+    const { provider, requests } = search((url) => {
+      const page = Number(url.searchParams.get("page") ?? "1");
+      if (page === 1)
+        return json(
+          Array.from({ length: 13 }, (_, index) => repo(`acme/r${index}`)),
+        );
+      return json(
+        Array.from({ length: 12 }, (_, index) => repo(`acme/s${index}`)),
+      );
+    });
+    const first = await provider.search({ query: "widgets", limit: 13 });
+    expect(first.results).toHaveLength(13);
+    expect(first.nextCursor).toBe("13:13");
+    const second = await provider.search({
+      query: "widgets",
+      limit: 12,
+      cursor: "13:13",
+    });
+    // Offset 13 with a 12-result page resumes on API page 2, skipping one.
+    expect(requests[1]!.url.searchParams.get("page")).toBe("2");
+    expect(requests[1]!.url.searchParams.get("per_page")).toBe("12");
+    expect(second.results).toHaveLength(11);
+    expect(second.results[0]!.title).toContain("acme/s1");
   });
 
   test("rejects invalid queries and limits before any request", async () => {
@@ -469,6 +492,44 @@ describe("scheduled GitHub repository discovery", () => {
       );
       expect(second.status).toBe("budget_exhausted");
       expect(second.pages).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a shrinking per-page reservation still paginates", async () => {
+    const store = new Store(":memory:");
+    try {
+      const fetcher: GithubFetcher = async (url) => {
+        const page = Number(url.searchParams.get("page") ?? "1");
+        const perPage = Number(url.searchParams.get("per_page"));
+        const start = (page - 1) * perPage;
+        return new Response(
+          JSON.stringify({
+            total_count: 25,
+            items: Array.from({ length: perPage }, (_, index) => ({
+              full_name: `acme/r${start + index}`,
+              html_url: `https://github.com/acme/r${start + index}`,
+              description: "A compiler toolkit",
+              stargazers_count: 99,
+              language: "Rust",
+              pushed_at: "2026-02-20T00:00:00Z",
+              created_at: "2026-02-10T00:00:00Z",
+            })),
+          }),
+        );
+      };
+      const outcome = await runDiscovery(
+        store,
+        provider(fetcher),
+        query,
+        { ...config.limits, maxQueriesPerRun: 2, maxResultsPerRun: 25 },
+        ticking(start),
+      );
+      // Reservations shrink from 13 to 12; the offset cursor still resumes.
+      expect(outcome.pages).toBe(2);
+      expect(outcome.results).toBe(24);
+      expect(outcome.status).toBe("budget_exhausted");
     } finally {
       store.close();
     }
