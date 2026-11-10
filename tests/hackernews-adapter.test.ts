@@ -477,6 +477,37 @@ describe("Hacker News discussion adapter", () => {
     }
   }, 10_000);
 
+  test("a body that stalls after the headers still honours the request timeout", async () => {
+    const realSetTimeout = globalThis.setTimeout;
+    globalThis.setTimeout = ((handler: () => void) =>
+      realSetTimeout(handler, 20)) as unknown as typeof setTimeout;
+    try {
+      const stalledStream = () => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("{"));
+            // Never closes: the body stalls after the headers arrive.
+          },
+        });
+        return new Response(body, {
+          headers: { "content-type": "application/json" },
+        });
+      };
+      const error = await poll(
+        recordingFetcher(({ url }) =>
+          url.pathname.endsWith("/item/100.json")
+            ? json(story({ kids: [101], descendants: 1 }))
+            : stalledStream(),
+        ).fetcher,
+        itemUrl,
+      ).catch((e: unknown) => e);
+      expect(error).toBeInstanceOf(HttpError);
+      expect((error as Error).message).toContain("request timed out");
+    } finally {
+      globalThis.setTimeout = realSetTimeout;
+    }
+  }, 10_000);
+
   test("a provider failure on the root still propagates as a failure", async () => {
     await expect(
       poll(

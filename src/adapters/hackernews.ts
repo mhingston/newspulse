@@ -210,21 +210,40 @@ async function readBoundedBody(
   response: Response,
   maxBytes: number,
   label: string,
+  signal?: AbortSignal,
 ): Promise<Uint8Array> {
   const reader = response.body?.getReader();
   if (!reader) throw new Error(`${label} has no body`);
   const chunks: Uint8Array[] = [];
   let size = 0;
+  const cancel = () => {
+    // A stalled source may never acknowledge cancellation; draining must not
+    // keep the poll alive past its own bounds.
+    reader.cancel().catch(() => {});
+  };
+  // Do not rely on the transport to propagate the abort into the body stream:
+  // race each read so a stalled body still honours the request/deadline bound.
+  const aborted = new Promise<never>((_resolve, reject) => {
+    if (signal?.aborted) return reject(new Error(`${label} aborted`));
+    signal?.addEventListener(
+      "abort",
+      () => reject(new Error(`${label} aborted`)),
+      { once: true },
+    );
+  });
   try {
     while (true) {
-      const { done, value } = await reader.read();
+      const { done, value } = await Promise.race([reader.read(), aborted]);
       if (done) break;
       size += value.byteLength;
-      if (size > maxBytes) throw new Error(`${label} exceeds byte budget`);
+      if (size > maxBytes) {
+        cancel();
+        throw new Error(`${label} exceeds byte budget`);
+      }
       chunks.push(value);
     }
   } finally {
-    await reader.cancel();
+    cancel();
   }
   const bytes = new Uint8Array(size);
   let offset = 0;
@@ -342,51 +361,58 @@ export class HackerNewsAdapter implements SourceAdapter {
       reason ??= perRequestMs < remaining ? "request" : "deadline";
       controller.abort();
     }, perRequestMs);
-    let response: Response;
+    // The timer must stay armed through body consumption so a stream that
+    // stalls after the headers cannot outlive either limit.
     try {
-      response = await this.fetcher(url, {
-        method: "GET",
-        headers: { accept: "application/json", "user-agent": userAgent },
-        redirect: "error",
-        signal: controller.signal,
-      });
-    } catch {
-      if (reason === "deadline") throw new BudgetExhausted("time");
-      if (reason === "request")
-        throw new HttpError("Hacker News API request timed out");
-      throw new HttpError("Hacker News API request failed or timed out");
+      let response: Response;
+      try {
+        response = await this.fetcher(url, {
+          method: "GET",
+          headers: { accept: "application/json", "user-agent": userAgent },
+          redirect: "error",
+          signal: controller.signal,
+        });
+      } catch {
+        if (reason === "deadline") throw new BudgetExhausted("time");
+        if (reason === "request")
+          throw new HttpError("Hacker News API request timed out");
+        throw new HttpError("Hacker News API request failed or timed out");
+      }
+      if (!response.ok) {
+        const status = response.status;
+        await response.body?.cancel();
+        if (status === 429 || status >= 500)
+          throw new HttpError(
+            `Hacker News API HTTP ${status}`,
+            retryDelay(response),
+          );
+        throw new HttpError(`Hacker News API HTTP ${status}`);
+      }
+      let bytes: Uint8Array;
+      try {
+        bytes = await readBoundedBody(
+          response,
+          Math.min(remainingBytes, maxItemBytes),
+          "Hacker News response",
+          controller.signal,
+        );
+      } catch (error) {
+        // A stalled body is classified like a stalled request.
+        if (controller.signal.aborted) {
+          if (reason === "deadline") throw new BudgetExhausted("time");
+          if (reason === "request")
+            throw new HttpError("Hacker News API request timed out");
+        }
+        // An oversized body is a local bound, not a provider failure.
+        if (error instanceof Error && /exceeds byte budget/.test(error.message))
+          throw new BudgetExhausted("byte");
+        throw error;
+      }
+      budget.bytes += bytes.byteLength;
+      return parseBoundedJson(bytes, "Hacker News");
     } finally {
       clearTimeout(timer);
     }
-    if (!response.ok) {
-      const status = response.status;
-      await response.body?.cancel();
-      if (status === 429 || status >= 500)
-        throw new HttpError(
-          `Hacker News API HTTP ${status}`,
-          retryDelay(response),
-        );
-      throw new HttpError(`Hacker News API HTTP ${status}`);
-    }
-    let bytes: Uint8Array;
-    try {
-      bytes = await readBoundedBody(
-        response,
-        Math.min(remainingBytes, maxItemBytes),
-        "Hacker News response",
-      );
-    } catch (error) {
-      // An oversized or slow body is a local bound, not a provider failure;
-      // callers keep what they already collected.
-      if (
-        !(error instanceof Error) ||
-        !/exceeds byte budget/.test(error.message)
-      )
-        throw error;
-      throw new BudgetExhausted("byte");
-    }
-    budget.bytes += bytes.byteLength;
-    return parseBoundedJson(bytes, "Hacker News");
   }
   private async fetchItem(
     id: number,
