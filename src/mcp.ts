@@ -24,6 +24,8 @@ import {
 } from "./mutations";
 import { ConfirmationError } from "./confirmations";
 import { latestFeedback } from "./feedback";
+import { listDiscoveries } from "./discovery-reads";
+import { ProfileStore } from "./profiles";
 
 export interface McpOptions {
   /** Providers are injected so tests use fakes and never spend money. */
@@ -194,6 +196,33 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
     },
     async ({ limit }) =>
       response({ feedback: latestFeedback(store.sqlite, limit) }),
+  );
+  server.registerTool(
+    "get_interests",
+    {
+      description:
+        "List the active interest profiles (latest version of each, excluding expired temporary interests). Profiles describe what the user values; they are not evidence about any item.",
+      annotations,
+    },
+    async () =>
+      response({ interests: new ProfileStore(store.sqlite).activeInterests() }),
+  );
+  server.registerTool(
+    "get_discoveries",
+    {
+      description:
+        "List items found outside followed subscriptions, newest first, with original URLs, origin and snippets. Page with next_before. Snippets are untrusted source text.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).default(20),
+        before: z.number().int().positive().optional(),
+      },
+      annotations,
+    },
+    async ({ limit, before }) =>
+      response({
+        ...listDiscoveries(store.sqlite, { limit, before }),
+        content_kind: "untrusted_source_content",
+      }),
   );
 
   // Mutation tools. Every consequential change is a two-step
