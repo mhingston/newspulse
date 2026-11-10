@@ -1,8 +1,8 @@
 {
   "version": "6",
   "dialect": "sqlite",
-  "id": "89aef662-c75d-4f56-8cbc-fbc2859e41a7",
-  "prevId": "d7a9f012-7050-43e8-bc67-52983def1167",
+  "id": "55fed419-b62c-48ca-a577-66bf63bc4433",
+  "prevId": "1cf8484d-1bae-4f60-b321-b0355660221c",
   "tables": {
     "analyses": {
       "name": "analyses",
@@ -648,6 +648,15 @@
             "digest_id"
           ],
           "isUnique": false
+        },
+        "digest_item_by_group": {
+          "name": "digest_item_by_group",
+          "columns": [
+            "group_id",
+            "digest_id",
+            "position"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {
@@ -1014,7 +1023,8 @@
           "type": "text",
           "primaryKey": false,
           "notNull": true,
-          "autoincrement": false
+          "autoincrement": false,
+          "default": "'[]'"
         },
         "enabled": {
           "name": "enabled",
@@ -1318,7 +1328,23 @@
           "default": "'[]'"
         }
       },
-      "indexes": {},
+      "indexes": {
+        "discovery_runs_schedule_started": {
+          "name": "discovery_runs_schedule_started",
+          "columns": [
+            "schedule_key",
+            "started_at"
+          ],
+          "isUnique": false
+        },
+        "discovery_runs_started": {
+          "name": "discovery_runs_started",
+          "columns": [
+            "started_at"
+          ],
+          "isUnique": false
+        }
+      },
       "foreignKeys": {},
       "compositePrimaryKeys": {},
       "uniqueConstraints": {},
@@ -2862,6 +2888,13 @@
           "isUnique": true,
           "where": "ended_at IS NULL"
         },
+        "story_members_by_item": {
+          "name": "story_members_by_item",
+          "columns": [
+            "item_id"
+          ],
+          "isUnique": false
+        },
         "story_members_group": {
           "name": "story_members_group",
           "columns": [
@@ -2972,6 +3005,15 @@
           ],
           "isUnique": true,
           "where": "ended_at IS NULL"
+        },
+        "story_relation_by_newer": {
+          "name": "story_relation_by_newer",
+          "columns": [
+            "newer_group_id",
+            "ended_at",
+            "id"
+          ],
+          "isUnique": false
         }
       },
       "foreignKeys": {

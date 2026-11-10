@@ -671,7 +671,7 @@ describe("discovery planning", () => {
     }
   });
 
-  test("populated scheduled-query state migrates with lineage defaults", () => {
+  test("populated #52 discovery history migrates with scheduled-query defaults", () => {
     const dir = mkdtempSync(join(tmpdir(), "newspulse-discovery-migration-"));
     const prior = join(dir, "prior-migrations");
     const path = join(dir, "prior.sqlite");
@@ -688,15 +688,19 @@ describe("discovery planning", () => {
     const db = new Database(path);
     migrate(drizzle(db), { migrationsFolder: prior });
     db.exec(`
-      INSERT INTO discovery_query_state(query_key,query,kind,interest_id,interest_version,priority,negative_terms,enabled,next_due_at,last_run_at,last_run_id)
-      VALUES('robotics research','robotics research','interest','robotics',1,300,'[]',1,1000,500,'manual-run');
       INSERT INTO discovery_runs(id,query,provider,provider_version,subscription_snapshot,status,started_at)
       VALUES('manual-run','robotics research','fixture','1','{}','completed',500);
+      INSERT INTO discovery_pages(id,run_id,budget_day,reserved_results,reserved_cost_micros,status,started_at,finished_at)
+      VALUES('manual-page','manual-run',0,5,10,'complete',500,600);
     `);
     db.close();
     let upgraded: Store | undefined;
     try {
       upgraded = new Store(path);
+      upgraded.sqlite.exec(`
+        INSERT INTO discovery_query_state(query_key,query,kind,interest_id,interest_version,priority,negative_terms,enabled,next_due_at,last_run_at,last_run_id)
+        VALUES('robotics research','robotics research','interest','robotics',1,300,'[]',1,1000,500,'manual-run');
+      `);
       expect(
         upgraded.sqlite
           .query<{ interest_lineage: string }, []>(
@@ -711,6 +715,13 @@ describe("discovery planning", () => {
           )
           .get(),
       ).toEqual({ query_kind: "manual", interest_lineage: "[]" });
+      expect(
+        upgraded.sqlite
+          .query<{ id: string; reserved_results: number }, []>(
+            "SELECT id,reserved_results FROM discovery_pages WHERE id='manual-page'",
+          )
+          .get(),
+      ).toEqual({ id: "manual-page", reserved_results: 5 });
     } finally {
       upgraded?.close();
       rmSync(dir, { recursive: true, force: true });
