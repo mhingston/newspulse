@@ -60,6 +60,7 @@ export function schedule(
   processing?: ProcessingWorker,
   inbound?: { retrieve(): Promise<void>; reconcile(): Promise<void> },
   publication?: { tick(): Promise<void> },
+  discovery?: { tick(): Promise<void> },
 ): { stop(): Promise<void> } {
   let active: Promise<unknown> | undefined;
   let stopping = false;
@@ -87,6 +88,13 @@ export function schedule(
         .catch(() => log("publication_worker_error"))
         .finally(() => stageActive.delete("publication"));
       stageActive.set("publication", task);
+    }
+    if (discovery && !stageActive.has("discovery")) {
+      const task = discovery
+        .tick()
+        .catch((e) => log("discovery_scheduler_error", { error: String(e) }))
+        .finally(() => stageActive.delete("discovery"));
+      stageActive.set("discovery", task);
     }
     if (processing)
       for (const stage of ["extract", "analyse", "group", "score"] as const) {

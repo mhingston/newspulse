@@ -546,3 +546,28 @@ export const discoveryResults = sqliteTable(
     index("discovery_results_page").on(t.pageId),
   ],
 );
+
+/** Durable schedule and explicit utility signals for profile-driven discovery. */
+export const discoveryQueryState = sqliteTable("discovery_query_state", {
+  queryKey: text("query_key").primaryKey(),
+  query: text().notNull(),
+  kind: text().notNull(),
+  interestId: text("interest_id"),
+  interestVersion: integer("interest_version"),
+  priority: integer().notNull(),
+  negativeTerms: text("negative_terms").notNull(),
+  enabled: integer().notNull().default(1),
+  nextDueAt: integer("next_due_at").notNull(),
+  lastRunAt: integer("last_run_at"),
+  lastRunId: text("last_run_id"),
+});
+export const discoveryQueryFeedback = sqliteTable(
+  "discovery_query_feedback",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    queryKey: text("query_key").notNull(),
+    useful: integer().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("discovery_query_feedback_key").on(t.queryKey, t.createdAt)],
+);

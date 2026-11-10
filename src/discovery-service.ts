@@ -18,6 +18,11 @@ export interface DiscoveryOutcome {
   pages: number;
   results: number;
 }
+export interface DiscoveryRunOptions {
+  runId?: string;
+  beforeDispatch?: (runId: string) => void;
+  allowResult?: (result: SearchResult) => boolean;
+}
 
 /** Execute a bounded, explicit query. Each dispatch is charged before network work. */
 export async function runDiscovery(
@@ -26,6 +31,7 @@ export async function runDiscovery(
   query: string,
   limits: DiscoveryLimits,
   clock: () => number = Date.now,
+  options: DiscoveryRunOptions = {},
 ): Promise<DiscoveryOutcome> {
   query = query.trim();
   if (!query || query.length > 500 || /[\u0000-\u001f\u007f]/.test(query))
@@ -43,7 +49,7 @@ export async function runDiscovery(
   if (limits.maxQueriesPerRun > 100 || limits.maxResultsPerRun > 10000)
     throw new Error("Discovery run limit exceeds hard ceiling");
   const repository = new DiscoveryStore(store.sqlite);
-  const runId = crypto.randomUUID();
+  const runId = options.runId ?? crypto.randomUUID();
   repository.createRun({
     id: runId,
     query,
@@ -51,6 +57,7 @@ export async function runDiscovery(
     providerVersion: provider.version,
     now: clock(),
   });
+  let notifiedDispatch = false;
   let cursor: string | undefined;
   const cursors = new Set<string>();
   let pages = 0;
@@ -90,6 +97,10 @@ export async function runDiscovery(
       status = "budget_exhausted";
       break;
     }
+    if (!notifiedDispatch) {
+      options.beforeDispatch?.(runId);
+      notifiedDispatch = true;
+    }
     reserved += reservation;
     pages++;
     let page;
@@ -107,7 +118,9 @@ export async function runDiscovery(
             cursors.has(page.nextCursor)))
       )
         throw new Error("Invalid search page");
-      const validated = page.results.map(validateResult);
+      const validated = page.results
+        .map(validateResult)
+        .filter((item) => options.allowResult?.(item) ?? true);
       const finished = clock();
       if (
         !repository.completePage(

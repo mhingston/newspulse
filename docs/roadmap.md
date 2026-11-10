@@ -1,6 +1,6 @@
 # Implementation roadmap and handoff coverage
 
-**Implementation snapshot (2026-11-09):** #5–#12 provide analysis, grouping, scoring, offline replay, digest curation, inbound newsletters and optional daily delivery. #42 connects scoring to confirmed delivery history using immutable snapshots. Unfrozen historical catch-up remains assigned to #48; actionable feedback links remain assigned to #18. GitHub issues and merged code remain authoritative for execution state.
+**Implementation snapshot (2026-11-10):** #5–#13 provide analysis, grouping, scoring, offline replay, digest curation, inbound newsletters, optional daily delivery and explicit budgeted GDELT discovery. #42 connects scoring to confirmed delivery history using immutable snapshots. Issue #14 adds opt-in profile-driven query scheduling, adjacent exploration and explicit query usefulness feedback. Unfrozen historical catch-up remains assigned to #48; actionable edition feedback links remain assigned to #18. GitHub issues and merged code remain authoritative for execution state.
 
 [Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) is the entry point for the complete backlog. It links **23 required core issues and 9 conditional refinement issues**. The original request is preserved in [handoff.md](handoff.md), durable constraints in [decisions.md](decisions.md), and contributor instructions in [AGENTS.md](../AGENTS.md).
 
@@ -134,4 +134,4 @@ The #10 and #11 inbound slices persist and reconcile received messages, index ne
 
 The user-authorized #12 scope split preserves unfrozen historical catch-up as required follow-up [#48](https://github.com/mhingston/newspulse/issues/48) and the complete-edition feedback-link test in [#18](https://github.com/mhingston/newspulse/issues/18). Same-day recovery, already-frozen missed editions and mixed RSS/inbound citations remain in #12.
 
-#13 adds an explicit, budgeted GDELT news-index query and durable discovery provenance. Automatic interest-query scheduling and refinement remain in #14; read-only discovery MCP completion remains in #19. The adapter does not establish general-web coverage or measure discovery quality.
+#13 adds an explicit, budgeted GDELT news-index query and durable discovery provenance. Issue #14 adds opt-in active-interest scheduling and explicit query feedback; read-only discovery MCP completion remains in #19. The adapter does not establish general-web coverage or measure discovery quality.

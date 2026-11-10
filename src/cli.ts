@@ -28,6 +28,8 @@ import { previewDigest, freezeDigest, digestDefaults } from "./digest-service";
 import { acquireAnalysisLock } from "./analysis-lock";
 import { AnalysisBudget } from "./analysis-budget";
 import { ProfileStore } from "./profiles";
+import { planDiscoveryQueries } from "./discovery-planner";
+import { DiscoveryPlannerStore } from "./db/discovery-planner-store";
 import { Store } from "./db/store";
 import { parseOpml, exportOpml } from "./adapters/opml";
 import { RssAdapter } from "./adapters/rss";
@@ -205,6 +207,42 @@ async function main() {
           ),
         );
         break;
+      case "discovery-plan":
+        console.log(
+          JSON.stringify(
+            planDiscoveryQueries(
+              new ProfileStore(store.sqlite).activeInterests(
+                Number(required(0, "as-of epoch milliseconds")),
+              ),
+            ),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "discovery-schedule":
+        console.log(
+          JSON.stringify(
+            new DiscoveryPlannerStore(store.sqlite).history(),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "discovery-feedback": {
+        const useful = required(1, "useful or not-useful feedback");
+        if (useful !== "useful" && useful !== "not-useful")
+          throw new Error("Feedback must be useful or not-useful");
+        const count = new DiscoveryPlannerStore(store.sqlite).feedbackForQuery(
+          required(0, "scheduled query"),
+          useful === "useful",
+          Date.now(),
+        );
+        console.log(
+          `Recorded explicit feedback for ${count} scheduled query${count === 1 ? "" : "ies"}`,
+        );
+        break;
+      }
       case "discovery-runs":
         console.log(
           JSON.stringify(
@@ -464,7 +502,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
