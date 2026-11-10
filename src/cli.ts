@@ -6,6 +6,7 @@ import { planGithubQueries } from "./github-discovery";
 import { HackerNewsSearchProvider } from "./adapters/hackernews";
 import { HackerNewsAdapter } from "./adapters/hackernews";
 import { planHnQueries } from "./hn-discovery";
+import { submissionFor, submitUrl } from "./manual";
 import {
   markRestoredDiscovery,
   assertDiscoveryRestoreElapsed,
@@ -349,6 +350,36 @@ async function main() {
         );
         break;
       }
+      case "ingest-url": {
+        const url = required(0, "URL");
+        const originArg = args[1] ?? "manual";
+        if (!["manual", "bookmark", "email", "search"].includes(originArg))
+          throw new Error("Origin must be manual, bookmark, email or search");
+        let submissionId = args[2];
+        if (!submissionId) {
+          const { createHash } = await import("node:crypto");
+          submissionId = `cli-${createHash("sha256").update(url).digest("hex").slice(0, 32)}`;
+        }
+        console.log(
+          JSON.stringify(
+            submitUrl(store, {
+              submissionId,
+              url,
+              origin: originArg as "manual" | "bookmark" | "email" | "search",
+            }),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "submission": {
+        const submission = submissionFor(store, required(0, "item ID"));
+        if (!submission)
+          throw new Error("No submission recorded for that item");
+        console.log(JSON.stringify(submission, null, 2));
+        break;
+      }
       case "discovery-runs":
         console.log(
           JSON.stringify(
@@ -626,7 +657,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

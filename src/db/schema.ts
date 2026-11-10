@@ -645,3 +645,28 @@ export const discoveryQueryFeedback = sqliteTable(
   },
   (t) => [index("discovery_query_feedback_key").on(t.queryKey, t.createdAt)],
 );
+/**
+ * Idempotent manual/bookmark/email submissions. The submission ID is the
+ * caller's idempotency key; the item ID is the canonical item it resolved to.
+ * Metadata keeps Reddit provenance and retrieval limitations without
+ * pretending unavailable content was fetched.
+ */
+export const manualSubmissions = sqliteTable(
+  "manual_submissions",
+  {
+    id: text().primaryKey(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    url: text().notNull(),
+    origin: text().notNull(),
+    title: text().notNull(),
+    snippet: text().notNull().default(""),
+    metadata: text().notNull().default("{}"),
+    submittedAt: integer("submitted_at").notNull(),
+  },
+  (t) => [
+    index("manual_submissions_item").on(t.itemId),
+    index("manual_submissions_url").on(t.url),
+  ],
+);

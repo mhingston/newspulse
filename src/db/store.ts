@@ -15,10 +15,12 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  canonicalItemUrl,
   canonicalUrl,
   identity,
   isGithubSourceUrl,
   isHackerNewsSourceUrl,
+  parseRedditDiscussion,
   type Candidate,
   type PollResult,
 } from "../domain";
@@ -181,6 +183,16 @@ export class Store {
       now,
     );
   }
+  /**
+   * Called inside the manual submission transaction. Uses the normal identity
+   * path so an already-followed article gains a manual reference instead of a
+   * duplicate item.
+   */
+  ingestManual(candidate: Candidate, sourceId: string, now: number): string {
+    if (!/^manual:[a-z]{3,20}$/.test(sourceId))
+      throw new Error("Invalid manual source");
+    return this.insert(candidate, sourceId, now);
+  }
   addSource(url: string, title = url, pollSeconds = 1800): Source {
     if (
       !Number.isSafeInteger(pollSeconds) ||
@@ -219,7 +231,8 @@ export class Store {
   sources(): Source[] {
     return this.sqlite
       .query<Source, []>(
-        "SELECT * FROM sources WHERE removed=0 ORDER BY title,id",
+        // Manual intake bookkeeping is not a polled subscription.
+        "SELECT * FROM sources WHERE removed=0 AND kind<>'manual' ORDER BY title,id",
       )
       .all();
   }
@@ -1063,6 +1076,11 @@ export class Store {
     this.sqlite
       .query("UPDATE discovery_results SET item_id=? WHERE item_id=?")
       .run(winner, loser);
+    // Submission provenance is durable history; repoint it before the loser
+    // is deleted so the foreign key never dangles.
+    this.sqlite
+      .query("UPDATE manual_submissions SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
     this.sqlite
       .query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?")
       .run(winner, loser);
@@ -1110,6 +1128,30 @@ export class Store {
     this.sqlite.query("DELETE FROM items WHERE id=?").run(loser);
   }
 
+  /**
+   * Before Reddit identity was keyed by post ID, an item's identity was the
+   * full canonical URL of whichever host/slug first saw it. Find such a
+   * historical item so a new canonical submission merges into it instead of
+   * creating a duplicate. The post ID is a bounded alphanumeric token, so the
+   * LIKE narrows the scan and each candidate is re-parsed before merging.
+   */
+  private legacyRedditOwners(url: string): string[] {
+    const reddit = parseRedditDiscussion(url);
+    if (!reddit) return [];
+    const rows = this.sqlite
+      .query<{ id: string; identity: string }, [string]>(
+        "SELECT id,identity FROM items WHERE identity LIKE ?",
+      )
+      .all(`url:%${reddit.postId}%`);
+    const owners: string[] = [];
+    for (const row of rows) {
+      if (!row.identity.startsWith("url:")) continue;
+      const legacy = parseRedditDiscussion(row.identity.slice(4));
+      if (legacy?.postId === reddit.postId) owners.push(row.id);
+    }
+    return owners;
+  }
+
   private canonicalOwner(url: string, priorId?: string): string | undefined {
     const alias = this.sqlite
       .query<{ item_id: string }, [string]>(
@@ -1119,10 +1161,15 @@ export class Store {
     const legacy = this.sqlite
       .query<{ id: string }, [string]>("SELECT id FROM items WHERE identity=?")
       .get(`url:${url}`)?.id;
-    const owner = alias ?? legacy ?? priorId;
+    const legacyReddit = this.legacyRedditOwners(url);
+    const owner = alias ?? legacy ?? legacyReddit[0] ?? priorId;
     if (!owner) return undefined;
-    if (legacy && legacy !== owner) this.mergeItems(owner, legacy);
-    if (priorId && priorId !== owner) this.mergeItems(owner, priorId);
+    const losers = new Set<string>();
+    if (legacy) losers.add(legacy);
+    for (const duplicate of legacyReddit) losers.add(duplicate);
+    if (priorId) losers.add(priorId);
+    losers.delete(owner);
+    for (const loser of losers) this.mergeItems(owner, loser);
     this.sqlite
       .query(
         "INSERT INTO item_url_aliases(canonical_url,item_id) VALUES(?,?) ON CONFLICT(canonical_url) DO UPDATE SET item_id=excluded.item_id",
@@ -1148,7 +1195,7 @@ export class Store {
         "SELECT item_id,url FROM item_sources WHERE source_id=? AND native_id=?",
       )
       .get(sourceId, candidate.nativeId);
-    const url = candidate.url ? canonicalUrl(candidate.url) : null;
+    const url = candidate.url ? canonicalItemUrl(candidate.url) : null;
     const owner = url
       ? this.canonicalOwner(url, previousRef?.item_id)
       : previousRef?.item_id;
@@ -1215,7 +1262,7 @@ export class Store {
         if (candidate.url)
           this.sqlite
             .query("UPDATE items SET url=coalesce(url,?) WHERE id=?")
-            .run(canonicalUrl(candidate.url), prior.item_id);
+            .run(canonicalItemUrl(candidate.url), prior.item_id);
         this.enqueueProcessing(
           "extract",
           prior.item_id,
@@ -1687,6 +1734,13 @@ export class Store {
           .query("SELECT evidence_from FROM digest_history_state WHERE id=1")
           .get() ?? null,
       items: this.sqlite.query("SELECT count(*) AS count FROM items").get(),
+      // Manual submissions stay separate from subscription and discovery
+      // counts so discovery yield is not inflated by operator intake.
+      manual_submissions: this.sqlite
+        .query(
+          "SELECT origin,count(*) AS count FROM manual_submissions GROUP BY origin ORDER BY origin",
+        )
+        .all(),
       milestone: "M2-in-progress",
       grouping: this.stories.status(),
       ai: "optional",

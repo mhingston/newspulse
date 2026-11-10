@@ -81,10 +81,11 @@ export async function smoke() {
             "get_sources",
             "get_status",
             "get_story_group",
+            "get_submission",
             "search_items",
           ].sort(),
         ),
-      "Expected all six read-only MCP tools",
+      "Expected all read-only MCP tools",
     );
     const result = await client.callTool({
       name: "search_items",
