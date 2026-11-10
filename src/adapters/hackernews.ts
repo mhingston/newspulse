@@ -380,7 +380,9 @@ export class HackerNewsAdapter implements SourceAdapter {
       }
       if (!response.ok) {
         const status = response.status;
-        await response.body?.cancel();
+        // Cancellation is best-effort: a stalled error body must not outlive
+        // the request bound.
+        response.body?.cancel().catch(() => {});
         if (status === 429 || status >= 500)
           throw new HttpError(
             `Hacker News API HTTP ${status}`,
@@ -695,7 +697,7 @@ export class HackerNewsSearchProvider implements SearchProvider {
     }
     if (!response.ok) {
       const status = response.status;
-      await response.body?.cancel();
+      response.body?.cancel().catch(() => {});
       if (status === 429 || status >= 500)
         throw new Error(`Hacker News search HTTP ${status}`);
       throw new Error(`Hacker News search HTTP ${status}`);

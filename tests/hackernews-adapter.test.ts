@@ -508,6 +508,35 @@ describe("Hacker News discussion adapter", () => {
     }
   }, 10_000);
 
+  test("a stalled error-body cancellation cannot block the failure path", async () => {
+    const stalled = () =>
+      new Response(
+        new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode("error"));
+          },
+          cancel() {
+            // Never resolves: cancellation itself stalls.
+            return new Promise<void>(() => {});
+          },
+        }),
+        { status: 503 },
+      );
+    const error = await Promise.race([
+      poll(recordingFetcher(() => stalled()).fetcher, itemUrl).catch(
+        (e: unknown) => e,
+      ),
+      new Promise<never>((_resolve, reject) =>
+        globalThis.setTimeout(
+          () => reject(new Error("error path hung on body cancellation")),
+          2000,
+        ),
+      ),
+    ]);
+    expect(error).toBeInstanceOf(HttpError);
+    expect((error as Error).message).toContain("HTTP 503");
+  }, 10_000);
+
   test("a provider failure on the root still propagates as a failure", async () => {
     await expect(
       poll(
