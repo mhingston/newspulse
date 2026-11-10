@@ -39,6 +39,12 @@ function json(value: unknown, max: number): string {
 export class DiscoveryStore {
   constructor(private readonly db: Database) {}
 
+  /** GDELT tolerates short gaps; GitHub's search quota needs a minute pacing. */
+  private pacingGapMs(provider: string): number | null {
+    if (provider === "github") return 6_010;
+    if (provider === "gdelt") return 5_000;
+    return null;
+  }
   createRun(input: {
     id: string;
     query: string;
@@ -76,7 +82,7 @@ export class DiscoveryStore {
       .transaction(() => {
         const sources = this.db
           .query<{ id: string }, []>(
-            "SELECT id FROM sources WHERE kind='rss' AND enabled=1 AND removed=0 ORDER BY id LIMIT 10001",
+            "SELECT id FROM sources WHERE kind IN ('rss','github') AND enabled=1 AND removed=0 ORDER BY id LIMIT 10001",
           )
           .all();
         if (sources.length > 10000)
@@ -139,13 +145,14 @@ export class DiscoveryStore {
         // Hold the provider slot through completion; a pre-dispatch timestamp alone
         // cannot pace a process that is paused before making its request. Unknown
         // outcomes retain the slot until an operator investigates with workers stopped.
+        const pacingGap = this.pacingGapMs(run.provider);
         if (
-          run.provider === "gdelt" &&
+          pacingGap !== null &&
           this.db
-            .query<{ found: number }, [number]>(
-              "SELECT EXISTS(SELECT 1 FROM discovery_pages p JOIN discovery_runs r ON r.id=p.run_id WHERE r.provider='gdelt' AND (p.status='reserved' OR p.finished_at>?)) AS found",
+            .query<{ found: number }, [string, number]>(
+              "SELECT EXISTS(SELECT 1 FROM discovery_pages p JOIN discovery_runs r ON r.id=p.run_id WHERE r.provider=? AND (p.status='reserved' OR p.finished_at>?)) AS found",
             )
-            .get(input.now - 5000)!.found
+            .get(run.provider, input.now - pacingGap)!.found
         )
           return 0;
         const day = Math.floor(input.now / 86400000);

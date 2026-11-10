@@ -151,6 +151,7 @@ export async function runDiscovery(
                   publishedAt: result.publishedAt,
                 },
                 finished,
+                provider.name,
               );
             }),
         )

@@ -8,6 +8,12 @@ const schema = z
     ALLOWED_HOSTS: z.string().default("localhost,127.0.0.1"),
     TRUSTED_PRIVATE_FEEDS: z.string().default(""),
     ALLOWED_ORIGINS: z.string().default(""),
+    GITHUB_TOKEN: z
+      .string()
+      .trim()
+      .min(1)
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
     RESEND_API_KEY: z
       .string()
       .trim()

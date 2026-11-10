@@ -17,6 +17,7 @@ import { fileURLToPath } from "node:url";
 import {
   canonicalUrl,
   identity,
+  isGithubSourceUrl,
   type Candidate,
   type PollResult,
 } from "../domain";
@@ -139,13 +140,20 @@ export class Store {
     this.sqlite.close();
   }
   /** Called inside the discovery page transaction; uses the normal identity path. */
-  ingestDiscovery(candidate: Candidate, now: number): string {
-    const sourceId = "discovery:gdelt";
+  ingestDiscovery(
+    candidate: Candidate,
+    now: number,
+    provider = "gdelt",
+  ): string {
+    if (!/^[a-z][a-z0-9-]{0,19}$/.test(provider))
+      throw new Error("Invalid discovery provider");
+    const sourceId = `discovery:${provider}`;
+    const label = provider === "gdelt" ? "GDELT discovery" : "GitHub discovery";
     this.sqlite
       .query(
-        "INSERT OR IGNORE INTO sources(id,kind,url,title,enabled) VALUES(?, 'discovery', ?, 'GDELT discovery', 0)",
+        "INSERT OR IGNORE INTO sources(id,kind,url,title,enabled) VALUES(?, 'discovery', ?, ?, 0)",
       )
-      .run(sourceId, sourceId);
+      .run(sourceId, sourceId, label);
     // Search metadata is not a publisher correction. Keep later observations
     // in the discovery ledger without replacing the item's current title.
     const previous = this.sqlite
@@ -177,14 +185,27 @@ export class Store {
     if (!title.trim() || title.length > 1000)
       throw new Error("Invalid source title");
     url = canonicalUrl(url);
+    const kind = this.sourceKind(url);
     this.sqlite
       .query(
-        "INSERT INTO sources(id,url,title,poll_seconds) VALUES(?,?,?,?) ON CONFLICT(url) DO UPDATE SET enabled=CASE WHEN removed=1 THEN 1 ELSE enabled END,removed=0",
+        "INSERT INTO sources(id,url,title,poll_seconds,kind) VALUES(?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET enabled=CASE WHEN removed=1 THEN 1 ELSE enabled END,removed=0",
       )
-      .run(crypto.randomUUID(), url, title, pollSeconds);
+      .run(crypto.randomUUID(), url, title, pollSeconds, kind);
     return this.sqlite
       .query<Source, [string]>("SELECT * FROM sources WHERE url=?")
       .get(url)!;
+  }
+  private sourceKind(url: string): string {
+    if (isGithubSourceUrl(url)) return "github";
+    const parsed = new URL(url);
+    if (parsed.hostname.toLowerCase() === "github.com") {
+      const path = parsed.pathname.toLowerCase();
+      if (!/\.(atom|xml|rss)$/.test(path))
+        throw new Error(
+          "GitHub sources must point at /releases or /events, or an Atom/RSS file path such as /releases.atom",
+        );
+    }
+    return "rss";
   }
   sources(): Source[] {
     return this.sqlite
@@ -207,8 +228,8 @@ export class Store {
       .transaction(() => {
         const source = this.source(id);
         if (!source || source.removed) throw new Error("Source not found");
-        if (source.kind !== "rss")
-          throw new Error("Only RSS sources can be managed here");
+        if (source.kind !== "rss" && source.kind !== "github")
+          throw new Error("Only RSS or GitHub sources can be managed here");
         const title = changes.title ?? source.title;
         if (!title.trim() || title.length > 1000)
           throw new Error("Invalid source title");
@@ -267,7 +288,7 @@ export class Store {
           this.cancelSourceJobs(id);
           this.sqlite
             .query(
-              "UPDATE source_state SET etag=NULL,last_modified=NULL WHERE source_id=?",
+              "UPDATE source_state SET etag=NULL,last_modified=NULL,cursor=NULL WHERE source_id=?",
             )
             .run(id);
           this.sqlite
@@ -291,7 +312,7 @@ export class Store {
         if (
           !this.sqlite
             .query(
-              "UPDATE sources SET removed=1,enabled=0 WHERE id=? AND removed=0 AND kind='rss'",
+              "UPDATE sources SET removed=1,enabled=0 WHERE id=? AND removed=0 AND kind IN ('rss','github')",
             )
             .run(id).changes
         )
@@ -327,7 +348,10 @@ export class Store {
       .transaction(() => {
         let count = 0;
         for (const s of this.sources().filter(
-          (s) => s.kind === "rss" && s.enabled && (force || s.next_poll <= now),
+          (s) =>
+            (s.kind === "rss" || s.kind === "github") &&
+            s.enabled &&
+            (force || s.next_poll <= now),
         )) {
           count += this.sqlite
             .query(
@@ -350,7 +374,7 @@ export class Store {
         return this.sqlite
           .query<Job, [string, number, number]>(
             `UPDATE jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=?
-        WHERE id=(SELECT j.id FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind='rss' AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 1)
+        WHERE id=(SELECT j.id FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind IN ('rss','github') AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 1)
         RETURNING id,source_id,attempts,lease_token`,
           )
           .get(crypto.randomUUID(), now + 60_000, now);

@@ -16,7 +16,7 @@ export interface ScheduledDiscoveryConfig {
 
 const scheduleSyncTimes = new WeakMap<Store, number>();
 const scheduleSyncIntervalMs = 60_000;
-const restorePauseMessage =
+export const restorePauseMessage =
   "Discovery is blocked until the next UTC day after restore";
 
 /** Defer restore gating until the optional discovery stage is actually invoked. */
