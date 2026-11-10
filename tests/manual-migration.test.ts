@@ -80,3 +80,116 @@ test("a populated pre-#17 database migrates and keeps identity and search", () =
     store?.close();
   }
 });
+
+test("a historical Reddit item is reconciled by post ID instead of duplicated", () => {
+  const store = new Store(":memory:");
+  try {
+    // Simulate a pre-#17 item whose identity was the full old.reddit URL.
+    store.sqlite
+      .query(
+        "INSERT INTO items(id,identity,url,title,ingested_at) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        "legacy",
+        "url:https://old.reddit.com/r/rust/comments/abc123/title/",
+        "https://old.reddit.com/r/rust/comments/abc123/title/",
+        "Legacy discussion",
+        100,
+      );
+    store.sqlite
+      .query("INSERT INTO content(item_id,text) VALUES(?,?)")
+      .run("legacy", "legacy body");
+    const submitted = submitUrl(store, {
+      submissionId: "s1",
+      url: "https://redd.it/abc123",
+      origin: "manual",
+      now: 200,
+    });
+    expect(submitted.itemId).toBe("legacy");
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>("SELECT count(*) AS n FROM items")
+        .get(),
+    ).toEqual({ n: 1 });
+    // The historical body is preserved, not replaced by the empty submission.
+    expect(store.getItem("legacy")!.text).toBe("legacy body");
+    // The canonical alias is recorded so later lookups resolve directly.
+    expect(
+      store.sqlite
+        .query<{ item_id: string }, [string]>(
+          "SELECT item_id FROM item_url_aliases WHERE canonical_url=?",
+        )
+        .get("https://www.reddit.com/comments/abc123"),
+    ).toEqual({ item_id: "legacy" });
+  } finally {
+    store.close();
+  }
+});
+
+test("merging a duplicate repoints manual submission provenance", () => {
+  const store = new Store(":memory:");
+  try {
+    const first = submitUrl(store, {
+      submissionId: "s1",
+      url: "https://www.reddit.com/r/rust/comments/abc123/title/",
+      origin: "manual",
+      now: 100,
+    });
+    // A historical duplicate with its own submission row.
+    store.sqlite
+      .query(
+        "INSERT INTO items(id,identity,url,title,ingested_at) VALUES(?,?,?,?,?)",
+      )
+      .run(
+        "legacy",
+        "url:https://old.reddit.com/r/rust/comments/abc123/title/",
+        "https://old.reddit.com/r/rust/comments/abc123/title/",
+        "Legacy discussion",
+        50,
+      );
+    store.sqlite
+      .query(
+        "INSERT INTO manual_submissions(id,item_id,url,origin,title,snippet,metadata,submitted_at) VALUES(?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        "legacy-sub",
+        "legacy",
+        "https://old.reddit.com/r/rust/comments/abc123/title/",
+        "bookmark",
+        "Legacy discussion",
+        "",
+        "{}",
+        50,
+      );
+    const second = submitUrl(store, {
+      submissionId: "s2",
+      url: "https://redd.it/abc123",
+      origin: "bookmark",
+      now: 200,
+    });
+    expect(second.itemId).toBe(first.itemId);
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>("SELECT count(*) AS n FROM items")
+        .get(),
+    ).toEqual({ n: 1 });
+    // The loser's provenance now points at the surviving item.
+    expect(
+      store.sqlite
+        .query<{ item_id: string }, []>(
+          "SELECT item_id FROM manual_submissions WHERE id='legacy-sub'",
+        )
+        .get(),
+    ).toEqual({ item_id: first.itemId });
+    // No submission references a deleted item.
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>(
+          "SELECT count(*) AS n FROM manual_submissions WHERE item_id NOT IN (SELECT id FROM items)",
+        )
+        .get(),
+    ).toEqual({ n: 0 });
+  } finally {
+    store.close();
+  }
+});

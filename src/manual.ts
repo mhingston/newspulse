@@ -242,7 +242,7 @@ export function submissionFor(
   store: Store,
   itemId: string,
 ): Record<string, unknown> | null {
-  const row = store.sqlite
+  const rows = store.sqlite
     .query<
       {
         id: string;
@@ -257,10 +257,12 @@ export function submissionFor(
       [string]
     >(
       // The first submission established identity and provenance; later
-      // submissions of the same item are references, not replacements.
-      "SELECT id,item_id,url,origin,title,snippet,metadata,submitted_at FROM manual_submissions WHERE item_id=? ORDER BY submitted_at,rowid LIMIT 1",
+      // submissions of the same item are references, not replacements. All of
+      // them are returned so no provenance is hidden.
+      "SELECT id,item_id,url,origin,title,snippet,metadata,submitted_at FROM manual_submissions WHERE item_id=? ORDER BY submitted_at,rowid",
     )
-    .get(itemId);
+    .all(itemId);
+  const row = rows[0];
   if (!row) return null;
   const item = store.getItem(row.item_id);
   const extraction = item?.extraction as {
@@ -269,6 +271,31 @@ export function submissionFor(
     reason?: string;
     text?: string;
   } | null;
+  // A terminal extraction failure has no stored result, so read the job state
+  // rather than reporting it as still pending.
+  const job = store.sqlite
+    .query<
+      { status: string; outcome: string | null; last_error: string | null },
+      [string]
+    >(
+      "SELECT status,outcome,last_error FROM processing_jobs WHERE item_id=? AND stage='extract' ORDER BY generation DESC LIMIT 1",
+    )
+    .get(row.item_id);
+  const retrieval = extraction
+    ? {
+        status: extraction.status ?? "unknown",
+        method: extraction.method ?? null,
+        reason: extraction.reason ?? null,
+        text_chars: extraction.text?.length ?? 0,
+      }
+    : job?.status === "failed"
+      ? {
+          status: "failed",
+          method: null,
+          reason: job.last_error ?? "Extraction failed",
+          text_chars: 0,
+        }
+      : { status: "pending", method: null, reason: null, text_chars: 0 };
   return {
     submission_id: row.id,
     origin: row.origin,
@@ -278,13 +305,15 @@ export function submissionFor(
     snippet: row.snippet,
     metadata: JSON.parse(row.metadata) as unknown,
     // Retrieval is reported from recorded evidence, never assumed.
-    retrieval: extraction
-      ? {
-          status: extraction.status ?? "unknown",
-          method: extraction.method ?? null,
-          reason: extraction.reason ?? null,
-          text_chars: extraction.text?.length ?? 0,
-        }
-      : { status: "pending", method: null, reason: null, text_chars: 0 },
+    retrieval,
+    submissions: rows.map((entry) => ({
+      submission_id: entry.id,
+      origin: entry.origin,
+      url: entry.url,
+      submitted_at: entry.submitted_at,
+      title: entry.title,
+      snippet: entry.snippet,
+      metadata: JSON.parse(entry.metadata) as unknown,
+    })),
   };
 }

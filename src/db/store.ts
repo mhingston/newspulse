@@ -20,6 +20,7 @@ import {
   identity,
   isGithubSourceUrl,
   isHackerNewsSourceUrl,
+  parseRedditDiscussion,
   type Candidate,
   type PollResult,
 } from "../domain";
@@ -1075,6 +1076,11 @@ export class Store {
     this.sqlite
       .query("UPDATE discovery_results SET item_id=? WHERE item_id=?")
       .run(winner, loser);
+    // Submission provenance is durable history; repoint it before the loser
+    // is deleted so the foreign key never dangles.
+    this.sqlite
+      .query("UPDATE manual_submissions SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
     this.sqlite
       .query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?")
       .run(winner, loser);
@@ -1122,6 +1128,30 @@ export class Store {
     this.sqlite.query("DELETE FROM items WHERE id=?").run(loser);
   }
 
+  /**
+   * Before Reddit identity was keyed by post ID, an item's identity was the
+   * full canonical URL of whichever host/slug first saw it. Find such a
+   * historical item so a new canonical submission merges into it instead of
+   * creating a duplicate. The post ID is a bounded alphanumeric token, so the
+   * LIKE narrows the scan and each candidate is re-parsed before merging.
+   */
+  private legacyRedditOwners(url: string): string[] {
+    const reddit = parseRedditDiscussion(url);
+    if (!reddit) return [];
+    const rows = this.sqlite
+      .query<{ id: string; identity: string }, [string]>(
+        "SELECT id,identity FROM items WHERE identity LIKE ?",
+      )
+      .all(`url:%${reddit.postId}%`);
+    const owners: string[] = [];
+    for (const row of rows) {
+      if (!row.identity.startsWith("url:")) continue;
+      const legacy = parseRedditDiscussion(row.identity.slice(4));
+      if (legacy?.postId === reddit.postId) owners.push(row.id);
+    }
+    return owners;
+  }
+
   private canonicalOwner(url: string, priorId?: string): string | undefined {
     const alias = this.sqlite
       .query<{ item_id: string }, [string]>(
@@ -1131,10 +1161,15 @@ export class Store {
     const legacy = this.sqlite
       .query<{ id: string }, [string]>("SELECT id FROM items WHERE identity=?")
       .get(`url:${url}`)?.id;
-    const owner = alias ?? legacy ?? priorId;
+    const legacyReddit = this.legacyRedditOwners(url);
+    const owner = alias ?? legacy ?? legacyReddit[0] ?? priorId;
     if (!owner) return undefined;
-    if (legacy && legacy !== owner) this.mergeItems(owner, legacy);
-    if (priorId && priorId !== owner) this.mergeItems(owner, priorId);
+    const losers = new Set<string>();
+    if (legacy) losers.add(legacy);
+    for (const duplicate of legacyReddit) losers.add(duplicate);
+    if (priorId) losers.add(priorId);
+    losers.delete(owner);
+    for (const loser of losers) this.mergeItems(owner, loser);
     this.sqlite
       .query(
         "INSERT INTO item_url_aliases(canonical_url,item_id) VALUES(?,?) ON CONFLICT(canonical_url) DO UPDATE SET item_id=excluded.item_id",

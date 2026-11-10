@@ -142,7 +142,7 @@ export function createMcp(store: Store): McpServer {
     "get_submission",
     {
       description:
-        "Read manual/bookmark/email submission provenance for an item: origin, snippet, Reddit post and subreddit, and the recorded extraction status. Retrieval status distinguishes extracted text from unavailable or pending content.",
+        "Read manual/bookmark/email submission provenance for an item: origin, snippet, Reddit post and subreddit, all recorded submissions, and the recorded extraction status. Retrieval status distinguishes extracted text from unavailable, pending or failed content.",
       inputSchema: { id: z.string() },
       annotations,
     },

@@ -183,6 +183,67 @@ describe("manual submissions", () => {
     }
   });
 
+  test("submitting an already-processed article preserves its body and extraction", () => {
+    const store = fresh();
+    try {
+      const feed = store.addSource("https://example.com/feed.xml");
+      store.enqueueDue(1);
+      store.complete(
+        store.claim(1)!,
+        {
+          items: [
+            {
+              nativeId: "rss-1",
+              url: article,
+              title: "From RSS",
+              text: "processed body",
+            },
+          ],
+        },
+        2,
+      );
+      const item = store.search("processed")[0]!;
+      const job = store.claimProcessing("extract", 3)!;
+      store.completeProcessing(
+        job,
+        "extracted",
+        4,
+        JSON.stringify({
+          status: "extracted",
+          method: "http",
+          text: "processed body",
+        }),
+      );
+      const before = store.sqlite
+        .query<{ n: number }, [string]>(
+          "SELECT count(*) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+        )
+        .get(item.id)!.n;
+      const submitted = submitUrl(store, {
+        submissionId: "sub-processed",
+        url: article,
+        origin: "manual",
+        now: 5,
+      });
+      expect(submitted.itemId).toBe(item.id);
+      // The processed body and its extraction are not replaced or re-queued.
+      expect(store.getItem(item.id)!.text).toBe("processed body");
+      expect(
+        store.sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT count(*) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+          )
+          .get(item.id)!.n,
+      ).toBe(before);
+      expect(submissionFor(store, item.id)!.retrieval).toMatchObject({
+        status: "extracted",
+        text_chars: "processed body".length,
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   test("Reddit results, emails and manual submissions share one discussion item", () => {
     const store = fresh();
     try {
@@ -278,6 +339,31 @@ describe("manual submissions", () => {
       });
       // Nothing claims the discussion was fetched.
       expect(JSON.stringify(provenance)).not.toContain("comments fetched");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a terminal extraction failure is reported as failed, not pending", () => {
+    const store = fresh();
+    try {
+      const result = submitUrl(store, {
+        submissionId: "failed-1",
+        url: article,
+        origin: "manual",
+        now: 1000,
+      });
+      store.sqlite
+        .query(
+          "UPDATE processing_jobs SET status='failed',last_error='HTTP 500' WHERE item_id=? AND stage='extract'",
+        )
+        .run(result.itemId);
+      expect(submissionFor(store, result.itemId)!.retrieval).toEqual({
+        status: "failed",
+        method: null,
+        reason: "HTTP 500",
+        text_chars: 0,
+      });
     } finally {
       store.close();
     }
