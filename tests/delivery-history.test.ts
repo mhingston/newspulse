@@ -1,4 +1,7 @@
 import { expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { Store } from "../src/db/store";
 import { DigestStore } from "../src/db/digest-store";
 import { DeliveryStore } from "../src/db/delivery-store";
@@ -29,9 +32,17 @@ function fixture(
       result: { total: 42 },
       provenance: { input: { title: "Old robotics", text: oldText } },
     },
+    citations: [
+      {
+        sourceId: "frozen-source",
+        nativeId: "frozen-native",
+        url: "https://old.example/story",
+      },
+    ],
   },
+  dbPath = ":memory:",
 ) {
-  const store = new Store(":memory:");
+  const store = new Store(dbPath);
   const deliveries = new DeliveryStore(store.sqlite);
   const freeze = () =>
     new DigestStore(store.sqlite).freeze(
@@ -133,7 +144,8 @@ test("failed deliveries are not accepted and legacy snapshots cannot fabricate a
 });
 
 test("distinct related developments compare against accepted frozen history without suppressing them", () => {
-  const f = fixture();
+  const directory = mkdtempSync(join(tmpdir(), "newspulse-related-history-"));
+  const f = fixture(undefined, join(directory, "state.sqlite"));
   try {
     f.store.sqlite
       .query(
@@ -180,8 +192,139 @@ test("distinct related developments compare against accepted frozen history with
       editionId: f.delivery.digest_id,
       groupId: "group",
       relationship: { olderGroupId: "group", newerGroupId: "new-group" },
+      frozenSourceReferences: [
+        {
+          sourceId: "frozen-source",
+          nativeId: "frozen-native",
+          url: "https://old.example/story",
+        },
+      ],
       suppress: false,
     });
+    f.store.close();
+    f.store = new Store(join(directory, "state.sqlite"));
+    expect(
+      relatedDeliveryHistory(
+        f.store.sqlite,
+        "new",
+        "new-group",
+        "Breakthrough robotics update",
+        newText,
+        3500,
+        4000,
+      )?.evidence,
+    ).toMatchObject({
+      state: "possible_follow_up",
+      editionId: f.delivery.digest_id,
+      frozenSourceReferences: [
+        { sourceId: "frozen-source", nativeId: "frozen-native" },
+      ],
+    });
+
+    f.store.sqlite
+      .query("UPDATE deliveries SET status='ambiguous' WHERE digest_id=?")
+      .run(f.delivery.digest_id);
+    expect(
+      relatedDeliveryHistory(
+        f.store.sqlite,
+        "new",
+        "new-group",
+        "Breakthrough robotics update",
+        newText,
+        3500,
+        4000,
+      )?.evidence,
+    ).toMatchObject({ state: "unknown", reason: "ambiguous_delivery" });
+    f.store.sqlite
+      .query("UPDATE deliveries SET status='sent' WHERE digest_id=?")
+      .run(f.delivery.digest_id);
+    f.store.sqlite
+      .query(
+        "UPDATE story_relations SET evidence=? WHERE newer_group_id='new-group'",
+      )
+      .run(JSON.stringify({ sharedTerms: ["robotics"] }));
+    expect(
+      relatedDeliveryHistory(
+        f.store.sqlite,
+        "new",
+        "new-group",
+        "Breakthrough robotics update",
+        newText,
+        3500,
+        4000,
+      )?.evidence,
+    ).toMatchObject({ state: "unknown", reason: "weak_relationship_evidence" });
+    f.store.sqlite
+      .query(
+        "UPDATE story_relations SET evidence=? WHERE newer_group_id='new-group'",
+      )
+      .run(JSON.stringify({ sharedTerms: ["robotics", "breakthrough"] }));
+    expect(
+      relatedDeliveryHistory(
+        f.store.sqlite,
+        "new",
+        "new-group",
+        "Breakthrough robotics update",
+        newText,
+        1500,
+        4000,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "stale_or_uncertain_observation",
+    });
+    f.store.sqlite
+      .query(
+        "UPDATE content_versions SET text='different current text' WHERE item_id='new'",
+      )
+      .run();
+    expect(
+      relatedDeliveryHistory(
+        f.store.sqlite,
+        "new",
+        "new-group",
+        "Breakthrough robotics update",
+        newText,
+        3500,
+        4000,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "stale_or_uncertain_observation",
+    });
+    f.store.sqlite
+      .query("UPDATE content_versions SET text=? WHERE item_id='new'")
+      .run(newText);
+    f.store.sqlite
+      .query(
+        "UPDATE story_relations SET ended_at=3999 WHERE newer_group_id='new-group'",
+      )
+      .run();
+    f.store.sqlite
+      .query("UPDATE story_memberships SET ended_at=3999 WHERE item_id='new'")
+      .run();
+    expect(
+      relatedDeliveryHistory(
+        f.store.sqlite,
+        "new",
+        "new-group",
+        "Breakthrough robotics update",
+        newText,
+        3500,
+        4000,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "relationship_or_membership_ended_after_regrouping",
+    });
+    f.store.sqlite
+      .query(
+        "UPDATE story_relations SET ended_at=NULL WHERE newer_group_id='new-group'",
+      )
+      .run();
+    f.store.sqlite
+      .query("UPDATE story_memberships SET ended_at=NULL WHERE item_id='new'")
+      .run();
     f.store.sqlite
       .query("UPDATE content_versions SET backfilled=1 WHERE item_id='new'")
       .run();
@@ -201,6 +344,142 @@ test("distinct related developments compare against accepted frozen history with
     });
   } finally {
     f.store.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test("score provenance preserves direct ambiguous history instead of replacing it with cross-group evidence", () => {
+  const store = new Store(":memory:");
+  try {
+    const now = 4000;
+    const source = store.addSource("https://example.com/feed");
+    store.sqlite
+      .query(
+        "INSERT INTO items(id,identity,title,ingested_at,published_at) VALUES('older','older-id','Old robotics development',1000,900),('candidate','candidate-id','New robotics development',3500,3400)",
+      )
+      .run();
+    store.sqlite
+      .query(
+        "INSERT INTO content(item_id,text,format) VALUES('older',?,'feed-text'),('candidate',?,'feed-text')",
+      )
+      .run(oldText, newText);
+    store.sqlite
+      .query(
+        "INSERT INTO content_versions(item_id,source_id,native_id,title,text,observed_at) VALUES('candidate',?,'candidate-native','New robotics development',?,3500)",
+      )
+      .run(source.id, newText);
+    store.sqlite
+      .query(
+        "INSERT INTO story_groups(id,first_seen) VALUES('older-group',900),('candidate-group',3400)",
+      )
+      .run();
+    store.sqlite
+      .query(
+        "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('older-group','older','{}','v1',900),('candidate-group','candidate','{}','v1',3400)",
+      )
+      .run();
+    store.sqlite
+      .query(
+        "INSERT INTO story_relations(older_group_id,newer_group_id,reason,evidence,rule_version,started_at) VALUES('older-group','candidate-group','later_related_development','{\"sharedTerms\":[\"robotics\",\"development\"]}','specific-development-v1',3400)",
+      )
+      .run();
+    const digests = new DigestStore(store.sqlite);
+    const deliveries = new DeliveryStore(store.sqlite);
+    const freeze = (
+      date: string,
+      itemId: string,
+      groupId: string,
+      text: string,
+    ) =>
+      digests.freeze(
+        {
+          date,
+          timezone: "Europe/London",
+          subject: "News",
+          html: "News",
+          text: "News",
+          decisionSnapshot: {},
+          items: [
+            {
+              itemId,
+              groupId,
+              scoreId: "score",
+              snapshot: {
+                scoreSnapshot: {
+                  id: "score",
+                  provenance: {
+                    input: { title: `${itemId} robotics development`, text },
+                  },
+                },
+                citations: [{ sourceId: `frozen-${itemId}` }],
+              },
+            },
+          ],
+        },
+        date === "2026-01-01" ? 1000 : 3000,
+      );
+    const accepted = deliveries.prepare(
+      "2026-01-01",
+      "reader@example.test",
+      "sender@example.test",
+      () => freeze("2026-01-01", "older", "older-group", oldText),
+      1000,
+    )!;
+    const acceptedClaim = deliveries.claim(1000)!;
+    deliveries.beginSend(acceptedClaim, 1000);
+    deliveries.sent(acceptedClaim, "accepted-provider", 2000);
+    store.sqlite
+      .query(
+        "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,available_at,created_at,result) VALUES('candidate-extract','candidate','extract',1,'done','extracted',3500,3500,?)",
+      )
+      .run(JSON.stringify({ status: "extracted", text: newText }));
+    store.sqlite
+      .query(
+        "INSERT INTO processing_jobs(id,item_id,stage,generation,status,available_at,created_at) VALUES('candidate-score','candidate','score',1,'pending',3500,3500)",
+      )
+      .run();
+    const scoreJob = store.claimProcessing("score", now)!;
+    const relatedSnapshot = store.scoringSnapshot(scoreJob, now)!;
+    expect(relatedSnapshot.provenance.history).toMatchObject({
+      state: "unknown",
+      relatedComparison: {
+        state: "possible_follow_up",
+        editionId: accepted.digest_id,
+        frozenSourceReferences: [{ sourceId: "frozen-older" }],
+      },
+    });
+    const ambiguous = deliveries.prepare(
+      "2026-01-02",
+      "reader@example.test",
+      "sender@example.test",
+      () => freeze("2026-01-02", "candidate", "candidate-group", newText),
+      3000,
+    )!;
+    const ambiguousClaim = deliveries.claim(3000)!;
+    deliveries.beginSend(ambiguousClaim, 3000);
+    deliveries.fail(ambiguousClaim, "ambiguous", 3001);
+    const snapshot = store.scoringSnapshot(scoreJob, now)!;
+    expect(snapshot.provenance.history).toMatchObject({
+      state: "unknown",
+      reason: "ambiguous_delivery",
+    });
+    expect(snapshot.provenance.history).not.toHaveProperty("relatedComparison");
+    expect(
+      store.completeScore(
+        scoreJob,
+        {
+          inputHash: snapshot.inputHash,
+          criteriaVersion: "deterministic-v2",
+          provenance: snapshot.provenance,
+          result: scoreItem(snapshot.input),
+          capturedAt: now,
+        },
+        now + 1,
+      ),
+    ).toBe(true);
+    expect(accepted.digest_id).not.toBe(ambiguous.digest_id);
+  } finally {
+    store.close();
   }
 });
 

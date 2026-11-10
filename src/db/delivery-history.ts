@@ -272,8 +272,25 @@ export function relatedDeliveryHistory(
   text: string,
   publishedAt: number | null,
   now = Date.now(),
+  extractionGeneration?: number,
 ) {
-  if (!newerGroupId) return null;
+  const membershipCount =
+    db
+      .query<{ count: number }, [string]>(
+        "SELECT count(*) AS count FROM story_memberships WHERE item_id=?",
+      )
+      .get(candidateItemId)?.count ?? 0;
+  if (!membershipCount) return null;
+  if (membershipCount > 100)
+    return {
+      input: null,
+      evidence: {
+        comparisonVersion: "related-delivery-v1",
+        state: "unknown" as const,
+        reason: "membership_history_limit",
+        candidateItemId,
+      },
+    };
   const rows = db
     .query<
       {
@@ -288,10 +305,12 @@ export function relatedDeliveryHistory(
         relation_id: number;
         relation_evidence: string;
         relation_version: string;
+        relation_reason: string;
+        relation_ended_at: number | null;
         item_id: string;
         score_id: string | null;
         position: number;
-        source_refs: string;
+        candidate_group_ended_at: number | null;
       },
       [string]
     >(
@@ -299,21 +318,21 @@ export function relatedDeliveryHistory(
     SELECT d.id AS delivery_id,d.status,d.provider_id,d.updated_at AS accepted_at,
       g.id AS edition_id,g.edition_date,r.older_group_id,r.newer_group_id,
       r.id AS relation_id,r.evidence AS relation_evidence,r.rule_version AS relation_version,
-      di.item_id,di.score_id,di.position,
-      COALESCE((SELECT json_group_array(json_object('sourceId',s.id,'nativeId',isrc.native_id,
-        'url',isrc.url))
-        FROM item_sources isrc JOIN sources s ON s.id=isrc.source_id
-        WHERE isrc.item_id=di.item_id),'[]') AS source_refs
+      r.reason AS relation_reason,r.ended_at AS relation_ended_at,
+      di.item_id,di.score_id,di.position,candidate_membership.ended_at AS candidate_group_ended_at
     FROM story_relations r
+    JOIN story_memberships candidate_membership
+      ON candidate_membership.group_id=r.newer_group_id AND candidate_membership.item_id=?
     JOIN digest_items di ON di.group_id=r.older_group_id
     JOIN digests g ON g.id=di.digest_id AND g.sealed=1
     JOIN deliveries d ON d.digest_id=g.id
-    WHERE r.newer_group_id=? AND r.ended_at IS NULL
+    WHERE r.reason='later_related_development'
       AND (d.status IN ('sent','ambiguous') OR (d.status='sending' AND d.first_attempt_at IS NOT NULL))
-    ORDER BY g.frozen_at DESC,g.edition_date DESC,d.id DESC,di.position LIMIT 101
+    ORDER BY CASE WHEN r.ended_at IS NULL AND candidate_membership.ended_at IS NULL THEN 0 ELSE 1 END,
+      g.frozen_at DESC,g.edition_date DESC,d.id DESC,di.position LIMIT 101
   `,
     )
-    .all(newerGroupId);
+    .all(candidateItemId);
   if (!rows.length) return null;
   const unknown = (reason: string, row = rows[0]!) => ({
     input: null,
@@ -324,6 +343,8 @@ export function relatedDeliveryHistory(
       editionId: row.edition_id,
       relationId: row.relation_id,
       relationVersion: row.relation_version,
+      relationEndedAt: row.relation_ended_at,
+      candidateMembershipEndedAt: row.candidate_group_ended_at,
       olderGroupId: row.older_group_id,
       newerGroupId: row.newer_group_id,
       itemId: row.item_id,
@@ -349,47 +370,84 @@ export function relatedDeliveryHistory(
       "SELECT snapshot FROM digest_items WHERE digest_id=? AND position=?",
     )
     .get(row.edition_id, row.position)?.snapshot;
-  let snapshot: any;
+  let snapshot: {
+    scoreSnapshot?: {
+      provenance?: { input?: { title?: unknown; text?: unknown } };
+      [key: string]: unknown;
+    };
+    citations?: unknown;
+  } | null;
   try {
     snapshot = JSON.parse(raw ?? "null");
   } catch {
     return unknown("invalid_historical_snapshot", row);
   }
+  if (!snapshot || typeof snapshot !== "object")
+    return unknown("invalid_historical_snapshot", row);
   const old = snapshot?.scoreSnapshot?.provenance?.input;
   const priorTitle = typeof old?.title === "string" ? old.title : null;
   const priorText = typeof old?.text === "string" ? old.text : null;
   if (!priorTitle || !priorText?.trim())
     return unknown("historical_content_unavailable", row);
-  const observation = db
+  const firstObservation = db
     .query<
       {
         source_id: string;
         native_id: string;
         observed_at: number;
         backfilled: number;
+        title: string;
       },
       [string]
     >(
-      "SELECT source_id,native_id,observed_at,backfilled FROM content_versions WHERE item_id=? ORDER BY id LIMIT 1",
+      "SELECT source_id,native_id,observed_at,backfilled,title FROM content_versions WHERE item_id=? AND backfilled=0 ORDER BY id LIMIT 1",
     )
     .get(candidateItemId);
-  const candidateSourceReferences = db
+  const latestObservation = db
     .query<
-      { source_id: string; native_id: string; url: string | null },
+      {
+        source_id: string;
+        native_id: string;
+        observed_at: number;
+        backfilled: number;
+        title: string;
+        text: string;
+      },
       [string]
     >(
-      "SELECT source_id,native_id,url FROM item_sources WHERE item_id=? ORDER BY id",
+      "SELECT source_id,native_id,observed_at,backfilled,title,text FROM content_versions WHERE item_id=? ORDER BY id DESC LIMIT 1",
     )
-    .all(candidateItemId);
+    .get(candidateItemId);
+  const extractionMatchesObservation =
+    latestObservation !== null &&
+    extractionGeneration !== undefined &&
+    db
+      .query<{ ok: number }, [string, number, string, number, string]>(
+        `SELECT 1 AS ok FROM processing_jobs WHERE item_id=? AND stage='extract' AND generation=? AND status='done' AND outcome='extracted' AND origin_source_id=? AND created_at=? AND CASE WHEN json_valid(result) THEN json_extract(result,'$.text')=? ELSE 0 END`,
+      )
+      .get(
+        candidateItemId,
+        extractionGeneration,
+        latestObservation.source_id,
+        latestObservation.observed_at,
+        text,
+      ) !== null;
+  const currentContentMatchesObservation =
+    latestObservation !== null &&
+    latestObservation.backfilled === 0 &&
+    latestObservation.observed_at <= now &&
+    latestObservation.title === title &&
+    (latestObservation.text === text || extractionMatchesObservation);
   const timely =
     publishedAt !== null &&
     publishedAt > row.accepted_at &&
     publishedAt <= now &&
-    observation !== null &&
-    observation.backfilled === 0 &&
-    observation.observed_at > row.accepted_at &&
-    publishedAt <= observation.observed_at &&
-    observation.observed_at <= now;
+    firstObservation !== null &&
+    latestObservation !== null &&
+    firstObservation.observed_at > row.accepted_at &&
+    publishedAt <= firstObservation.observed_at &&
+    latestObservation.observed_at >= firstObservation.observed_at &&
+    currentContentMatchesObservation;
   let relation: unknown = null;
   try {
     relation = JSON.parse(row.relation_evidence);
@@ -397,7 +455,16 @@ export function relatedDeliveryHistory(
     return unknown("invalid_relationship_evidence", row);
   }
   const sharedTerms = (relation as { sharedTerms?: unknown })?.sharedTerms;
-  const supported = Array.isArray(sharedTerms) && sharedTerms.length >= 2;
+  const supported =
+    row.relation_version === "specific-development-v1" &&
+    Array.isArray(sharedTerms) &&
+    sharedTerms.length >= 2 &&
+    sharedTerms.every((term) => typeof term === "string" && term.length >= 3);
+  const regrouped =
+    newerGroupId === null ||
+    row.newer_group_id !== newerGroupId ||
+    row.relation_ended_at !== null ||
+    row.candidate_group_ended_at !== null;
   const tokens = (value: string) =>
     new Set(value.toLocaleLowerCase("en").match(/[\p{L}\p{N}]{4,}/gu) ?? []);
   const priorTerms = tokens(`${priorTitle}\n${priorText}`);
@@ -422,13 +489,17 @@ export function relatedDeliveryHistory(
     evidence: {
       comparisonVersion: "related-delivery-v1",
       state:
-        timely && supported
+        timely && supported && !regrouped
           ? ("possible_follow_up" as const)
           : ("unknown" as const),
       reason:
-        timely && supported
+        timely && supported && !regrouped
           ? "directional_relation_and_post_acceptance_observation"
-          : "stale_or_uncertain_observation",
+          : regrouped
+            ? "relationship_or_membership_ended_after_regrouping"
+            : supported
+              ? "stale_or_uncertain_observation"
+              : "weak_relationship_evidence",
       editionId: row.edition_id,
       editionDate: row.edition_date,
       deliveryId: row.delivery_id,
@@ -438,8 +509,9 @@ export function relatedDeliveryHistory(
       groupId: row.older_group_id,
       scoreId: row.score_id,
       scoreSnapshot: snapshot.scoreSnapshot ?? null,
-      sourceReferences: JSON.parse(row.source_refs) as unknown,
-      candidateSourceReferences,
+      frozenSourceReferences: Array.isArray(snapshot.citations)
+        ? snapshot.citations
+        : null,
       relationship: {
         id: row.relation_id,
         version: row.relation_version,
@@ -451,7 +523,16 @@ export function relatedDeliveryHistory(
         title,
         contentHash: createHash("sha256").update(text).digest("hex"),
         publishedAt,
-        observation,
+        firstPostAcceptanceObservation: firstObservation,
+        currentContentObservation: latestObservation
+          ? {
+              sourceId: latestObservation.source_id,
+              nativeId: latestObservation.native_id,
+              observedAt: latestObservation.observed_at,
+              backfilled: latestObservation.backfilled,
+              contentMatchesObservation: currentContentMatchesObservation,
+            }
+          : null,
       },
       priorContent: {
         title: priorTitle,

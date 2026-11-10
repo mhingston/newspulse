@@ -19,6 +19,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { Store } from "../src/db/store";
 import { createApp } from "../src/http";
 import { ProcessingWorker } from "../src/worker";
+import { scoreItem } from "../src/scoring";
 
 const day = 86400000;
 const start = Date.UTC(2026, 10, 1);
@@ -162,7 +163,8 @@ test("a relation-only evidence change requeues scores in both related groups", (
         .query("SELECT 1 FROM story_relations WHERE ended_at IS NULL")
         .get(),
     ).not.toBeNull();
-    for (const item of store.search("robotics")) {
+    const robotItems = store.search("robotics");
+    for (const [index, item] of robotItems.entries()) {
       store.sqlite
         .query(
           "UPDATE processing_jobs SET status='done',outcome='extracted' WHERE item_id=? AND stage='extract'",
@@ -170,10 +172,12 @@ test("a relation-only evidence change requeues scores in both related groups", (
         .run(item.id);
       store.sqlite
         .query(
-          "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,available_at,created_at) VALUES(?,?,'score',1,'done','scored',0,0)",
+          "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,available_at,created_at) VALUES(?,?,'score',1,?,'scored',0,0)",
         )
-        .run(`score-${item.id}`, item.id);
+        .run(`score-${item.id}`, item.id, index === 0 ? "pending" : "done");
     }
+    const staleClaim = store.claimProcessing("score", start + 20 * day)!;
+    const staleSnapshot = store.scoringSnapshot(staleClaim, start + 20 * day)!;
     store.sqlite
       .query("UPDATE story_relations SET evidence='{}' WHERE ended_at IS NULL")
       .run();
@@ -188,6 +192,19 @@ test("a relation-only evidence change requeues scores in both related groups", (
       .all();
     expect(states.length).toBeGreaterThanOrEqual(2);
     expect(states.every((row) => row.status === "pending")).toBe(true);
+    expect(
+      store.completeScore(
+        staleClaim,
+        {
+          inputHash: staleSnapshot.inputHash,
+          criteriaVersion: "deterministic-v2",
+          provenance: staleSnapshot.provenance,
+          result: scoreItem(staleSnapshot.input),
+          capturedAt: start + 20 * day,
+        },
+        start + 21 * day,
+      ),
+    ).toBe(false);
   } finally {
     store.close();
   }

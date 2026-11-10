@@ -698,7 +698,15 @@ export class Store {
     );
     // A directional relation is only an advisory cross-development comparison.
     // It never turns a distinct story into a duplicate or verified update.
-    if (history.input === null) {
+    const directEvidence = history.evidence as {
+      state?: string;
+      reason?: string;
+    };
+    if (
+      history.input === null &&
+      directEvidence.state === "unknown" &&
+      directEvidence.reason === "no_confirmed_delivery"
+    ) {
       const related = relatedDeliveryHistory(
         this.sqlite,
         item.id,
@@ -707,8 +715,16 @@ export class Store {
         currentText,
         item.published_at,
         now,
+        job.generation,
       );
-      if (related) history = { input: null, evidence: related.evidence };
+      if (related)
+        history = {
+          input: null,
+          evidence: {
+            ...directEvidence,
+            relatedComparison: related.evidence,
+          },
+        };
     }
     const input: ScoringInput = {
       itemId: item.id,
