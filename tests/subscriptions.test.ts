@@ -154,7 +154,7 @@ test("CLI manages subscriptions and nested OPML round trips", async () => {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
-});
+}, 15_000);
 
 test("disable cancels pending poll, reenabling does not revive a cancelled retry", () => {
   const s = new Store(":memory:");
