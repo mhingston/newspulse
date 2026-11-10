@@ -194,19 +194,31 @@ async function main() {
         break;
       case "discover":
         assertDiscoveryRestoreElapsed(path);
-        console.log(
-          JSON.stringify(
-            await runDiscovery(
-              store,
-              new GdeltSearchProvider(),
-              required(0, "query"),
-              discoveryConfig(),
+        {
+          const query = required(0, "query");
+          const planned = new DiscoveryPlannerStore(store.sqlite).matchingQuery(
+            query,
+          );
+          console.log(
+            JSON.stringify(
+              await runDiscovery(
+                store,
+                new GdeltSearchProvider(),
+                query,
+                discoveryConfig(),
+                Date.now,
+                {
+                  queryKind: "manual",
+                  scheduleKey: planned?.key,
+                  interestLineage: planned?.interestLineage,
+                },
+              ),
+              null,
+              2,
             ),
-            null,
-            2,
-          ),
-        );
-        break;
+          );
+          break;
+        }
       case "discovery-plan":
         console.log(
           JSON.stringify(
@@ -243,12 +255,26 @@ async function main() {
         );
         break;
       }
+      case "discovery-item-feedback": {
+        const useful = required(1, "useful or not-useful feedback");
+        if (useful !== "useful" && useful !== "not-useful")
+          throw new Error("Feedback must be useful or not-useful");
+        new DiscoveryPlannerStore(store.sqlite).feedbackForLatestItemResult(
+          required(0, "item ID"),
+          useful === "useful",
+          Date.now(),
+        );
+        console.log(
+          "Recorded explicit feedback for the latest discovery result of that item",
+        );
+        break;
+      }
       case "discovery-runs":
         console.log(
           JSON.stringify(
             store.sqlite
               .query(
-                "SELECT id,query,provider,provider_version,status,started_at,finished_at,last_error FROM discovery_runs ORDER BY started_at DESC LIMIT 100",
+                "SELECT id,query,provider,provider_version,status,query_kind,schedule_key,interest_lineage,started_at,finished_at,last_error FROM discovery_runs ORDER BY started_at DESC LIMIT 100",
               )
               .all(),
             null,
@@ -502,7 +528,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

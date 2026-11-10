@@ -6,6 +6,7 @@ export interface PlannedQuery {
   kind: "interest" | "adjacent";
   interestId?: string;
   interestVersion?: number;
+  interestLineage: Array<{ id: string; version: number }>;
   priority: number;
   negative: string[];
 }
@@ -31,6 +32,7 @@ export function planDiscoveryQueries(interests: Interest[]): PlannedQuery[] {
     kind: PlannedQuery["kind"],
     interest?: Interest,
     additionalNegative: string[] = [],
+    additionalInterests: Interest[] = [],
   ) => {
     const normalized = normalizeDiscoveryQuery(query);
     if (
@@ -42,12 +44,6 @@ export function planDiscoveryQueries(interests: Interest[]): PlannedQuery[] {
     const negative = [
       ...new Set([...(interest?.negative ?? []), ...additionalNegative]),
     ];
-    if (
-      negative.some((term) =>
-        normalized.includes(term.toLocaleLowerCase("en-US")),
-      )
-    )
-      return;
     const key = normalized;
     const candidate: PlannedQuery = {
       key,
@@ -55,6 +51,10 @@ export function planDiscoveryQueries(interests: Interest[]): PlannedQuery[] {
       kind,
       interestId: interest?.id,
       interestVersion: interest?.version,
+      interestLineage: [
+        ...(interest ? [{ id: interest.id, version: interest.version }] : []),
+        ...additionalInterests.map(({ id, version }) => ({ id, version })),
+      ],
       priority: (interest?.priority ?? 1) * 100,
       negative,
     };
@@ -69,6 +69,13 @@ export function planDiscoveryQueries(interests: Interest[]): PlannedQuery[] {
       selected.set(key, {
         ...preferred,
         negative: [...new Set([...prior.negative, ...candidate.negative])],
+        interestLineage: [
+          ...new Map(
+            [...prior.interestLineage, ...candidate.interestLineage].map(
+              (entry) => [`${entry.id}@${entry.version}`, entry] as const,
+            ),
+          ).values(),
+        ],
       });
     }
   };
@@ -98,16 +105,25 @@ export function planDiscoveryQueries(interests: Interest[]): PlannedQuery[] {
           if (adjacentCandidates >= 500 || pairAttempts >= 5000) break;
           pairAttempts++;
           const size = selected.size;
-          add(`${x} ${y}`, "adjacent", a.interest, b.interest.negative);
+          add(`${x} ${y}`, "adjacent", a.interest, b.interest.negative, [
+            b.interest,
+          ]);
           if (selected.size > size) adjacentCandidates++;
         }
     }
-  return [...selected.values()].sort(
-    (a, b) =>
-      b.priority - a.priority ||
-      a.kind.localeCompare(b.kind) ||
-      a.key.localeCompare(b.key),
-  );
+  return [...selected.values()]
+    .filter(
+      (candidate) =>
+        !candidate.negative.some((term) =>
+          candidate.key.includes(term.toLocaleLowerCase("en-US")),
+        ),
+    )
+    .sort(
+      (a, b) =>
+        b.priority - a.priority ||
+        a.kind.localeCompare(b.kind) ||
+        a.key.localeCompare(b.key),
+    );
 }
 
 export function allocateQuerySlots<T extends { kind: "interest" | "adjacent" }>(
@@ -131,7 +147,7 @@ export function allocateQuerySlots<T extends { kind: "interest" | "adjacent" }>(
     Math.floor(((priorRuns.total + slots) * adjacentPercent) / 100) -
       priorRuns.adjacent,
   );
-  const adjacentTake = Math.min(reserve, adjacent.length);
+  const adjacentTake = Math.min(reserve, slots, adjacent.length);
   const primaryTake = Math.min(slots - adjacentTake, primary.length);
   let remaining = slots - adjacentTake - primaryTake;
   const extraPrimary = Math.min(remaining, primary.length - primaryTake);

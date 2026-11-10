@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import { Store } from "../src/db/store";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { DiscoveryPlannerStore } from "../src/db/discovery-planner-store";
+import { DiscoveryStore } from "../src/db/discovery-store";
+import { runDiscovery } from "../src/discovery-service";
 import {
   planDiscoveryQueries,
   allocateQuerySlots,
@@ -10,9 +15,18 @@ import { runScheduledDiscovery } from "../src/scheduled-discovery";
 import type { SearchProvider } from "../src/search-provider";
 import { ProcessingWorker } from "../src/worker";
 import { scoringHandler } from "../src/scoring-service";
-import { mkdtempSync, rmSync } from "node:fs";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  readdirSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 const interest = (overrides: Partial<Interest> = {}): Interest => ({
   kind: "interest",
@@ -63,6 +77,39 @@ describe("discovery planning", () => {
           q.query.includes("climate"),
       ),
     ).toBe(true);
+    expect(
+      first.find((query) => query.kind === "adjacent")?.interestLineage,
+    ).toEqual([
+      { id: "robotics", version: 1 },
+      { id: "climate", version: 1 },
+    ]);
+  });
+
+  test("merges shared-query negative terms before deciding whether it is eligible", () => {
+    const shared = planDiscoveryQueries([
+      interest({ queries: ["robotics research"], negative: [] }),
+      interest({
+        id: "robotics-2",
+        queries: ["robotics research"],
+        negative: ["research"],
+      }),
+    ]);
+    expect(shared.some((query) => query.query === "robotics research")).toBe(
+      false,
+    );
+    const retained = planDiscoveryQueries([
+      interest({ queries: ["robotics research"], negative: [] }),
+      interest({
+        id: "robotics-2",
+        queries: ["robotics research"],
+        negative: ["advertising"],
+      }),
+    ]);
+    expect(retained[0]?.interestLineage).toEqual([
+      { id: "robotics", version: 1 },
+      { id: "robotics-2", version: 1 },
+    ]);
+    expect(retained[0]?.negative).toEqual(["advertising"]);
   });
 
   test("allocates a bounded adjacent reserve and uses unused primary capacity", () => {
@@ -83,9 +130,12 @@ describe("discovery planning", () => {
         (query) => query.kind,
       ),
     ).toEqual(["adjacent"]);
+    expect(
+      allocateQuerySlots(queries, 1, 100, { total: 10, adjacent: 0 }),
+    ).toHaveLength(1);
   });
 
-  test("persisted feedback prioritizes useful queries, while missing feedback is neutral", () => {
+  test("persisted feedback prioritizes useful queries, while missing feedback is neutral", async () => {
     const store = new Store(":memory:");
     try {
       const planner = new DiscoveryPlannerStore(store.sqlite);
@@ -93,12 +143,59 @@ describe("discovery planning", () => {
         interest({ queries: ["robotics research", "robotics lab"] }),
       ]);
       planner.sync(q, 1000, 86_400_000);
-      planner.feedbackForQuery("robotics lab", true, 1001);
-      const due = planner.due(1002, 10);
+      const labQuery = q.find((query) => query.query === "robotics lab")!;
+      const provider: SearchProvider = {
+        name: "fixture",
+        version: "1",
+        async search() {
+          return {
+            results: [
+              {
+                url: "https://feedback.example/item",
+                title: "Robotics lab result",
+              },
+            ],
+            truncated: false,
+          };
+        },
+      };
+      await runDiscovery(
+        store,
+        provider,
+        labQuery.query,
+        {
+          maxQueriesPerDay: 10,
+          maxQueriesPerRun: 1,
+          maxResultsPerDay: 10,
+          maxResultsPerRun: 1,
+          maxCostMicrosPerDay: 10,
+          maxCostMicrosPerRun: 1,
+          reservedCostMicrosPerQuery: 1,
+        },
+        () => 1001,
+        {
+          queryKind: "interest",
+          scheduleKey: labQuery.key,
+          interestLineage: labQuery.interestLineage,
+        },
+      );
+      const result = store.sqlite
+        .query<{ item_id: string }, []>("SELECT item_id FROM discovery_results")
+        .get()!;
+      planner.feedbackForLatestItemResult(result.item_id, true, 1002);
+      const due = planner.due(1003, 10);
       expect(due[0]?.query).toBe("robotics lab");
       expect(
         due.find((item) => item.query === "robotics research")?.utility,
       ).toBe(0);
+      expect(
+        planner.history().find((item: any) => item.query === "robotics lab"),
+      ).toMatchObject({ useful_discoveries: 1 });
+      planner.feedbackForLatestItemResult(result.item_id, false, 1004);
+      expect(planner.due(1005, 10)[0]?.query).toBe("robotics research");
+      expect(
+        planner.history().find((item: any) => item.query === "robotics lab"),
+      ).toMatchObject({ useful_discoveries: 0, not_useful_discoveries: 1 });
     } finally {
       store.close();
     }
@@ -122,6 +219,189 @@ describe("discovery planning", () => {
     } finally {
       store.close();
       rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("populated scheduled-query state migrates with lineage defaults", () => {
+    const dir = mkdtempSync(join(tmpdir(), "newspulse-discovery-migration-"));
+    const prior = join(dir, "prior-migrations");
+    const path = join(dir, "prior.sqlite");
+    mkdirSync(join(prior, "meta"), { recursive: true });
+    const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
+    for (const file of readdirSync(migrations))
+      if (file.endsWith(".sql"))
+        copyFileSync(join(migrations, file), join(prior, file));
+    const journal = JSON.parse(
+      readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
+    ) as { entries: { idx: number }[] };
+    journal.entries = journal.entries.filter((entry) => entry.idx < 42);
+    writeFileSync(join(prior, "meta/_journal.json"), JSON.stringify(journal));
+    const db = new Database(path);
+    migrate(drizzle(db), { migrationsFolder: prior });
+    db.exec(`
+      INSERT INTO discovery_query_state(query_key,query,kind,interest_id,interest_version,priority,negative_terms,enabled,next_due_at,last_run_at,last_run_id)
+      VALUES('robotics research','robotics research','interest','robotics',1,300,'[]',1,1000,500,'manual-run');
+      INSERT INTO discovery_runs(id,query,provider,provider_version,subscription_snapshot,status,started_at)
+      VALUES('manual-run','robotics research','fixture','1','{}','completed',500);
+    `);
+    db.close();
+    let upgraded: Store | undefined;
+    try {
+      upgraded = new Store(path);
+      expect(
+        upgraded.sqlite
+          .query<{ interest_lineage: string }, []>(
+            "SELECT interest_lineage FROM discovery_query_state WHERE query_key='robotics research'",
+          )
+          .get(),
+      ).toEqual({ interest_lineage: "[]" });
+      expect(
+        upgraded.sqlite
+          .query<{ query_kind: string; interest_lineage: string }, []>(
+            "SELECT query_kind,interest_lineage FROM discovery_runs WHERE id='manual-run'",
+          )
+          .get(),
+      ).toEqual({ query_kind: "manual", interest_lineage: "[]" });
+    } finally {
+      upgraded?.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("schedule sync honors manual results and an interrupted reserved attempt", async () => {
+    const store = new Store(":memory:");
+    try {
+      const queries = planDiscoveryQueries([interest()]);
+      const planner = new DiscoveryPlannerStore(store.sqlite);
+      planner.sync(queries, 1000, 60_000);
+      const provider: SearchProvider = {
+        name: "fixture",
+        version: "1",
+        async search() {
+          return { results: [], truncated: false };
+        },
+      };
+      await runDiscovery(
+        store,
+        provider,
+        "  ROBOTICS   RESEARCH ",
+        {
+          maxQueriesPerDay: 10,
+          maxQueriesPerRun: 1,
+          maxResultsPerDay: 10,
+          maxResultsPerRun: 1,
+          maxCostMicrosPerDay: 10,
+          maxCostMicrosPerRun: 1,
+          reservedCostMicrosPerQuery: 1,
+        },
+        () => 2000,
+      );
+      planner.sync(queries, 3000, 60_000);
+      expect(planner.due(61_999, 10)).toHaveLength(0);
+      expect(planner.due(62_000, 10)).toHaveLength(1);
+
+      planner.sync(queries, 70_000, 60_000);
+      const repo = new DiscoveryStore(store.sqlite);
+      const runId = "crashed-run";
+      repo.createRun({
+        id: runId,
+        query: "robotics research",
+        provider: "fixture",
+        providerVersion: "1",
+        now: 71_000,
+      });
+      repo.reservePage({
+        id: "crashed-page",
+        runId,
+        now: 71_000,
+        reservedResults: 1,
+        reservedCostMicros: 1,
+        limits: {
+          dailyQueries: 10,
+          dailyResults: 10,
+          dailyCostMicros: 10,
+          runQueries: 1,
+          runResults: 1,
+          runCostMicros: 1,
+        },
+      });
+      planner.sync(queries, 72_000, 60_000);
+      expect(planner.due(130_999, 10)).toHaveLength(0);
+      expect(planner.due(131_000, 10)).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("adjacent daily share includes completed manual query executions", async () => {
+    const store = new Store(":memory:");
+    try {
+      new ProfileStore(store.sqlite).import([
+        interest(),
+        interest({
+          id: "climate",
+          entities: ["climate"],
+          keywords: ["climate"],
+          priority: 2,
+          queries: ["climate research"],
+        }),
+      ]);
+      const limits = {
+        maxQueriesPerDay: 10,
+        maxQueriesPerRun: 1,
+        maxResultsPerDay: 100,
+        maxResultsPerRun: 1,
+        maxCostMicrosPerDay: 100,
+        maxCostMicrosPerRun: 10,
+        reservedCostMicrosPerQuery: 1,
+      };
+      const manualProvider: SearchProvider = {
+        name: "fixture",
+        version: "1",
+        async search() {
+          return { results: [], truncated: false };
+        },
+      };
+      for (let i = 0; i < 4; i++)
+        await runDiscovery(
+          store,
+          manualProvider,
+          `manual topic ${i}`,
+          limits,
+          () => 10_000 + i * 6_000,
+        );
+      const dispatched: string[] = [];
+      const scheduledProvider: SearchProvider = {
+        name: "fixture-scheduled",
+        version: "1",
+        async search({ query }) {
+          dispatched.push(query);
+          return { results: [], truncated: false };
+        },
+      };
+      const config = { limits, intervalMs: 86_400_000, adjacentPercent: 20 };
+      expect(
+        await runScheduledDiscovery(
+          store,
+          config,
+          34_000,
+          scheduledProvider,
+          () => 34_000,
+        ),
+      ).toBe(1);
+      expect(dispatched).toEqual(["robotics climate"]);
+      const run = store.sqlite
+        .query<{ query_kind: string; interest_lineage: string }, []>(
+          "SELECT query_kind,interest_lineage FROM discovery_runs WHERE query_kind='adjacent'",
+        )
+        .get()!;
+      expect(run.query_kind).toBe("adjacent");
+      expect(JSON.parse(run.interest_lineage)).toEqual([
+        { id: "robotics", version: 1 },
+        { id: "climate", version: 1 },
+      ]);
+    } finally {
+      store.close();
     }
   });
 

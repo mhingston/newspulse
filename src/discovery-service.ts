@@ -1,6 +1,7 @@
 import type { Store } from "./db/store";
 import { DiscoveryStore } from "./db/discovery-store";
 import { canonicalUrl, resolvedUrl } from "./domain";
+import { normalizeDiscoveryQuery } from "./discovery-planner";
 import type { SearchProvider, SearchResult } from "./search-provider";
 
 export interface DiscoveryLimits {
@@ -20,6 +21,9 @@ export interface DiscoveryOutcome {
 }
 export interface DiscoveryRunOptions {
   runId?: string;
+  queryKind?: "manual" | "interest" | "adjacent";
+  scheduleKey?: string;
+  interestLineage?: Array<{ id: string; version: number }>;
   beforeDispatch?: (runId: string) => void;
   allowResult?: (result: SearchResult) => boolean;
 }
@@ -56,6 +60,9 @@ export async function runDiscovery(
     provider: provider.name,
     providerVersion: provider.version,
     now: clock(),
+    queryKind: options.queryKind,
+    scheduleKey: options.scheduleKey ?? normalizeDiscoveryQuery(query),
+    interestLineage: options.interestLineage,
   });
   let notifiedDispatch = false;
   let cursor: string | undefined;

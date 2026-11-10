@@ -62,7 +62,7 @@ export async function runScheduledDiscovery(
   const due = state.due(now, 1000);
   const priorRuns = store.sqlite
     .query<{ total: number; adjacent: number }, [number]>(
-      "SELECT count(*) AS total,coalesce(sum(kind='adjacent'),0) AS adjacent FROM discovery_query_state WHERE last_run_at>=?",
+      "SELECT count(*) AS total,coalesce(sum(r.query_kind='adjacent'),0) AS adjacent FROM discovery_runs r JOIN discovery_pages p ON p.run_id=r.id WHERE p.started_at>=?",
     )
     .get(dayStart)!;
   const selected = allocateQuerySlots(
@@ -87,6 +87,9 @@ export async function runScheduledDiscovery(
         clock,
         {
           runId,
+          queryKind: query.kind,
+          scheduleKey: query.key,
+          interestLineage: query.interestLineage,
           beforeDispatch: (id) =>
             state.markAttempt(query.key, id, clock(), config.intervalMs),
           allowResult: (result) =>

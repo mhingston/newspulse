@@ -17,10 +17,10 @@ export class DiscoveryPlannerStore {
       .transaction(() => {
         this.db.query("UPDATE discovery_query_state SET enabled=0").run();
         const upsert = this.db
-          .query(`INSERT INTO discovery_query_state(query_key,query,kind,interest_id,interest_version,priority,negative_terms,enabled,next_due_at)
-        VALUES(?,?,?,?,?,?,?,1,?) ON CONFLICT(query_key) DO UPDATE SET
-        next_due_at=CASE WHEN discovery_query_state.query IS NOT excluded.query OR discovery_query_state.kind IS NOT excluded.kind OR discovery_query_state.interest_id IS NOT excluded.interest_id OR discovery_query_state.interest_version IS NOT excluded.interest_version OR discovery_query_state.priority IS NOT excluded.priority OR discovery_query_state.negative_terms IS NOT excluded.negative_terms THEN excluded.next_due_at ELSE discovery_query_state.next_due_at END,
-        query=excluded.query,kind=excluded.kind,interest_id=excluded.interest_id,interest_version=excluded.interest_version,priority=excluded.priority,negative_terms=excluded.negative_terms,enabled=1`);
+          .query(`INSERT INTO discovery_query_state(query_key,query,kind,interest_id,interest_version,priority,negative_terms,interest_lineage,enabled,next_due_at)
+        VALUES(?,?,?,?,?,?,?,?,1,?) ON CONFLICT(query_key) DO UPDATE SET
+        next_due_at=CASE WHEN discovery_query_state.query IS NOT excluded.query OR discovery_query_state.kind IS NOT excluded.kind OR discovery_query_state.interest_id IS NOT excluded.interest_id OR discovery_query_state.interest_version IS NOT excluded.interest_version OR discovery_query_state.priority IS NOT excluded.priority OR discovery_query_state.negative_terms IS NOT excluded.negative_terms OR discovery_query_state.interest_lineage IS NOT excluded.interest_lineage THEN excluded.next_due_at ELSE discovery_query_state.next_due_at END,
+        query=excluded.query,kind=excluded.kind,interest_id=excluded.interest_id,interest_version=excluded.interest_version,priority=excluded.priority,negative_terms=excluded.negative_terms,interest_lineage=excluded.interest_lineage,enabled=1`);
         for (const query of queries)
           upsert.run(
             query.key,
@@ -30,11 +30,12 @@ export class DiscoveryPlannerStore {
             query.interestVersion ?? null,
             query.priority,
             JSON.stringify(query.negative),
+            JSON.stringify(query.interestLineage),
             now,
           );
         const priorRuns = this.db
           .query<{ query: string; last_at: number }, []>(
-            "SELECT query,max(started_at) AS last_at FROM discovery_runs GROUP BY query",
+            "SELECT r.query,max(r.started_at) AS last_at FROM discovery_runs r JOIN discovery_pages p ON p.run_id=r.id GROUP BY r.query",
           )
           .all();
         const reschedule = this.db.query(
@@ -50,11 +51,6 @@ export class DiscoveryPlannerStore {
             .reduce((latest, row) => Math.max(latest, row.last_at), 0);
           if (lastAt > 0) reschedule.run(lastAt + intervalMs, query.key);
         }
-        this.db
-          .query(
-            "UPDATE discovery_query_state SET next_due_at=min(next_due_at,?) WHERE enabled=1 AND last_run_at IS NULL",
-          )
-          .run(now);
       })
       .immediate();
   }
@@ -65,12 +61,18 @@ export class DiscoveryPlannerStore {
   ): Array<PlannedQuery & { nextDueAt: number; utility: number }> {
     return this.db
       .query(
-        `SELECT s.query_key,s.query,s.kind,s.interest_id,s.interest_version,s.priority,s.negative_terms,s.next_due_at,
+        `SELECT s.query_key,s.query,s.kind,s.interest_id,s.interest_version,s.priority,s.negative_terms,s.interest_lineage,s.next_due_at,
       coalesce(sum(CASE WHEN f.useful=1 THEN 1 ELSE 0 END),0) AS useful,
-      coalesce(sum(CASE WHEN f.useful=0 THEN 1 ELSE 0 END),0) AS not_useful
+      coalesce(sum(CASE WHEN f.useful=0 THEN 1 ELSE 0 END),0) AS not_useful,
+      (SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback f ON f.result_id=r.id WHERE run.schedule_key=s.query_key AND f.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND f.useful=1) AS useful_items,
+      (SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback f ON f.result_id=r.id WHERE run.schedule_key=s.query_key AND f.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND f.useful=0) AS not_useful_items
       FROM discovery_query_state s LEFT JOIN discovery_query_feedback f ON f.query_key=s.query_key
       WHERE s.enabled=1 AND s.next_due_at<=? GROUP BY s.query_key
-      ORDER BY (s.priority+50*useful-40*not_useful) DESC,s.kind,s.query_key LIMIT ?`,
+      ORDER BY (s.priority
+        +50*coalesce(sum(CASE WHEN f.useful=1 THEN 1 ELSE 0 END),0)
+        -40*coalesce(sum(CASE WHEN f.useful=0 THEN 1 ELSE 0 END),0)
+        +50*(SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback rf ON rf.result_id=r.id WHERE run.schedule_key=s.query_key AND rf.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND rf.useful=1)
+        -40*(SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback rf ON rf.result_id=r.id WHERE run.schedule_key=s.query_key AND rf.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND rf.useful=0)) DESC,s.kind,s.query_key LIMIT ?`,
       )
       .all(now, limit)
       .map((r: any) => ({
@@ -79,11 +81,51 @@ export class DiscoveryPlannerStore {
         kind: r.kind,
         interestId: r.interest_id ?? undefined,
         interestVersion: r.interest_version ?? undefined,
+        interestLineage: JSON.parse(r.interest_lineage),
         priority: r.priority,
         nextDueAt: r.next_due_at,
-        utility: 50 * r.useful - 40 * r.not_useful,
+        utility:
+          50 * r.useful -
+          40 * r.not_useful +
+          50 * r.useful_items -
+          40 * r.not_useful_items,
         negative: JSON.parse(r.negative_terms),
       }));
+  }
+
+  matchingQuery(query: string): PlannedQuery | null {
+    const row = this.db
+      .query<
+        {
+          query_key: string;
+          query: string;
+          kind: PlannedQuery["kind"];
+          interest_id: string | null;
+          interest_version: number | null;
+          priority: number;
+          negative_terms: string;
+          interest_lineage: string;
+        },
+        []
+      >("SELECT * FROM discovery_query_state WHERE enabled=1")
+      .all()
+      .find(
+        (candidate) =>
+          normalizeDiscoveryQuery(candidate.query) ===
+          normalizeDiscoveryQuery(query),
+      );
+    return row
+      ? {
+          key: row.query_key,
+          query: row.query,
+          kind: row.kind,
+          interestId: row.interest_id ?? undefined,
+          interestVersion: row.interest_version ?? undefined,
+          priority: row.priority,
+          negative: JSON.parse(row.negative_terms),
+          interestLineage: JSON.parse(row.interest_lineage),
+        }
+      : null;
   }
 
   markAttempt(
@@ -131,12 +173,32 @@ export class DiscoveryPlannerStore {
     return rows.length;
   }
 
+  feedbackForLatestItemResult(
+    itemId: string,
+    useful: boolean,
+    now: number,
+  ): number {
+    const result = this.db
+      .query<{ id: number }, [string]>(
+        "SELECT r.id FROM discovery_results r JOIN discovery_pages p ON p.id=r.page_id JOIN discovery_runs run ON run.id=p.run_id WHERE r.item_id=? ORDER BY run.started_at DESC,r.id DESC LIMIT 1",
+      )
+      .get(itemId);
+    if (!result) throw new Error("No discovery result exists for that item");
+    return this.db
+      .query(
+        "INSERT INTO discovery_result_feedback(result_id,useful,created_at) VALUES(?,?,?)",
+      )
+      .run(result.id, Number(useful), now).changes;
+  }
+
   history(): unknown[] {
     return this.db
       .query(
-        `SELECT s.query_key,s.query,s.kind,s.interest_id,s.interest_version,s.priority,s.enabled,s.next_due_at,s.last_run_at,s.last_run_id,
+        `SELECT s.query_key,s.query,s.kind,s.interest_id,s.interest_version,s.interest_lineage,s.priority,s.enabled,s.next_due_at,s.last_run_at,s.last_run_id,
       coalesce(sum(CASE WHEN f.useful=1 THEN 1 ELSE 0 END),0) AS useful_feedback,
       coalesce(sum(CASE WHEN f.useful=0 THEN 1 ELSE 0 END),0) AS not_useful_feedback,
+      (SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback rf ON rf.result_id=r.id WHERE run.schedule_key=s.query_key AND rf.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND rf.useful=1) AS useful_discoveries,
+      (SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback rf ON rf.result_id=r.id WHERE run.schedule_key=s.query_key AND rf.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND rf.useful=0) AS not_useful_discoveries,
       (SELECT count(*) FROM discovery_results r JOIN discovery_pages p ON p.id=r.page_id WHERE p.run_id=s.last_run_id) AS latest_result_count,
       (SELECT status FROM discovery_runs WHERE id=s.last_run_id) AS latest_run_status
       FROM discovery_query_state s LEFT JOIN discovery_query_feedback f ON f.query_key=s.query_key

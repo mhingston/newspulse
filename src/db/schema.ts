@@ -494,6 +494,9 @@ export const discoveryRuns = sqliteTable("discovery_runs", {
   startedAt: integer("started_at").notNull(),
   finishedAt: integer("finished_at"),
   lastError: text("last_error"),
+  queryKind: text("query_kind").notNull().default("manual"),
+  scheduleKey: text("schedule_key"),
+  interestLineage: text("interest_lineage").notNull().default("[]"),
 });
 
 export const discoveryPages = sqliteTable(
@@ -547,6 +550,21 @@ export const discoveryResults = sqliteTable(
   ],
 );
 
+export const discoveryResultFeedback = sqliteTable(
+  "discovery_result_feedback",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    resultId: integer("result_id")
+      .notNull()
+      .references(() => discoveryResults.id),
+    useful: integer().notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    index("discovery_result_feedback_result").on(t.resultId, t.createdAt),
+  ],
+);
+
 /** Durable schedule and explicit utility signals for profile-driven discovery. */
 export const discoveryQueryState = sqliteTable("discovery_query_state", {
   queryKey: text("query_key").primaryKey(),
@@ -556,6 +574,7 @@ export const discoveryQueryState = sqliteTable("discovery_query_state", {
   interestVersion: integer("interest_version"),
   priority: integer().notNull(),
   negativeTerms: text("negative_terms").notNull(),
+  interestLineage: text("interest_lineage").notNull().default("[]"),
   enabled: integer().notNull().default(1),
   nextDueAt: integer("next_due_at").notNull(),
   lastRunAt: integer("last_run_at"),
