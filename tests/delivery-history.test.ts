@@ -792,6 +792,51 @@ test("redirect aliases with high frozen fanout are counted before historical loo
   }
 });
 
+test("failed and pending delivery fanout is bounded before status filtering", () => {
+  const store = new Store(":memory:");
+  try {
+    store.sqlite.exec(
+      "INSERT INTO items(id,identity,title,ingested_at) VALUES('candidate','candidate','robotics',1),('older','older','robotics',1);" +
+        "INSERT INTO story_groups(id,first_seen) VALUES('newer',1),('older-group',1);" +
+        "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('newer','candidate','{}','v1',1),('older-group','older','{}','v1',1);" +
+        "INSERT INTO story_relations(older_group_id,newer_group_id,reason,evidence,rule_version,started_at) VALUES('older-group','newer','later_related_development','{}','v1',1);" +
+        "INSERT INTO digests(id,edition_date,timezone,subject,html,plain_text,decisions,fingerprint,frozen_at,sealed) VALUES('delivery-fanout','2026-01-01','UTC','s','','','','f',1,0);" +
+        "INSERT INTO digest_items(digest_id,position,item_id,group_id,snapshot) VALUES('delivery-fanout',0,'older','older-group','{}');" +
+        "UPDATE digests SET sealed=1 WHERE id='delivery-fanout';",
+    );
+    const insert = store.sqlite.query(
+      "INSERT INTO deliveries(id,digest_id,edition_date,recipient,sender,idempotency_key,status,attempts,available_at,created_at,updated_at) VALUES(?,'delivery-fanout','2026-01-01',?,'sender',?,? ,0,1,1,1)",
+    );
+    store.sqlite.transaction(() => {
+      for (let index = 0; index < 1001; index++) {
+        const id = `delivery-${index}`;
+        insert.run(
+          id,
+          `recipient-${index}`,
+          `key-${index}`,
+          index % 2 ? "failed" : "pending",
+        );
+      }
+    })();
+    expect(
+      relatedDeliveryHistory(
+        store.sqlite,
+        "candidate",
+        "newer",
+        "robotics update",
+        "robotics follow up",
+        2,
+        3,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "delivery_history_limit",
+    });
+  } finally {
+    store.close();
+  }
+});
+
 test("grouping, scoring and curation retain cross-group history through restart and fence relation-only races", async () => {
   const directory = mkdtempSync(join(tmpdir(), "newspulse-related-e2e-"));
   const dbPath = join(directory, "state.sqlite");

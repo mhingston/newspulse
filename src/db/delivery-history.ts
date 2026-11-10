@@ -437,7 +437,6 @@ export function relatedDeliveryHistory(
             ON frozen.group_id=relation.older_group_id
           JOIN deliveries delivery ON delivery.digest_id=frozen.digest_id
           WHERE candidate.item_id=? AND relation.reason='later_related_development'
-            AND (delivery.status IN ('sent','ambiguous') OR (delivery.status='sending' AND delivery.first_attempt_at IS NOT NULL))
           UNION ALL
           SELECT 1
           FROM story_memberships candidate INDEXED BY story_members_by_item
@@ -450,7 +449,6 @@ export function relatedDeliveryHistory(
             ON frozen.item_id=COALESCE(own_redirect.item_id,older.item_id)
           JOIN deliveries delivery ON delivery.digest_id=frozen.digest_id
           WHERE candidate.item_id=? AND relation.reason='later_related_development'
-            AND (delivery.status IN ('sent','ambiguous') OR (delivery.status='sending' AND delivery.first_attempt_at IS NOT NULL))
           UNION ALL
           SELECT 1
           FROM story_memberships candidate INDEXED BY story_members_by_item
@@ -465,7 +463,6 @@ export function relatedDeliveryHistory(
             ON frozen.item_id=alias.old_id
           JOIN deliveries delivery ON delivery.digest_id=frozen.digest_id
           WHERE candidate.item_id=? AND relation.reason='later_related_development'
-            AND (delivery.status IN ('sent','ambiguous') OR (delivery.status='sending' AND delivery.first_attempt_at IS NOT NULL))
           LIMIT 1001
         )`,
       )
