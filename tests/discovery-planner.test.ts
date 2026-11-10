@@ -453,6 +453,130 @@ describe("discovery planning", () => {
     }
   });
 
+  test("a temporary interest expiring between ticks cannot dispatch its cached query", async () => {
+    const store = new Store(":memory:");
+    try {
+      const now = 1_000_000;
+      const temporary = interest({
+        lifetime: "temporary",
+        expiresAt: now + 5_000,
+      });
+      new ProfileStore(store.sqlite).import([temporary]);
+      const query = planDiscoveryQueries([temporary])[0]!;
+      const planner = new DiscoveryPlannerStore(store.sqlite);
+      planner.sync([query], now, 60_000);
+      store.sqlite
+        .query(
+          "UPDATE discovery_query_state SET next_due_at=? WHERE query_key=?",
+        )
+        .run(now + 10_000, query.key);
+      let calls = 0;
+      const provider: SearchProvider = {
+        name: "fixture",
+        version: "1",
+        async search() {
+          calls++;
+          return { results: [], truncated: false };
+        },
+      };
+      const config = {
+        limits: {
+          maxQueriesPerDay: 10,
+          maxQueriesPerRun: 1,
+          maxResultsPerDay: 10,
+          maxResultsPerRun: 5,
+          maxCostMicrosPerDay: 10,
+          maxCostMicrosPerRun: 5,
+          reservedCostMicrosPerQuery: 1,
+        },
+        intervalMs: 60_000,
+        adjacentPercent: 20,
+      };
+      await runScheduledDiscovery(store, config, now, provider, () => now);
+      expect(
+        await runScheduledDiscovery(
+          store,
+          config,
+          now + 11_000,
+          provider,
+          () => now + 11_000,
+        ),
+      ).toBe(0);
+      expect(calls).toBe(0);
+      expect(
+        store.sqlite
+          .query<{ enabled: number }, [string]>(
+            "SELECT enabled FROM discovery_query_state WHERE query_key=?",
+          )
+          .get(query.key)?.enabled,
+      ).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("profile preference edits between ticks invalidate cached negative queries", async () => {
+    const store = new Store(":memory:");
+    try {
+      const now = 2_000_000;
+      const original = interest();
+      new ProfileStore(store.sqlite).import([original]);
+      const query = planDiscoveryQueries([original])[0]!;
+      const planner = new DiscoveryPlannerStore(store.sqlite);
+      planner.sync([query], now, 60_000);
+      store.sqlite
+        .query(
+          "UPDATE discovery_query_state SET next_due_at=? WHERE query_key=?",
+        )
+        .run(now + 10_000, query.key);
+      let calls = 0;
+      const provider: SearchProvider = {
+        name: "fixture",
+        version: "1",
+        async search() {
+          calls++;
+          return { results: [], truncated: false };
+        },
+      };
+      const config = {
+        limits: {
+          maxQueriesPerDay: 10,
+          maxQueriesPerRun: 1,
+          maxResultsPerDay: 10,
+          maxResultsPerRun: 5,
+          maxCostMicrosPerDay: 10,
+          maxCostMicrosPerRun: 5,
+          reservedCostMicrosPerQuery: 1,
+        },
+        intervalMs: 60_000,
+        adjacentPercent: 20,
+      };
+      await runScheduledDiscovery(store, config, now, provider, () => now);
+      new ProfileStore(store.sqlite).import([
+        interest({ version: 2, negative: ["robotics"] }),
+      ]);
+      expect(
+        await runScheduledDiscovery(
+          store,
+          config,
+          now + 11_000,
+          provider,
+          () => now + 11_000,
+        ),
+      ).toBe(0);
+      expect(calls).toBe(0);
+      expect(
+        store.sqlite
+          .query<{ enabled: number }, [string]>(
+            "SELECT enabled FROM discovery_query_state WHERE query_key=?",
+          )
+          .get(query.key)?.enabled,
+      ).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
   test("populated scheduled-query state migrates with lineage defaults", () => {
     const dir = mkdtempSync(join(tmpdir(), "newspulse-discovery-migration-"));
     const prior = join(dir, "prior-migrations");

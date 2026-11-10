@@ -103,8 +103,50 @@ export async function runScheduledDiscovery(
     config.adjacentPercent,
     priorRuns,
   );
+  const validated =
+    selected.length === 0
+      ? []
+      : (() => {
+          const currentPlan = planDiscoveryQueries(
+            new ProfileStore(store.sqlite).activeInterests(clock()),
+          );
+          const currentQueries = new Map(
+            currentPlan.map((query) => [query.key, query]),
+          );
+          const staleSelection = selected.some((query) => {
+            const current = currentQueries.get(query.key);
+            return (
+              !current ||
+              current.query !== query.query ||
+              current.kind !== query.kind ||
+              current.interestId !== query.interestId ||
+              current.interestVersion !== query.interestVersion ||
+              current.priority !== query.priority ||
+              JSON.stringify(current.negative) !==
+                JSON.stringify(query.negative) ||
+              JSON.stringify(current.interestLineage) !==
+                JSON.stringify(query.interestLineage)
+            );
+          });
+          if (staleSelection) {
+            state.sync(currentPlan, now, config.intervalMs);
+            scheduleSyncTimes.set(store, now);
+          }
+          return selected.flatMap((query) => {
+            const current = currentQueries.get(query.key);
+            return current
+              ? [
+                  {
+                    ...current,
+                    nextDueAt: query.nextDueAt,
+                    utility: query.utility,
+                  },
+                ]
+              : [];
+          });
+        })();
   let dispatched = 0;
-  for (const query of selected) {
+  for (const query of validated) {
     const runId = crypto.randomUUID();
     try {
       const outcome = await runDiscovery(
