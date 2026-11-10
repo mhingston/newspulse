@@ -484,20 +484,27 @@ export const inboundReconciliation = sqliteTable(
 );
 
 /** Search observations and reservations survive restarts and uncertain provider outcomes. */
-export const discoveryRuns = sqliteTable("discovery_runs", {
-  id: text().primaryKey(),
-  query: text().notNull(),
-  provider: text().notNull(),
-  providerVersion: text("provider_version").notNull(),
-  subscriptionSnapshot: text("subscription_snapshot").notNull(),
-  status: text().notNull(),
-  startedAt: integer("started_at").notNull(),
-  finishedAt: integer("finished_at"),
-  lastError: text("last_error"),
-  queryKind: text("query_kind").notNull().default("manual"),
-  scheduleKey: text("schedule_key"),
-  interestLineage: text("interest_lineage").notNull().default("[]"),
-});
+export const discoveryRuns = sqliteTable(
+  "discovery_runs",
+  {
+    id: text().primaryKey(),
+    query: text().notNull(),
+    provider: text().notNull(),
+    providerVersion: text("provider_version").notNull(),
+    subscriptionSnapshot: text("subscription_snapshot").notNull(),
+    status: text().notNull(),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+    lastError: text("last_error"),
+    queryKind: text("query_kind").notNull().default("manual"),
+    scheduleKey: text("schedule_key"),
+    interestLineage: text("interest_lineage").notNull().default("[]"),
+  },
+  (t) => [
+    index("discovery_runs_schedule_started").on(t.scheduleKey, t.startedAt),
+    index("discovery_runs_started").on(t.startedAt),
+  ],
+);
 
 export const discoveryPages = sqliteTable(
   "discovery_pages",

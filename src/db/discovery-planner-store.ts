@@ -33,18 +33,42 @@ export class DiscoveryPlannerStore {
             JSON.stringify(query.interestLineage),
             now,
           );
-        const priorRuns = this.db
-          .query<{ query: string; last_at: number }, []>(
-            "SELECT r.query,max(r.started_at) AS last_at FROM discovery_runs r JOIN discovery_pages p ON p.run_id=r.id GROUP BY r.query",
-          )
-          .all();
         const latestRunByQuery = new Map<string, number>();
-        for (const row of priorRuns) {
-          const key = normalizeDiscoveryQuery(row.query);
-          latestRunByQuery.set(
-            key,
-            Math.max(latestRunByQuery.get(key) ?? 0, row.last_at),
-          );
+        const queryKeys = [...new Set(queries.map((query) => query.key))];
+        if (queryKeys.length > 0) {
+          const placeholders = queryKeys.map(() => "?").join(",");
+          const recentRuns = this.db
+            .query<
+              { schedule_key: string; last_at: number },
+              [number, ...string[]]
+            >(
+              `SELECT r.schedule_key,max(r.started_at) AS last_at
+              FROM discovery_runs r
+              WHERE r.started_at>=? AND r.schedule_key IN (${placeholders})
+                AND EXISTS(SELECT 1 FROM discovery_pages p WHERE p.run_id=r.id)
+              GROUP BY r.schedule_key`,
+            )
+            .all(now - intervalMs, ...queryKeys);
+          for (const row of recentRuns)
+            latestRunByQuery.set(row.schedule_key, row.last_at);
+
+          // Rows created before schedule keys were introduced are bounded by
+          // the indexed interval and normalized in application code.
+          const legacyRuns = this.db
+            .query<{ query: string; last_at: number }, [number]>(
+              `SELECT r.query,max(r.started_at) AS last_at FROM discovery_runs r
+              WHERE r.schedule_key IS NULL AND r.started_at>=?
+                AND EXISTS(SELECT 1 FROM discovery_pages p WHERE p.run_id=r.id)
+              GROUP BY r.query`,
+            )
+            .all(now - intervalMs);
+          for (const row of legacyRuns) {
+            const key = normalizeDiscoveryQuery(row.query);
+            latestRunByQuery.set(
+              key,
+              Math.max(latestRunByQuery.get(key) ?? 0, row.last_at),
+            );
+          }
         }
         const reschedule = this.db.query(
           "UPDATE discovery_query_state SET next_due_at=max(next_due_at,?) WHERE query_key=?",

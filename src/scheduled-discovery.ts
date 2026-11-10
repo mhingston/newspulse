@@ -14,6 +14,11 @@ export interface ScheduledDiscoveryConfig {
   adjacentPercent: number;
 }
 
+const scheduleSyncTimes = new WeakMap<Store, number>();
+const scheduleSyncIntervalMs = 60_000;
+const restorePauseMessage =
+  "Discovery is blocked until the next UTC day after restore";
+
 /** Defer restore gating until the optional discovery stage is actually invoked. */
 export function createScheduledDiscoveryTick(
   dbPath: string,
@@ -21,7 +26,13 @@ export function createScheduledDiscoveryTick(
   config: ScheduledDiscoveryConfig,
 ): () => Promise<void> {
   return async () => {
-    assertDiscoveryRestoreElapsed(dbPath);
+    try {
+      assertDiscoveryRestoreElapsed(dbPath);
+    } catch (error) {
+      if (error instanceof Error && error.message === restorePauseMessage)
+        return;
+      throw error;
+    }
     await runScheduledDiscovery(store, config);
   };
 }
@@ -33,10 +44,6 @@ export async function runScheduledDiscovery(
   provider: SearchProvider = new GdeltSearchProvider(),
   clock: () => number = Date.now,
 ): Promise<number> {
-  const profiles = new ProfileStore(store.sqlite).activeInterests(now);
-  const planned = planDiscoveryQueries(profiles);
-  const state = new DiscoveryPlannerStore(store.sqlite);
-  state.sync(planned, now, config.intervalMs);
   const dayStart = Math.floor(now / 86_400_000) * 86_400_000;
   const dailyUsage = store.sqlite
     .query<
@@ -72,6 +79,18 @@ export async function runScheduledDiscovery(
     ),
   );
   if (!slots || dailyUsage.results >= config.limits.maxResultsPerDay) return 0;
+  const state = new DiscoveryPlannerStore(store.sqlite);
+  const lastSync = scheduleSyncTimes.get(store);
+  if (
+    lastSync === undefined ||
+    now < lastSync ||
+    now - lastSync >= scheduleSyncIntervalMs
+  ) {
+    const profiles = new ProfileStore(store.sqlite).activeInterests(now);
+    const planned = planDiscoveryQueries(profiles);
+    state.sync(planned, now, config.intervalMs);
+    scheduleSyncTimes.set(store, now);
+  }
   const due = state.due(now, 1000);
   const priorRuns = store.sqlite
     .query<{ total: number; adjacent: number }, [number]>(

@@ -336,6 +336,123 @@ describe("discovery planning", () => {
     }
   });
 
+  test("schedule sync uses indexed recent runs and ignores older execution history", () => {
+    const store = new Store(":memory:");
+    try {
+      const query = planDiscoveryQueries([interest()])[0]!;
+      const now = 5_000_000_000;
+      const intervalMs = 86_400_000;
+      const insertRun = store.sqlite.query(
+        `INSERT INTO discovery_runs(id,query,provider,provider_version,subscription_snapshot,status,started_at,schedule_key)
+         VALUES(?,?,'fixture','1','{}','completed',?,?)`,
+      );
+      const insertPage = store.sqlite.query(
+        `INSERT INTO discovery_pages(id,run_id,budget_day,reserved_results,reserved_cost_micros,status,started_at,finished_at)
+         VALUES(?,?,0,1,1,'complete',?,?)`,
+      );
+      for (const [id, startedAt] of [
+        ["old-run", now - intervalMs - 1],
+        ["recent-run", now - 60_000],
+      ] as const) {
+        insertRun.run(id, query.query, startedAt, query.key);
+        insertPage.run(`${id}-page`, id, startedAt, startedAt);
+      }
+      const planner = new DiscoveryPlannerStore(store.sqlite);
+      planner.sync([query], now, intervalMs);
+      expect(
+        store.sqlite
+          .query<{ next_due_at: number }, [string]>(
+            "SELECT next_due_at FROM discovery_query_state WHERE query_key=?",
+          )
+          .get(query.key)?.next_due_at,
+      ).toBe(now - 60_000 + intervalMs);
+
+      const plan = store.sqlite
+        .query<{ detail: string }, [number, string]>(
+          `EXPLAIN QUERY PLAN SELECT r.schedule_key,max(r.started_at)
+           FROM discovery_runs r WHERE r.started_at>=? AND r.schedule_key IN (?)
+           AND EXISTS(SELECT 1 FROM discovery_pages p WHERE p.run_id=r.id)
+           GROUP BY r.schedule_key`,
+        )
+        .all(now - intervalMs, query.key)
+        .map((row) => row.detail);
+      expect(
+        plan.some((detail) =>
+          detail.includes("discovery_runs_schedule_started"),
+        ),
+      ).toBe(true);
+      expect(
+        plan.some((detail) => detail.includes("discovery_pages_run")),
+      ).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("scheduled discovery skips sync while the daily budget is exhausted", async () => {
+    const store = new Store(":memory:");
+    try {
+      new ProfileStore(store.sqlite).import([interest()]);
+      const now = 86_400_000 * 20;
+      store.sqlite.exec(`
+        INSERT INTO discovery_runs(id,query,provider,provider_version,subscription_snapshot,status,started_at)
+        VALUES('budget-run','manual','fixture','1','{}','completed',${now});
+        INSERT INTO discovery_pages(id,run_id,budget_day,reserved_results,reserved_cost_micros,status,started_at,finished_at)
+        VALUES('budget-page','budget-run',20,1,1,'complete',${now},${now});
+      `);
+      const config = {
+        limits: {
+          maxQueriesPerDay: 1,
+          maxQueriesPerRun: 1,
+          maxResultsPerDay: 10,
+          maxResultsPerRun: 5,
+          maxCostMicrosPerDay: 10,
+          maxCostMicrosPerRun: 5,
+          reservedCostMicrosPerQuery: 1,
+        },
+        intervalMs: 86_400_000,
+        adjacentPercent: 20,
+      };
+      const provider: SearchProvider = {
+        name: "fixture",
+        version: "1",
+        async search() {
+          return { results: [], truncated: false };
+        },
+      };
+      expect(
+        await runScheduledDiscovery(
+          store,
+          config,
+          now + 1,
+          provider,
+          () => now + 1,
+        ),
+      ).toBe(0);
+      expect(
+        store.sqlite
+          .query("SELECT count(*) AS n FROM discovery_query_state")
+          .get(),
+      ).toEqual({ n: 0 });
+      expect(
+        await runScheduledDiscovery(
+          store,
+          config,
+          now + 86_400_000 + 1,
+          provider,
+          () => now + 86_400_000 + 1,
+        ),
+      ).toBe(1);
+      expect(
+        store.sqlite
+          .query("SELECT count(*) AS n FROM discovery_query_state")
+          .get(),
+      ).toEqual({ n: 1 });
+    } finally {
+      store.close();
+    }
+  });
+
   test("populated scheduled-query state migrates with lineage defaults", () => {
     const dir = mkdtempSync(join(tmpdir(), "newspulse-discovery-migration-"));
     const prior = join(dir, "prior-migrations");

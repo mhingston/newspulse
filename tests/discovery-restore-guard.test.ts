@@ -38,7 +38,7 @@ describe("discovery restore budget guard", () => {
     const db = path();
     const store = new Store(db);
     try {
-      const now = Date.parse("2026-11-10T12:00:00.000Z");
+      const now = Date.now();
       markRestoredDiscovery(db, now);
       const tick = createScheduledDiscoveryTick(db, store, {
         limits: {
@@ -54,7 +54,10 @@ describe("discovery restore budget guard", () => {
         adjacentPercent: 20,
       });
       expect(store.sources()).toEqual([]);
-      await expect(tick()).rejects.toThrow("next UTC day");
+      await expect(tick()).resolves.toBeUndefined();
+      expect(() => assertDiscoveryRestoreElapsed(db, now)).toThrow(
+        "next UTC day",
+      );
       expect(store.sources()).toEqual([]);
     } finally {
       store.close();
