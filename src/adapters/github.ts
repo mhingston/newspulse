@@ -23,8 +23,8 @@ const maxReleasePages = 10;
 const maxEventPages = 3;
 const maxSeenEvents = 300;
 const maxCursorBytes = 1_000_000;
-/** GitHub search paginates at most the first 1000 results (10 pages of 100). */
-const maxSearchPages = 10;
+/** GitHub search paginates at most the first 1000 results. */
+const maxSearchResults = 1000;
 const maxSearchResponseBytes = 1_000_000;
 
 interface PageState {
@@ -808,10 +808,10 @@ export class GithubSearchProvider implements SearchProvider {
       if (!match || Number(match[2]) > 100)
         throw new Error("Invalid GitHub search cursor");
       offset = Number(match[1]);
-      if (offset > 1000) throw new Error("Invalid GitHub search cursor");
+      if (offset >= maxSearchResults)
+        throw new Error("Invalid GitHub search cursor");
     }
     const page = Math.floor(offset / perPage) + 1;
-    if (page > maxSearchPages) throw new Error("Invalid GitHub search cursor");
     const skip = offset % perPage;
     const url = new URL(`${apiRoot}/search/repositories`);
     url.searchParams.set("q", query);
@@ -867,8 +867,8 @@ export class GithubSearchProvider implements SearchProvider {
       const result = this.parseRepository(row);
       if (result) results.push(result);
     }
-    const exhausted = page >= maxSearchPages;
     const nextOffset = offset + Math.max(0, rows.length - skip);
+    const exhausted = nextOffset >= maxSearchResults;
     return {
       results,
       truncated: rows.length === perPage,

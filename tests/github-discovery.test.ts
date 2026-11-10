@@ -130,6 +130,27 @@ describe("GitHub repository search provider", () => {
     expect(second.results[0]!.title).toContain("acme/s1");
   });
 
+  test("pagination is bounded by the 1000-result window, not a page count", async () => {
+    const { provider, requests } = search((url) => {
+      const perPage = Number(url.searchParams.get("per_page"));
+      return json(
+        Array.from({ length: perPage }, (_, index) => repo(`acme/r${index}`)),
+      );
+    });
+    const page = await provider.search({
+      query: "widgets",
+      limit: 12,
+      cursor: "996:12",
+    });
+    // Offset 996 with 12-result pages is API page 84, well past ten pages.
+    expect(requests[0]!.url.searchParams.get("page")).toBe("84");
+    expect(page.truncated).toBe(true);
+    expect(page.nextCursor).toBeUndefined();
+    await expect(
+      provider.search({ query: "widgets", limit: 12, cursor: "1000:12" }),
+    ).rejects.toThrow("Invalid GitHub search cursor");
+  });
+
   test("rejects invalid queries and limits before any request", async () => {
     const { provider, requests } = search(() => json([]));
     await expect(provider.search({ query: "", limit: 10 })).rejects.toThrow(
