@@ -4,7 +4,7 @@ import { request as httpsRequest } from "node:https";
 import { isIP } from "node:net";
 import ipaddr from "ipaddr.js";
 import { parseHTML } from "linkedom";
-import { resolvedUrl } from "../domain";
+import { resolvedUrl, parseHackerNewsSource } from "../domain";
 
 export type Extraction = {
   status: "extracted" | "unavailable";
@@ -329,6 +329,29 @@ export function extractionHandler(
           at: Date.now(),
         }),
       };
+    // A followed HN discussion already carries the structured, bounded body
+    // from the Firebase adapter. Fetching the HTML page instead would replace
+    // that body with an unbounded scrape and bypass the comment limits.
+    if (
+      parseHackerNewsSource(reference)?.kind === "item" &&
+      item.text?.trim()
+    ) {
+      const structured = item.text.trim();
+      const hash = new Bun.CryptoHasher("sha256")
+        .update(structured)
+        .digest("hex");
+      return {
+        status: "extracted",
+        result: JSON.stringify({
+          status: "extracted",
+          text: structured,
+          method: "structured",
+          sourceUrl: reference,
+          hash,
+          at: Date.now(),
+        }),
+      };
+    }
     const trustedOrigin =
       entry &&
       trustedFeeds.includes(entry.feed_url) &&

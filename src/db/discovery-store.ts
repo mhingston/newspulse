@@ -43,6 +43,9 @@ export class DiscoveryStore {
   private pacingGapMs(provider: string): number | null {
     if (provider === "github") return 6_010;
     if (provider === "gdelt") return 5_000;
+    // Algolia has no documented per-second limit; keep a conservative gap so a
+    // scheduler bug cannot burst requests.
+    if (provider === "hackernews") return 5_000;
     return null;
   }
   createRun(input: {
@@ -82,7 +85,7 @@ export class DiscoveryStore {
       .transaction(() => {
         const sources = this.db
           .query<{ id: string }, []>(
-            "SELECT id FROM sources WHERE kind IN ('rss','github') AND enabled=1 AND removed=0 ORDER BY id LIMIT 10001",
+            "SELECT id FROM sources WHERE kind IN ('rss','github','hackernews') AND enabled=1 AND removed=0 ORDER BY id LIMIT 10001",
           )
           .all();
         if (sources.length > 10000)

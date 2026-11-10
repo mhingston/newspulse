@@ -26,14 +26,18 @@ import { acquireDiscoveryLock } from "./discovery-lock";
 import { createScheduledDiscoveryTick } from "./scheduled-discovery";
 import { githubDiscoveryConfig } from "./github-discovery-config";
 import { createGithubDiscoveryTick } from "./github-discovery";
+import { hnDiscoveryConfig } from "./hn-discovery-config";
+import { createHnDiscoveryTick } from "./hn-discovery";
 import { GitHubSourceAdapter } from "./adapters/github";
-import { isGithubSourceUrl } from "./domain";
+import { HackerNewsAdapter } from "./adapters/hackernews";
+import { isGithubSourceUrl, isHackerNewsSourceUrl } from "./domain";
 import { SourceRouter } from "./worker";
 const cfg = config();
 const analysis = analysisConfig();
 const delivery = deliveryConfig();
 const scheduledDiscovery = scheduledDiscoveryConfig();
 const githubDiscovery = githubDiscoveryConfig();
+const hnDiscovery = hnDiscoveryConfig();
 // The OS releases this lock only when the process exits, including after a crash.
 // Keep it for the process lifetime even if a timed-out provider ignores abort.
 if (analysis) acquireAnalysisLock(cfg.DB_PATH);
@@ -42,7 +46,7 @@ if (delivery) {
   acquireDeliveryLock(cfg.DB_PATH);
   assertDeliveryRestoreAcknowledged(cfg.DB_PATH);
 }
-if (scheduledDiscovery || githubDiscovery) {
+if (scheduledDiscovery || githubDiscovery || hnDiscovery) {
   acquireDiscoveryLock(cfg.DB_PATH);
 }
 const store = new Store(cfg.DB_PATH);
@@ -80,6 +84,10 @@ const scheduler = schedule(
         {
           matches: isGithubSourceUrl,
           adapter: new GitHubSourceAdapter(cfg.GITHUB_TOKEN),
+        },
+        {
+          matches: isHackerNewsSourceUrl,
+          adapter: new HackerNewsAdapter(),
         },
       ],
       new RssAdapter(),
@@ -162,6 +170,11 @@ const scheduler = schedule(
           githubDiscovery,
           cfg.GITHUB_TOKEN,
         ),
+      }
+    : undefined,
+  hnDiscovery
+    ? {
+        tick: createHnDiscoveryTick(cfg.DB_PATH, store, hnDiscovery),
       }
     : undefined,
 );
