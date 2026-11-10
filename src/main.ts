@@ -22,9 +22,8 @@ import { ResendInbound } from "./adapters/resend-inbound";
 import { InboundStore } from "./db/inbound";
 import { InboundWorker, inboundWebhook } from "./inbound-worker";
 import { scheduledDiscoveryConfig } from "./scheduled-discovery-config";
-import { runScheduledDiscovery } from "./scheduled-discovery";
 import { acquireDiscoveryLock } from "./discovery-lock";
-import { assertDiscoveryRestoreElapsed } from "./discovery-restore-guard";
+import { createScheduledDiscoveryTick } from "./scheduled-discovery";
 const cfg = config();
 const analysis = analysisConfig();
 const delivery = deliveryConfig();
@@ -39,7 +38,6 @@ if (delivery) {
 }
 if (scheduledDiscovery) {
   acquireDiscoveryLock(cfg.DB_PATH);
-  assertDiscoveryRestoreElapsed(cfg.DB_PATH);
 }
 const store = new Store(cfg.DB_PATH);
 const inboundStore =
@@ -132,10 +130,11 @@ const scheduler = schedule(
     : undefined,
   scheduledDiscovery
     ? {
-        tick: async () => {
-          assertDiscoveryRestoreElapsed(cfg.DB_PATH);
-          await runScheduledDiscovery(store, scheduledDiscovery);
-        },
+        tick: createScheduledDiscoveryTick(
+          cfg.DB_PATH,
+          store,
+          scheduledDiscovery,
+        ),
       }
     : undefined,
 );

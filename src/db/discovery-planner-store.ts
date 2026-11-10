@@ -38,17 +38,20 @@ export class DiscoveryPlannerStore {
             "SELECT r.query,max(r.started_at) AS last_at FROM discovery_runs r JOIN discovery_pages p ON p.run_id=r.id GROUP BY r.query",
           )
           .all();
+        const latestRunByQuery = new Map<string, number>();
+        for (const row of priorRuns) {
+          const key = normalizeDiscoveryQuery(row.query);
+          latestRunByQuery.set(
+            key,
+            Math.max(latestRunByQuery.get(key) ?? 0, row.last_at),
+          );
+        }
         const reschedule = this.db.query(
           "UPDATE discovery_query_state SET next_due_at=max(next_due_at,?) WHERE query_key=?",
         );
         for (const query of queries) {
-          const lastAt = priorRuns
-            .filter(
-              (row) =>
-                normalizeDiscoveryQuery(row.query) ===
-                normalizeDiscoveryQuery(query.query),
-            )
-            .reduce((latest, row) => Math.max(latest, row.last_at), 0);
+          const lastAt =
+            latestRunByQuery.get(normalizeDiscoveryQuery(query.query)) ?? 0;
           if (lastAt > 0) reschedule.run(lastAt + intervalMs, query.key);
         }
       })

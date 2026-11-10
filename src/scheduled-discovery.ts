@@ -6,11 +6,24 @@ import { discoveryConfig } from "./discovery-config";
 import { GdeltSearchProvider } from "./adapters/gdelt";
 import { runDiscovery } from "./discovery-service";
 import type { SearchProvider } from "./search-provider";
+import { assertDiscoveryRestoreElapsed } from "./discovery-restore-guard";
 
 export interface ScheduledDiscoveryConfig {
   limits: ReturnType<typeof discoveryConfig>;
   intervalMs: number;
   adjacentPercent: number;
+}
+
+/** Defer restore gating until the optional discovery stage is actually invoked. */
+export function createScheduledDiscoveryTick(
+  dbPath: string,
+  store: Store,
+  config: ScheduledDiscoveryConfig,
+): () => Promise<void> {
+  return async () => {
+    assertDiscoveryRestoreElapsed(dbPath);
+    await runScheduledDiscovery(store, config);
+  };
 }
 
 export async function runScheduledDiscovery(

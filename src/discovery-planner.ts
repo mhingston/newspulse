@@ -62,10 +62,13 @@ export function planDiscoveryQueries(interests: Interest[]): PlannedQuery[] {
     if (!prior) selected.set(key, candidate);
     else {
       const preferred =
-        (prior.kind === "adjacent" && kind === "interest") ||
-        candidate.priority > prior.priority
-          ? candidate
-          : prior;
+        prior.kind !== kind
+          ? kind === "interest"
+            ? candidate
+            : prior
+          : candidate.priority > prior.priority
+            ? candidate
+            : prior;
       selected.set(key, {
         ...preferred,
         negative: [...new Set([...prior.negative, ...candidate.negative])],
@@ -152,7 +155,10 @@ export function allocateQuerySlots<T extends { kind: "interest" | "adjacent" }>(
   let remaining = slots - adjacentTake - primaryTake;
   const extraPrimary = Math.min(remaining, primary.length - primaryTake);
   remaining -= extraPrimary;
-  const extraAdjacent = Math.min(remaining, adjacent.length - adjacentTake);
+  const extraAdjacent =
+    adjacentPercent === 0
+      ? 0
+      : Math.min(remaining, adjacent.length - adjacentTake);
   return [
     ...primary.slice(0, primaryTake),
     ...adjacent.slice(0, adjacentTake),

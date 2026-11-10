@@ -133,6 +133,32 @@ describe("discovery planning", () => {
     expect(
       allocateQuerySlots(queries, 1, 100, { total: 10, adjacent: 0 }),
     ).toHaveLength(1);
+    const adjacent = queries.filter((query) => query.kind === "adjacent");
+    expect(allocateQuerySlots(adjacent, 1, 0)).toEqual([]);
+    expect(allocateQuerySlots(adjacent, 1, 20)).toHaveLength(1);
+  });
+
+  test("configured query kind wins over a higher-priority adjacent duplicate", () => {
+    const queries = planDiscoveryQueries([
+      interest({
+        id: "robotics",
+        priority: 5,
+        entities: ["robotics"],
+        keywords: ["robotics"],
+      }),
+      interest({
+        id: "climate",
+        priority: 1,
+        entities: ["climate"],
+        keywords: ["climate"],
+        queries: ["robotics climate"],
+      }),
+    ]);
+    expect(
+      queries.find((query) => query.query === "robotics climate"),
+    ).toMatchObject({
+      kind: "interest",
+    });
   });
 
   test("persisted feedback prioritizes useful queries, while missing feedback is neutral", async () => {
