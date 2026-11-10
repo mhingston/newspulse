@@ -664,6 +664,7 @@ export class Store {
       currentText,
       update,
       now,
+      job.generation,
     );
     const input: ScoringInput = {
       itemId: item.id,

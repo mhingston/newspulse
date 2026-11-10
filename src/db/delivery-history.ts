@@ -10,6 +10,7 @@ export function deliveryHistory(
   text: string,
   update: ObservedUpdate | null,
   now = Date.now(),
+  extractionGeneration?: number,
 ) {
   const rows = db
     .query<
@@ -28,16 +29,23 @@ export function deliveryHistory(
       [string, string | null, string | null]
     >(
       `
+    WITH canonical_items(id) AS (
+      SELECT ? UNION SELECT item_id FROM story_memberships
+      WHERE ? IS NOT NULL AND group_id=? AND ended_at IS NULL
+    ), matching_items(id) AS (
+      SELECT id FROM canonical_items
+      UNION SELECT r.old_id FROM canonical_items c CROSS JOIN item_redirects r INDEXED BY item_redirects_item WHERE r.item_id=c.id
+    )
     SELECT d.id AS delivery_id,d.status,d.provider_id,d.updated_at AS accepted_at,
       g.id AS digest_id,g.edition_date,di.item_id,di.group_id,di.score_id,di.position
-    FROM deliveries d JOIN digests g ON g.id=d.digest_id AND g.sealed=1
-    JOIN digest_items di ON di.digest_id=g.id
-    WHERE (d.status IN ('sent','ambiguous') OR (d.status='sending' AND d.first_attempt_at IS NOT NULL))
-      AND (COALESCE((SELECT item_id FROM item_redirects WHERE old_id=di.item_id),di.item_id)=?
-        OR (? IS NOT NULL AND EXISTS (
-          SELECT 1 FROM story_memberships m WHERE m.item_id=COALESCE((SELECT item_id FROM item_redirects WHERE old_id=di.item_id),di.item_id)
-            AND m.group_id=? AND m.ended_at IS NULL)))
-    ORDER BY d.updated_at DESC,d.id DESC,di.position LIMIT 101
+    FROM matching_items candidates
+    CROSS JOIN digest_items di INDEXED BY digest_item_by_item
+    CROSS JOIN digests g
+    CROSS JOIN deliveries d INDEXED BY delivery_by_digest
+    WHERE di.item_id=candidates.id AND g.id=di.digest_id AND g.sealed=1
+      AND d.digest_id=g.id
+      AND (d.status IN ('sent','ambiguous') OR (d.status='sending' AND d.first_attempt_at IS NOT NULL))
+    ORDER BY g.frozen_at DESC,g.edition_date DESC,d.id DESC,di.position LIMIT 101
   `,
     )
     .all(itemId, groupId, groupId);
@@ -124,15 +132,32 @@ export function deliveryHistory(
           {
             title: string;
             text: string;
+            source_id: string;
             observed_at: number;
             backfilled: number;
           },
           [string]
         >(
-          "SELECT title,text,observed_at,backfilled FROM content_versions WHERE item_id=? ORDER BY id DESC LIMIT 1",
+          "SELECT title,text,source_id,observed_at,backfilled FROM content_versions WHERE item_id=? ORDER BY id DESC LIMIT 1",
         )
         .get(itemId)
     : null;
+  // A fetched article may be longer than its source snippet. Trust it only
+  // when the completed generation is tied to the same source observation.
+  const extractedFromObservation =
+    latestObservation &&
+    extractionGeneration !== undefined &&
+    db
+      .query<{ ok: number }, [string, number, string, number, string]>(
+        `SELECT 1 AS ok FROM processing_jobs WHERE item_id=? AND stage='extract' AND generation=? AND status='done' AND outcome='extracted' AND origin_source_id=? AND created_at=? AND CASE WHEN json_valid(result) THEN json_extract(result,'$.text')=? ELSE 0 END`,
+      )
+      .get(
+        itemId,
+        extractionGeneration,
+        latestObservation.source_id,
+        latestObservation.observed_at,
+        text,
+      ) !== null;
   const publishedAt = firstObservation
     ? db
         .query<{ published_at: number | null }, [string]>(
@@ -163,7 +188,7 @@ export function deliveryHistory(
           !latestObservation.backfilled &&
           latestObservation.observed_at <= now &&
           latestObservation.title === title &&
-          latestObservation.text === text
+          (latestObservation.text === text || extractedFromObservation)
         ? {
             sourceId: firstObservation.source_id,
             nativeId: firstObservation.native_id,

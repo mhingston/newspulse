@@ -267,6 +267,13 @@
       "when": 1794250308611,
       "tag": "0037_tense_jimmy_woo",
       "breakpoints": true
+    },
+    {
+      "idx": 38,
+      "version": "6",
+      "when": 1794254934235,
+      "tag": "0038_friendly_mole_man",
+      "breakpoints": true
     }
   ]
 }

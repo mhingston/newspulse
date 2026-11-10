@@ -194,6 +194,44 @@ test("duplicate group coverage is matched conservatively; oversized history stay
     );
     expect(followup.input?.meaningfulUpdate).toBe(true);
     f.store.sqlite
+      .query(
+        "UPDATE content_versions SET text='feed snippet' WHERE item_id='other-item'",
+      )
+      .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,origin_source_id,available_at,created_at,result) VALUES('extract-followup','other-item','extract',1,'done','extracted',?,3000,3000,?)",
+      )
+      .run(source.id, JSON.stringify({ status: "extracted", text: newText }));
+    expect(
+      deliveryHistory(
+        f.store.sqlite,
+        "other-item",
+        "group",
+        "Breakthrough robotics",
+        newText,
+        null,
+        4000,
+        1,
+      ).input?.meaningfulUpdate,
+    ).toBe(true);
+    expect(
+      deliveryHistory(
+        f.store.sqlite,
+        "other-item",
+        "group",
+        "Breakthrough robotics",
+        newText,
+        null,
+        4000,
+        2,
+      ).input?.meaningfulUpdate,
+    ).toBe(false);
+    f.store.sqlite
+      .query("UPDATE content_versions SET text=? WHERE item_id='other-item'")
+      .run(newText);
+
+    f.store.sqlite
       .query("UPDATE items SET published_at=1000 WHERE id='other-item'")
       .run();
     expect(
@@ -371,5 +409,72 @@ test("oversized frozen snapshots stay unknown without entering scoring provenanc
     expect(f.read().input).toBeNull();
   } finally {
     f.store.close();
+  }
+});
+
+test("late reconciliation of an older edition cannot replace the newer frozen comparison", () => {
+  const store = new Store(":memory:");
+  try {
+    const deliveries = new DeliveryStore(store.sqlite);
+    const freeze =
+      (date: string, frozenAt: number, title: string, text: string) => () =>
+        new DigestStore(store.sqlite).freeze(
+          {
+            date,
+            timezone: "Europe/London",
+            subject: "News",
+            html: "News",
+            text: "News",
+            decisionSnapshot: {},
+            items: [
+              {
+                itemId: "item",
+                groupId: null,
+                scoreId: null,
+                snapshot: {
+                  scoreSnapshot: { provenance: { input: { title, text } } },
+                },
+              },
+            ],
+          },
+          frozenAt,
+        );
+    const old = deliveries.prepare(
+      "2026-01-01",
+      "reader@example.test",
+      "sender@example.test",
+      freeze("2026-01-01", 1000, "Old robotics", oldText),
+      1000,
+    )!;
+    const first = deliveries.claim(1000)!;
+    deliveries.beginSend(first, 1000);
+    deliveries.fail(first, "ambiguous", 1001);
+    const newer = deliveries.prepare(
+      "2026-01-02",
+      "reader@example.test",
+      "sender@example.test",
+      freeze("2026-01-02", 2000, "Breakthrough robotics", newText),
+      2000,
+    )!;
+    const second = deliveries.claim(2000)!;
+    deliveries.beginSend(second, 2000);
+    deliveries.sent(second, "provider-new", 2001);
+    deliveries.reconcile(old.id, "accepted", "provider-old", 3000);
+    const result = deliveryHistory(
+      store.sqlite,
+      "item",
+      null,
+      "Breakthrough robotics",
+      newText,
+      { ...update, observedAt: 4000 },
+      5000,
+    );
+    expect(result.evidence).toMatchObject({
+      state: "accepted",
+      editionId: newer.digest_id,
+    });
+    expect(result.input?.meaningfulUpdate).toBe(false);
+  } finally {
+    store.close();
   }
 });

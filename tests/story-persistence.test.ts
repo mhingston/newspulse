@@ -141,6 +141,59 @@ test("unrelated grouping changes do not invalidate an unchanged membership", () 
   }
 });
 
+test("regrouping fences affected peers but leaves unrelated score claims intact", () => {
+  const store = new Store(":memory:");
+  try {
+    ingest(store, "https://feed-one.example/rss", [
+      candidate("a", "Acme releases Atlas 2 robotics model"),
+      candidate("b", "Atlas 2 robotics model launched by Acme"),
+      candidate("c", "Mars probe measures distant solar wind"),
+    ]);
+    for (let i = 0; i < 3; i++) {
+      const extraction = store.claimProcessing("extract", start + 1002)!;
+      expect(
+        store.completeProcessing(extraction, "unavailable", start + 1003),
+      ).toBe(true);
+    }
+    store.stories.reconcile(start + 2000);
+    const ids = store.search("robotics");
+    const peer = ids.find((item) => item.url?.endsWith("/a"))!.id;
+    const unrelated = store.search("Mars")[0]!.id;
+    const lease = store.sqlite.query(
+      "UPDATE processing_jobs SET status='running',lease_token=?,lease_until=? WHERE item_id=? AND stage='score'",
+    );
+    lease.run("peer-token", start + 100_000, peer);
+    lease.run("unrelated-token", start + 100_000, unrelated);
+    ingest(
+      store,
+      "https://feed-one.example/rss",
+      [candidate("b", "Acme launches Orion 3 robotics model")],
+      start + 5000,
+    );
+    expect(
+      store.sqlite
+        .query<{ status: string }, [string]>(
+          "SELECT status FROM processing_jobs WHERE item_id=? AND stage='score'",
+        )
+        .get(peer)?.status,
+    ).toBe("running");
+    store.stories.reconcile(start + 6000);
+    const state = store.sqlite.query<
+      { status: string; lease_token: string | null },
+      [string]
+    >(
+      "SELECT status,lease_token FROM processing_jobs WHERE item_id=? AND stage='score'",
+    );
+    expect(state.get(peer)).toEqual({ status: "pending", lease_token: null });
+    expect(state.get(unrelated)).toEqual({
+      status: "running",
+      lease_token: "unrelated-token",
+    });
+  } finally {
+    store.close();
+  }
+});
+
 test("corrections split a development without losing citations or audited memberships", () => {
   const store = new Store(":memory:");
   try {
