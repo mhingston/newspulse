@@ -1,6 +1,8 @@
 import { discoveryConfig } from "./discovery-config";
 import { runDiscovery } from "./discovery-service";
 import { GdeltSearchProvider } from "./adapters/gdelt";
+import { GithubSearchProvider } from "./adapters/github";
+import { planGithubQueries } from "./github-discovery";
 import {
   markRestoredDiscovery,
   assertDiscoveryRestoreElapsed,
@@ -33,7 +35,9 @@ import { DiscoveryPlannerStore } from "./db/discovery-planner-store";
 import { Store } from "./db/store";
 import { parseOpml, exportOpml } from "./adapters/opml";
 import { RssAdapter } from "./adapters/rss";
-import { Worker } from "./worker";
+import { GitHubSourceAdapter } from "./adapters/github";
+import { isGithubSourceUrl } from "./domain";
+import { SourceRouter, Worker } from "./worker";
 import { Database } from "bun:sqlite";
 import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
 import { dirname, resolve } from "node:path";
@@ -139,6 +143,7 @@ async function main() {
       : null;
   const discoveryLock = [
     "discover",
+    "discover-github",
     "discovery-reconcile-preview",
     "discovery-reconcile",
     "discovery-run-reconcile-preview",
@@ -219,6 +224,44 @@ async function main() {
           );
           break;
         }
+      case "discover-github":
+        assertDiscoveryRestoreElapsed(path);
+        {
+          const query = required(0, "query");
+          console.log(
+            JSON.stringify(
+              await runDiscovery(
+                store,
+                new GithubSearchProvider(process.env.GITHUB_TOKEN),
+                query,
+                discoveryConfig(),
+                Date.now,
+                { queryKind: "manual" },
+              ),
+              null,
+              2,
+            ),
+          );
+          break;
+        }
+      case "github-discovery-plan": {
+        const asOf = Number(required(0, "as-of epoch milliseconds"));
+        const days = Number(process.env.GITHUB_DISCOVERY_WINDOW_DAYS ?? "");
+        console.log(
+          JSON.stringify(
+            planGithubQueries(
+              new ProfileStore(store.sqlite).activeInterests(asOf),
+              asOf,
+              Number.isSafeInteger(days) && days >= 1 && days <= 365
+                ? days
+                : 90,
+            ),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
       case "discovery-plan":
         console.log(
           JSON.stringify(
@@ -506,14 +549,28 @@ async function main() {
           exportOpml(store.sources().filter((source) => source.kind === "rss")),
         );
         break;
-      case "poll":
+      case "poll": {
         store.enqueueDue(Date.now(), args.includes("--force"));
         console.log(
           JSON.stringify({
-            processed: await new Worker(store, new RssAdapter()).drain(100),
+            processed: await new Worker(
+              store,
+              new SourceRouter(
+                [
+                  {
+                    matches: isGithubSourceUrl,
+                    adapter: new GitHubSourceAdapter(
+                      process.env.GITHUB_TOKEN || undefined,
+                    ),
+                  },
+                ],
+                new RssAdapter(),
+              ),
+            ).drain(100),
           }),
         );
         break;
+      }
       case "search":
         console.log(
           JSON.stringify(store.search(required(0, "query")), null, 2),
@@ -528,7 +585,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discover-github QUERY|github-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

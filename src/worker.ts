@@ -1,4 +1,4 @@
-import type { SourceAdapter } from "./domain";
+import type { PollResult, PollState, SourceAdapter } from "./domain";
 import { HttpError } from "./adapters/rss";
 import { Store } from "./db/store";
 import { normalizeNewsletter } from "./adapters/newsletter";
@@ -55,6 +55,26 @@ export class Worker {
     return processed;
   }
 }
+export interface SourceRoute {
+  matches: (url: string) => boolean;
+  adapter: SourceAdapter;
+}
+/** Dispatch polls per source URL so provider adapters stay behind one contract. */
+export class SourceRouter implements SourceAdapter {
+  constructor(
+    private readonly routes: SourceRoute[],
+    private readonly fallback: SourceAdapter,
+  ) {}
+  async poll(
+    url: string,
+    state: PollState,
+    limits?: { maxEntries: number; maxBytes: number },
+  ): Promise<PollResult> {
+    const adapter =
+      this.routes.find((route) => route.matches(url))?.adapter ?? this.fallback;
+    return adapter.poll(url, state, limits);
+  }
+}
 export function schedule(
   store: Store,
   worker: Worker,
@@ -62,6 +82,7 @@ export function schedule(
   inbound?: { retrieve(): Promise<void>; reconcile(): Promise<void> },
   publication?: { tick(): Promise<void> },
   discovery?: { tick(): Promise<void> },
+  githubDiscovery?: { tick(): Promise<void> },
 ): { stop(): Promise<void> } {
   let active: Promise<unknown> | undefined;
   let stopping = false;
@@ -106,6 +127,15 @@ export function schedule(
         .catch((e) => log("discovery_scheduler_error", { error: String(e) }))
         .finally(() => stageActive.delete("discovery"));
       stageActive.set("discovery", task);
+    }
+    if (githubDiscovery && !stageActive.has("githubDiscovery")) {
+      const task = githubDiscovery
+        .tick()
+        .catch((e) =>
+          log("github_discovery_scheduler_error", { error: String(e) }),
+        )
+        .finally(() => stageActive.delete("githubDiscovery"));
+      stageActive.set("githubDiscovery", task);
     }
     if (processing)
       for (const stage of ["extract", "analyse", "group", "score"] as const) {
