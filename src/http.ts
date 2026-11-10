@@ -127,8 +127,46 @@ export function createApp(store: Store, config: HttpConfig) {
       );
     let action: string;
     try {
-      const body = await c.req.parseBody();
-      action = String(body.action ?? "");
+      const length = c.req.header("content-length");
+      if (length && (!/^\d+$/.test(length) || Number(length) > 1024))
+        return c.json({ error: "Payload too large" }, 413);
+      const reader = c.req.raw.body?.getReader();
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      if (reader) {
+        const deadline = Date.now() + 10_000;
+        while (true) {
+          let timer: ReturnType<typeof setTimeout> | undefined;
+          const chunk = await Promise.race([
+            reader.read(),
+            new Promise<null>((resolve) => {
+              timer = setTimeout(
+                () => resolve(null),
+                Math.max(0, deadline - Date.now()),
+              );
+            }),
+          ]).finally(() => {
+            if (timer) clearTimeout(timer);
+          });
+          if (!chunk) {
+            void reader.cancel().catch(() => {});
+            return c.json({ error: "Request timeout" }, 408);
+          }
+          const { done, value } = chunk;
+          if (done) break;
+          size += value.byteLength;
+          if (size > 1024) {
+            void reader.cancel().catch(() => {});
+            return c.json({ error: "Payload too large" }, 413);
+          }
+          chunks.push(value);
+        }
+      }
+      const body = new TextDecoder("utf-8", { fatal: true }).decode(
+        Buffer.concat(chunks),
+      );
+      const actions = new URLSearchParams(body).getAll("action");
+      action = actions.length === 1 ? actions[0]! : "";
     } catch {
       action = "";
     }

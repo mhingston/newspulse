@@ -321,6 +321,25 @@ test("a link cannot flip its action, and an unknown link is refused", async () =
   try {
     const { message, store, url } = edition;
     const link = linkFrom(message.html, edition.rss.id, "useful");
+    const oversized = await fetch(local(url, link), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `action=useful&extra=${"a".repeat(1024)}`,
+    });
+    expect(oversized.status).toBe(413);
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>("SELECT count(*) AS n FROM item_feedback")
+        .get()!.n,
+    ).toBe(0);
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>(
+          "SELECT count(*) AS n FROM digest_feedback_tokens WHERE used_at IS NOT NULL",
+        )
+        .get()!.n,
+    ).toBe(0);
+
     // Changing the submitted action does not match the token's bound action.
     const flipped = await fetch(local(url, link), {
       method: "POST",
