@@ -745,6 +745,53 @@ test("high fanout from a related group returns unknown before expanding beyond t
   }
 });
 
+test("redirect aliases with high frozen fanout are counted before historical lookup", () => {
+  const store = new Store(":memory:");
+  try {
+    store.sqlite.exec(
+      "INSERT INTO items(id,identity,title,ingested_at) VALUES('candidate','candidate','robotics',1),('canonical','canonical','robotics',1);" +
+        "INSERT INTO story_groups(id,first_seen) VALUES('newer','1'),('older',1);" +
+        "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('newer','candidate','{}','v1',1),('older','canonical','{}','v1',1);" +
+        "INSERT INTO story_relations(older_group_id,newer_group_id,reason,evidence,rule_version,started_at) VALUES('older','newer','later_related_development','{}','v1',1);" +
+        "INSERT INTO digests(id,edition_date,timezone,subject,html,plain_text,decisions,fingerprint,frozen_at,sealed) VALUES('redirect-digest','2026-01-01','UTC','s','','','','f',1,0);",
+    );
+    const insertItem = store.sqlite.query(
+      "INSERT INTO items(id,identity,title,ingested_at) VALUES(?,?,?,1)",
+    );
+    const insertRedirect = store.sqlite.query(
+      "INSERT INTO item_redirects(old_id,item_id) VALUES(?,'canonical')",
+    );
+    const insert = store.sqlite.query(
+      "INSERT INTO digest_items(digest_id,position,item_id,snapshot) VALUES('redirect-digest',?,?, '{}')",
+    );
+    store.sqlite.transaction(() => {
+      for (let position = 0; position < 1001; position++) {
+        const alias = `alias-${position}`;
+        insertItem.run(alias, alias, "robotics");
+        insertRedirect.run(alias);
+        insert.run(position, alias);
+      }
+    })();
+    store.sqlite.exec("UPDATE digests SET sealed=1 WHERE id='redirect-digest'");
+    expect(
+      relatedDeliveryHistory(
+        store.sqlite,
+        "candidate",
+        "newer",
+        "robotics update",
+        "robotics follow up",
+        2,
+        3,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "frozen_snapshot_match_limit",
+    });
+  } finally {
+    store.close();
+  }
+});
+
 test("grouping, scoring and curation retain cross-group history through restart and fence relation-only races", async () => {
   const directory = mkdtempSync(join(tmpdir(), "newspulse-related-e2e-"));
   const dbPath = join(directory, "state.sqlite");
