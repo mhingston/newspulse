@@ -85,7 +85,7 @@ export class DiscoveryStore {
       .transaction(() => {
         const sources = this.db
           .query<{ id: string }, []>(
-            "SELECT id FROM sources WHERE kind IN ('rss','github') AND enabled=1 AND removed=0 ORDER BY id LIMIT 10001",
+            "SELECT id FROM sources WHERE kind IN ('rss','github','hackernews') AND enabled=1 AND removed=0 ORDER BY id LIMIT 10001",
           )
           .all();
         if (sources.length > 10000)

@@ -13,14 +13,16 @@ interface Recorded {
 }
 
 function recordingFetcher(
-  route: (request: Recorded) => Response | Promise<Response>,
+  route: (
+    request: Recorded,
+    init?: RequestInit,
+  ) => Response | Promise<Response>,
 ) {
   const requests: Recorded[] = [];
   const fetcher = ((input: string | URL, init?: RequestInit) => {
     const request: Recorded = { url: new URL(String(input)) };
     requests.push(request);
-    void init;
-    return route(request);
+    return route(request, init);
   }) as (input: URL, init?: RequestInit) => Promise<Response>;
   return { fetcher, requests, requestsUntyped: fetcher };
 }
@@ -324,6 +326,248 @@ describe("Hacker News discussion adapter", () => {
         }),
       }),
     ).rejects.toThrow("Invalid persisted Hacker News cursor");
+  });
+
+  test("an unchanged discussion is periodically refreshed to catch comment edits", async () => {
+    let commentText = "original wording";
+    const { fetcher, requests } = recordingFetcher(({ url }) => {
+      if (url.pathname.endsWith("/item/100.json")) return json(story());
+      return json({
+        id: 101,
+        type: "comment",
+        by: "bob",
+        text: commentText,
+        kids: [],
+      });
+    });
+    const first = await poll(fetcher, itemUrl);
+    expect(first.items[0]!.text).toContain("bob: original wording");
+    // Inside the refresh window the cheap root-only check applies.
+    const stable = await poll(fetcher, itemUrl, { cursor: first.cursor });
+    expect(stable.notModified).toBe(true);
+    const before = requests.length;
+    // Simulate six hours passing without a structural change.
+    const cursor = JSON.parse(first.cursor!) as { refreshedAt: number };
+    cursor.refreshedAt = Date.now() - 6 * 3_600_000 - 1;
+    commentText = "corrected wording";
+    const refreshed = await poll(fetcher, itemUrl, {
+      cursor: JSON.stringify(cursor),
+    });
+    expect(requests.length - before).toBeGreaterThan(1);
+    expect(refreshed.notModified).toBe(false);
+    expect(refreshed.items[0]!.text).toContain("bob: corrected wording");
+  });
+
+  test("job feeds ingest postings whose type is job", async () => {
+    const jobsUrl = "https://news.ycombinator.com/jobs";
+    const { fetcher } = recordingFetcher(({ url }) => {
+      if (url.pathname.endsWith("/jobstories.json")) return json([900, 901]);
+      const id = Number(/item\/(\d+)\.json/.exec(url.pathname)![1]);
+      return json({
+        id,
+        type: "job",
+        by: "hiring",
+        time: 1_700_000_000,
+        title: `Job ${id}`,
+        url: `https://example.com/job/${id}`,
+        kids: [],
+      });
+    });
+    const result = await poll(fetcher, jobsUrl);
+    expect(result.items.map((item) => item.nativeId)).toEqual([
+      "hn-item:900",
+      "hn-item:901",
+    ]);
+    expect(result.items[0]!.title).toBe("Job 900");
+    expect(result.items[0]!.children).toEqual([
+      { url: "https://example.com/job/900", title: "Job 900" },
+    ]);
+  });
+
+  test("budget exhaustion keeps the root and returns a truncated partial result", async () => {
+    const { fetcher } = recordingFetcher(({ url }) => {
+      if (url.pathname.endsWith("/item/100.json"))
+        return json(
+          story({
+            kids: [101, 102],
+            descendants: 2,
+            text: "root body",
+          }),
+        );
+      return json({
+        id: Number(/item\/(\d+)\.json/.exec(url.pathname)![1]),
+        type: "comment",
+        by: "bob",
+        text: "x".repeat(50_000),
+        kids: [],
+      });
+    });
+    // The root fits but the first oversized comment exceeds the byte budget.
+    const result = await poll(
+      fetcher,
+      itemUrl,
+      {},
+      {
+        maxEntries: 50,
+        maxBytes: 20_000,
+      },
+    );
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]!.text).toContain("root body");
+    expect(result.items[0]!.text).toContain(
+      "[discussion truncated by ingestion bounds]",
+    );
+    expect(result.truncated).toBe(true);
+  });
+
+  test("a slow comment request past the poll deadline yields a partial result", async () => {
+    const realNow = Date.now;
+    // Run the whole poll 15s into its 45s budget, then jump past the deadline
+    // as soon as the root arrives. No real waiting is involved.
+    let skew = -15_000;
+    Date.now = () => realNow() + skew;
+    try {
+      const { fetcher, requests } = recordingFetcher(({ url }) => {
+        if (!url.pathname.endsWith("/item/100.json"))
+          return json({
+            id: 101,
+            type: "comment",
+            by: "bob",
+            text: "late",
+            kids: [],
+          });
+        skew = 31_000;
+        return json(story({ kids: [101], descendants: 1 }));
+      });
+      const result = await poll(fetcher, itemUrl);
+      expect(requests).toHaveLength(1);
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]!.text).toContain("Submitter: alice");
+      expect(result.truncated).toBe(true);
+      expect(result.items[0]!.text).toContain(
+        "[discussion truncated by ingestion bounds]",
+      );
+    } finally {
+      Date.now = realNow;
+    }
+  });
+
+  test("a provider failure on the root still propagates as a failure", async () => {
+    await expect(
+      poll(
+        recordingFetcher(() => new Response(null, { status: 503 })).fetcher,
+        itemUrl,
+      ),
+    ).rejects.toBeInstanceOf(HttpError);
+  });
+
+  test("comments are rendered depth-first so replies stay under their parent", async () => {
+    const { fetcher } = recordingFetcher(({ url }) => {
+      const id = Number(/item\/(\d+)\.json/.exec(url.pathname)![1]);
+      if (id === 100)
+        return json({
+          id: 100,
+          type: "story",
+          title: "Tree",
+          kids: [1, 2],
+          descendants: 3,
+        });
+      if (id === 1)
+        return json({
+          id: 1,
+          type: "comment",
+          by: "parent-a",
+          text: "parent A",
+          kids: [3],
+        });
+      if (id === 2)
+        return json({
+          id: 2,
+          type: "comment",
+          by: "parent-b",
+          text: "parent B",
+          kids: [],
+        });
+      return json({
+        id: 3,
+        type: "comment",
+        by: "child-a",
+        text: "child of A",
+        kids: [],
+      });
+    });
+    const text = (await poll(fetcher, itemUrl)).items[0]!.text;
+    const parentA = text.indexOf("parent-a: parent A");
+    const childA = text.indexOf("child-a: child of A");
+    const parentB = text.indexOf("parent-b: parent B");
+    expect(parentA).toBeGreaterThan(-1);
+    expect(childA).toBeGreaterThan(parentA);
+    expect(parentB).toBeGreaterThan(childA);
+    expect(text).toContain("  child-a: child of A");
+  });
+
+  test("clipping large discussions reserves space for the truncation marker", async () => {
+    const { fetcher } = recordingFetcher(({ url }) => {
+      if (url.pathname.endsWith("/item/100.json"))
+        return json(story({ text: "y".repeat(30_000), kids: [] }));
+      return json({ id: 101, type: "comment", text: "hi", kids: [] });
+    });
+    const candidate = (await poll(fetcher, itemUrl)).items[0]!;
+    expect(candidate.text.length).toBeLessThanOrEqual(20_000);
+    expect(
+      candidate.text.endsWith("[discussion truncated by ingestion bounds]"),
+    ).toBe(true);
+  });
+});
+
+describe("Hacker News structured extraction", () => {
+  test("a followed discussion is extracted from its stored structured body", async () => {
+    const { extractionHandler, HttpContentExtractor } =
+      await import("../src/adapters/extraction");
+    const store = new Store(":memory:");
+    try {
+      store.addSource(itemUrl, "HN discussion");
+      store.enqueueDue(1);
+      store.complete(
+        store.claim(1)!,
+        {
+          items: [
+            {
+              nativeId: "hn-item:100",
+              url: itemUrl,
+              sourceUrl: itemUrl,
+              title: "Discussion",
+              text: "Hacker News discussion: https://news.ycombinator.com/item?id=100\n\nbob: structured comment",
+            },
+          ],
+        },
+        2,
+      );
+      const item = store.getItem(
+        store.sqlite.query<{ id: string }, []>("SELECT id FROM items").get()!
+          .id,
+      )!;
+      let httpCalls = 0;
+      const extractor = new HttpContentExtractor(
+        async () => ["93.184.216.34"],
+        async () => {
+          httpCalls++;
+          throw new Error("must not fetch the HN page");
+        },
+      );
+      await new (await import("../src/worker")).ProcessingWorker(store, {
+        extract: extractionHandler(store, extractor),
+      }).drain("extract");
+      expect(httpCalls).toBe(0);
+      const extraction = store.getItem(item.id)?.extraction as {
+        method?: string;
+        text?: string;
+      } | null;
+      expect(extraction?.method).toBe("structured");
+      expect(extraction?.text).toContain("bob: structured comment");
+    } finally {
+      store.close();
+    }
   });
 });
 

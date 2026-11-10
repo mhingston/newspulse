@@ -387,4 +387,35 @@ describe("scheduled HN discovery", () => {
       store.close();
     }
   });
+
+  test("the discovery run snapshot includes followed Hacker News sources", async () => {
+    const store = new Store(":memory:");
+    try {
+      new ProfileStore(store.sqlite).import([interest]);
+      const followed = store.addSource(
+        "https://news.ycombinator.com/item?id=999999",
+        "Followed discussion",
+      );
+      const fetcher: HackerNewsFetcher = async () => storyHit();
+      const dispatched = await runScheduledHnDiscovery(
+        store,
+        config,
+        start,
+        provider(fetcher),
+        ticking(),
+      );
+      expect(dispatched).toBe(1);
+      const snapshot = store.sqlite
+        .query<{ subscription_snapshot: string }, []>(
+          "SELECT subscription_snapshot FROM discovery_runs",
+        )
+        .get()!;
+      expect(
+        (JSON.parse(snapshot.subscription_snapshot) as { sources: string[] })
+          .sources,
+      ).toContain(followed.id);
+    } finally {
+      store.close();
+    }
+  });
 });

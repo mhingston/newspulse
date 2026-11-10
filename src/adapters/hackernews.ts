@@ -26,6 +26,8 @@ const maxRequestsPerPoll = 80;
 const maxItemBytes = 200_000;
 const maxTextChars = 20_000;
 const maxSearchResponseBytes = 1_000_000;
+/** Refresh an unchanged discussion's comments at least this often. */
+const commentRefreshMs = 6 * 3_600_000;
 
 const listPaths: Record<HackerNewsList, string> = {
   top: "topstories",
@@ -60,12 +62,21 @@ interface HnCursor {
   seen: string[];
   /** Last structural fingerprint per item source. */
   fingerprints: Record<string, string>;
+  /** Last time comments were fully refreshed for an item source. */
+  refreshedAt?: number;
 }
 
 interface Budget {
   requests: number;
   bytes: number;
   maxBytes: number;
+}
+
+/** A local ingestion bound was hit; collected content is still usable. */
+class BudgetExhausted extends Error {
+  constructor(readonly kind: "request" | "time" | "byte") {
+    super(`Hacker News ${kind} budget exhausted`);
+  }
 }
 
 export type HackerNewsFetcher = (
@@ -109,7 +120,9 @@ function readCursor(
     if (
       cursor.seen.some(
         (id) => typeof id !== "string" || !/^[1-9]\d{0,9}$/.test(id),
-      )
+      ) ||
+      (cursor.refreshedAt !== undefined &&
+        (!Number.isSafeInteger(cursor.refreshedAt) || cursor.refreshedAt < 0))
     )
       throw new Error();
     return cursor;
@@ -296,26 +309,32 @@ export class HackerNewsAdapter implements SourceAdapter {
     path: string,
     budget: Budget,
     deadline: number,
+    required = false,
   ): Promise<unknown> {
+    // Local budget exhaustion is a partial result, not a provider failure:
+    // the caller keeps what it already collected and records `truncated`.
     if (budget.requests >= maxRequestsPerPoll)
-      throw new HttpError("Hacker News request budget exhausted", 30_000);
+      throw new BudgetExhausted("request");
     const remaining = deadline - Date.now();
-    if (remaining <= 0)
-      throw new HttpError("Hacker News poll exceeded its time budget", 30_000);
+    if (remaining <= 0) throw new BudgetExhausted("time");
     const remainingBytes = budget.maxBytes - budget.bytes;
-    if (remainingBytes <= 0)
-      throw new HttpError("Hacker News byte budget exhausted", 30_000);
+    if (remainingBytes <= 0) throw new BudgetExhausted("byte");
     budget.requests++;
     const url = new URL(`${hnApiRoot}/${path}`);
+    const controller = new AbortController();
+    const timeout = AbortSignal.timeout(Math.min(15_000, remaining));
+    timeout.addEventListener("abort", () => controller.abort(timeout.reason));
     let response: Response;
     try {
       response = await this.fetcher(url, {
         method: "GET",
         headers: { accept: "application/json", "user-agent": userAgent },
         redirect: "error",
-        signal: AbortSignal.timeout(Math.min(15_000, remaining)),
+        signal: controller.signal,
       });
     } catch {
+      // Our own deadline (rather than a provider outage) is a local bound.
+      if (required && timeout.aborted) throw new BudgetExhausted("time");
       throw new HttpError("Hacker News API request failed or timed out");
     }
     if (!response.ok) {
@@ -328,21 +347,35 @@ export class HackerNewsAdapter implements SourceAdapter {
         );
       throw new HttpError(`Hacker News API HTTP ${status}`);
     }
-    const bytes = await readBoundedBody(
-      response,
-      Math.min(remainingBytes, maxItemBytes),
-      "Hacker News response",
-    );
+    let bytes: Uint8Array;
+    try {
+      bytes = await readBoundedBody(
+        response,
+        Math.min(remainingBytes, maxItemBytes),
+        "Hacker News response",
+      );
+    } catch (error) {
+      // An oversized or slow body is a local bound, not a provider failure;
+      // callers keep what they already collected.
+      if (
+        !(error instanceof Error) ||
+        !/exceeds byte budget/.test(error.message)
+      )
+        throw error;
+      throw new BudgetExhausted("byte");
+    }
     budget.bytes += bytes.byteLength;
     return parseBoundedJson(bytes, "Hacker News");
   }
-
   private async fetchItem(
     id: number,
     budget: Budget,
     deadline: number,
+    required = false,
   ): Promise<HnItem | null> {
-    return parseItem(await this.getJson(`item/${id}.json`, budget, deadline));
+    return parseItem(
+      await this.getJson(`item/${id}.json`, budget, deadline, required),
+    );
   }
 
   private async pollItem(
@@ -352,19 +385,25 @@ export class HackerNewsAdapter implements SourceAdapter {
     budget: Budget,
     deadline: number,
   ): Promise<PollResult> {
-    const item = await this.fetchItem(source.id, budget, deadline);
+    const item = await this.fetchItem(source.id, budget, deadline, true);
     if (!item) throw new HttpError("Hacker News item was not found");
     const nextFingerprint = fingerprint(item);
     const previous = cursor.fingerprints[String(source.id)];
+    const now = Date.now();
+    const refreshDue =
+      cursor.refreshedAt === undefined ||
+      now - cursor.refreshedAt >= commentRefreshMs;
     const next: HnCursor = {
       version: 1,
       kind: "item",
       seen: [],
       fingerprints: { [String(source.id)]: nextFingerprint },
+      refreshedAt: cursor.refreshedAt,
     };
     // A discussion with no structural change is not re-fetched comment by
     // comment; new comments change descendants/kids and therefore the hash.
-    if (previous === nextFingerprint)
+    // A periodic refresh still catches edits that leave the structure intact.
+    if (previous === nextFingerprint && !refreshDue)
       return {
         items: [],
         cursor: serializeCursor(next),
@@ -376,11 +415,13 @@ export class HackerNewsAdapter implements SourceAdapter {
       budget,
       deadline,
     );
+    next.refreshedAt = now;
+    const built = this.buildCandidate(item, comments.text, comments.truncated);
     return {
-      items: [this.buildCandidate(item, comments.text, comments.truncated)],
+      items: [built.candidate],
       cursor: serializeCursor(next),
       entryCount: 1,
-      truncated: comments.truncated,
+      truncated: built.truncated,
       notModified: false,
     };
   }
@@ -396,6 +437,7 @@ export class HackerNewsAdapter implements SourceAdapter {
       `${listPaths[source.list]}.json`,
       budget,
       deadline,
+      true,
     );
     if (!Array.isArray(ids))
       throw new Error("Invalid Hacker News list response");
@@ -410,20 +452,29 @@ export class HackerNewsAdapter implements SourceAdapter {
     const items: Candidate[] = [];
     let truncated = fresh.length === maxItems && ids.length > maxItems;
     for (const id of fresh) {
-      if (budget.requests >= maxRequestsPerPoll) {
+      let item: HnItem | null;
+      try {
+        item = await this.fetchItem(id, budget, deadline);
+      } catch (error) {
+        if (!(error instanceof BudgetExhausted)) throw error;
         truncated = true;
         break;
       }
-      const item = await this.fetchItem(id, budget, deadline);
       seen.add(String(id));
-      if (!item || item.type !== "story") continue;
+      // Job feeds contain `type: "job"` postings, not stories.
+      if (!item || (item.type !== "story" && item.type !== "job")) continue;
       const comments = await this.fetchComments(
         item.kids ?? [],
         budget,
         deadline,
       );
-      if (comments.truncated) truncated = true;
-      items.push(this.buildCandidate(item, comments.text, comments.truncated));
+      const built = this.buildCandidate(
+        item,
+        comments.text,
+        comments.truncated,
+      );
+      if (built.truncated) truncated = true;
+      items.push(built.candidate);
     }
     const next: HnCursor = {
       version: 1,
@@ -447,23 +498,31 @@ export class HackerNewsAdapter implements SourceAdapter {
     deadline: number,
   ): Promise<{ text: string; truncated: boolean }> {
     const lines: string[] = [];
-    const queue: { id: number; depth: number }[] = kids.map((id) => ({
-      id,
-      depth: 0,
-    }));
+    // Depth-first keeps each reply directly after its parent, so indentation
+    // alone still communicates the tree structure.
+    const stack: { id: number; depth: number }[] = [...kids]
+      .reverse()
+      .map((id) => ({ id, depth: 0 }));
     let rendered = 0;
     let truncated = false;
-    while (queue.length) {
+    while (stack.length) {
       if (rendered >= maxComments || budget.requests >= maxRequestsPerPoll) {
         truncated = true;
         break;
       }
-      const { id, depth } = queue.shift()!;
+      const { id, depth } = stack.pop()!;
       if (depth > maxCommentDepth) {
         truncated = true;
         continue;
       }
-      const item = await this.fetchItem(id, budget, deadline);
+      let item: HnItem | null;
+      try {
+        item = await this.fetchItem(id, budget, deadline);
+      } catch (error) {
+        if (!(error instanceof BudgetExhausted)) throw error;
+        truncated = true;
+        break;
+      }
       if (!item) continue;
       rendered++;
       const indent = "  ".repeat(depth);
@@ -476,20 +535,23 @@ export class HackerNewsAdapter implements SourceAdapter {
         lines.push(
           `${indent}${item.by ?? "unknown"}: ${text(item.text, 2000)}`,
         );
+      const childKids = item.kids ?? [];
       if (depth < maxCommentDepth)
-        for (const kid of item.kids ?? [])
-          queue.push({ id: kid, depth: depth + 1 });
-      else if ((item.kids ?? []).length) truncated = true;
+        for (let index = childKids.length - 1; index >= 0; index--)
+          stack.push({ id: childKids[index]!, depth: depth + 1 });
+      else if (childKids.length) truncated = true;
     }
-    if (queue.length) truncated = true;
-    return { text: lines.join("\n").slice(0, maxTextChars), truncated };
+    if (stack.length) truncated = true;
+    const joined = lines.join("\n");
+    if (joined.length > maxTextChars) truncated = true;
+    return { text: joined.slice(0, maxTextChars), truncated };
   }
 
   private buildCandidate(
     item: HnItem,
     comments: string,
     commentsTruncated: boolean,
-  ): Candidate {
+  ): { candidate: Candidate; truncated: boolean } {
     const discussion = discussionUrl(item.id);
     const title = text(item.title, 500) || `Hacker News item ${item.id}`;
     const markers = [
@@ -506,28 +568,37 @@ export class HackerNewsAdapter implements SourceAdapter {
     ]
       .filter(Boolean)
       .join("\n");
-    const body = text(item.text, 8000);
-    const discussionText = [
-      header,
-      body,
-      comments ? `---\n${comments}` : "",
-      commentsTruncated ? "[discussion truncated by ingestion bounds]" : "",
-    ]
+    const rawBody = typeof item.text === "string" ? item.text : "";
+    let body = text(item.text, 8000);
+    let truncated = commentsTruncated || body.length < rawBody.trim().length;
+    const marker = "[discussion truncated by ingestion bounds]";
+    let discussionText = [header, body, comments ? `---\n${comments}` : ""]
       .filter(Boolean)
-      .join("\n\n")
-      .slice(0, maxTextChars);
+      .join("\n\n");
+    // Reserve room for the marker so clipping cannot hide the truncation.
+    if (discussionText.length + marker.length + 2 > maxTextChars) {
+      discussionText = discussionText.slice(
+        0,
+        maxTextChars - marker.length - 2,
+      );
+      truncated = true;
+    }
+    if (truncated) discussionText = `${discussionText}\n\n${marker}`;
     const children =
       isHttpUrl(item.url) && item.url !== discussion
         ? [{ url: item.url, title }]
         : undefined;
     return {
-      nativeId: `hn-item:${item.id}`,
-      url: discussion,
-      sourceUrl: discussion,
-      title: markers.length ? `${markers.join(" ")} ${title}` : title,
-      text: discussionText,
-      publishedAt: item.time ? item.time * 1000 : undefined,
-      children,
+      candidate: {
+        nativeId: `hn-item:${item.id}`,
+        url: discussion,
+        sourceUrl: discussion,
+        title: markers.length ? `${markers.join(" ")} ${title}` : title,
+        text: discussionText,
+        publishedAt: item.time ? item.time * 1000 : undefined,
+        children,
+      },
+      truncated,
     };
   }
 }
