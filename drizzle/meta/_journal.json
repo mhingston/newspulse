@@ -288,6 +288,13 @@
       "when": 1794299874459,
       "tag": "0040_condemned_fenris",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "6",
+      "when": 1794300756288,
+      "tag": "0041_thankful_roland_deschain",
+      "breakpoints": true
     }
   ]
 }

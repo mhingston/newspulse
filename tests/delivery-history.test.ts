@@ -160,9 +160,14 @@ test("distinct related developments compare against accepted frozen history with
         },
       },
       citations: Array.from({ length: 12 }, (_, index) => ({
-        sourceId: `frozen-source-${index}`,
-        nativeId: `frozen-native-${index}`,
-        url: `https://old.example/story/${index}`,
+        sourceId:
+          index === 0 ? `source-${"s".repeat(140)}` : `frozen-source-${index}`,
+        nativeId:
+          index === 0 ? `native-${"n".repeat(270)}` : `frozen-native-${index}`,
+        url:
+          index === 0
+            ? `https://old.example/${"u".repeat(270)}`
+            : `https://old.example/story/${index}`,
       })),
     },
     join(directory, "state.sqlite"),
@@ -221,15 +226,21 @@ test("distinct related developments compare against accepted frozen history with
         frozenSourceReferences: {
           count: number;
           truncated: boolean;
-          items: { sourceId: string; nativeId: string; url: string | null }[];
+          items: {
+            sourceId: string | null;
+            nativeId: string | null;
+            url: string | null;
+            truncatedFields: string[];
+          }[];
         };
       }
     ).frozenSourceReferences;
     expect(references).toMatchObject({ count: 12, truncated: true });
     expect(references.items[0]).toEqual({
-      sourceId: "frozen-source-0",
-      nativeId: "frozen-native-0",
-      url: "https://old.example/story/0",
+      sourceId: null,
+      nativeId: null,
+      url: null,
+      truncatedFields: ["sourceId", "nativeId", "url"],
     });
     expect(JSON.stringify(compared?.evidence).length).toBeLessThan(8_000);
     expect(JSON.stringify(compared?.evidence)).not.toContain(
@@ -645,6 +656,11 @@ test("membership history lookup is indexed and bounded to 101 rows", () => {
         insertMembership.run(groupId, "many-memberships");
       }
     })();
+    store.sqlite.exec(
+      "INSERT INTO digests(id,edition_date,timezone,subject,html,plain_text,decisions,fingerprint,frozen_at,sealed) VALUES('plan-digest','2026-01-01','UTC','s','','','','f',1,0);" +
+        "INSERT INTO digest_items(digest_id,position,item_id,group_id,snapshot) VALUES('plan-digest',0,'many-memberships','history-0','{}'),('plan-digest',1,'other-item','history-0','{}');" +
+        "UPDATE digests SET sealed=1 WHERE id='plan-digest';",
+    );
     const plan = store.sqlite
       .query<{ detail: string }, [string]>(
         "EXPLAIN QUERY PLAN SELECT count(*) AS count FROM (SELECT 1 FROM story_memberships WHERE item_id=? LIMIT 101)",
@@ -653,6 +669,22 @@ test("membership history lookup is indexed and bounded to 101 rows", () => {
       .map((row) => row.detail)
       .join(" ");
     expect(plan).toContain("story_members_by_item");
+    const groupPlan = store.sqlite
+      .query<{ detail: string }, [string]>(
+        "EXPLAIN QUERY PLAN SELECT digest_id,position FROM digest_items WHERE group_id=?",
+      )
+      .all("history-0")
+      .map((row) => row.detail)
+      .join(" ");
+    const itemPlan = store.sqlite
+      .query<{ detail: string }, [string]>(
+        "EXPLAIN QUERY PLAN SELECT digest_id,position FROM digest_items WHERE item_id=?",
+      )
+      .all("many-memberships")
+      .map((row) => row.detail)
+      .join(" ");
+    expect(groupPlan).toContain("digest_item_by_group");
+    expect(itemPlan).toContain("digest_item_by_item");
     expect(
       relatedDeliveryHistory(
         store.sqlite,

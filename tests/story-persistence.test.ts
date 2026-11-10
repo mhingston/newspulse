@@ -426,6 +426,64 @@ test("populated pre-story schema upgrades without touching analysis, FTS, or bac
   }
 });
 
+test("populated v39 story history gains indexed membership and digest lookups", () => {
+  const dir = mkdtempSync(join(tmpdir(), "newspulse-v39-indexes-"));
+  const path = join(dir, "prior.sqlite");
+  const priorMigrations = join(dir, "prior-migrations");
+  mkdirSync(join(priorMigrations, "meta"), { recursive: true });
+  const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
+  for (const file of readdirSync(migrations))
+    if (file.endsWith(".sql"))
+      copyFileSync(join(migrations, file), join(priorMigrations, file));
+  const journal = JSON.parse(
+    readFileSync(join(migrations, "meta", "_journal.json"), "utf8"),
+  ) as { entries: { idx: number }[] };
+  journal.entries = journal.entries.filter((entry) => entry.idx < 39);
+  writeFileSync(
+    join(priorMigrations, "meta", "_journal.json"),
+    JSON.stringify(journal),
+  );
+  const oldDb = new Database(path);
+  migrate(drizzle(oldDb), { migrationsFolder: priorMigrations });
+  oldDb.exec(
+    "INSERT INTO items(id,identity,title,ingested_at) VALUES('old','old','Prior story',1);" +
+      "INSERT INTO story_groups(id,first_seen) VALUES('group',1);" +
+      "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('group','old','{}','v1',1);",
+  );
+  oldDb.close();
+  let store: Store | undefined;
+  try {
+    store = new Store(path);
+    expect(
+      store.sqlite
+        .query("SELECT item_id FROM story_memberships WHERE group_id='group'")
+        .all(),
+    ).toEqual([{ item_id: "old" }]);
+    expect(
+      store.sqlite
+        .query(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('story_members_by_item','digest_item_by_group','story_relation_by_newer') ORDER BY name",
+        )
+        .all(),
+    ).toEqual([
+      { name: "digest_item_by_group" },
+      { name: "story_members_by_item" },
+      { name: "story_relation_by_newer" },
+    ]);
+    const plan = store.sqlite
+      .query<{ detail: string }, []>(
+        "EXPLAIN QUERY PLAN SELECT item_id FROM story_memberships WHERE item_id='old'",
+      )
+      .all()
+      .map((row) => row.detail)
+      .join(" ");
+    expect(plan).toContain("story_members_by_item");
+  } finally {
+    store?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("pending grouping job sees corrections after a clean snapshot was cached", () => {
   const store = new Store(":memory:");
   try {

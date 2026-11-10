@@ -1,0 +1,2 @@
+CREATE INDEX `digest_item_by_group` ON `digest_items` (`group_id`,`digest_id`,`position`);--> statement-breakpoint
+CREATE INDEX `story_relation_by_newer` ON `story_relations` (`newer_group_id`,`ended_at`,`id`);

@@ -291,6 +291,28 @@ export function relatedDeliveryHistory(
         candidateItemId,
       },
     };
+  const relationCount =
+    db
+      .query<{ count: number }, [string]>(
+        `SELECT count(*) AS count FROM (
+          SELECT DISTINCT r.id FROM story_memberships candidate INDEXED BY story_members_by_item
+          JOIN story_relations r INDEXED BY story_relation_by_newer
+            ON r.newer_group_id=candidate.group_id
+          WHERE candidate.item_id=? AND r.reason='later_related_development'
+          LIMIT 101
+        )`,
+      )
+      .get(candidateItemId)?.count ?? 0;
+  if (relationCount > 100)
+    return {
+      input: null,
+      evidence: {
+        comparisonVersion: "related-delivery-v1",
+        state: "unknown" as const,
+        reason: "relationship_history_limit",
+        candidateItemId,
+      },
+    };
   const rows = db
     .query<
       {
@@ -316,32 +338,57 @@ export function relatedDeliveryHistory(
       [string]
     >(
       `
-    WITH current_older_members AS (
-      SELECT m.group_id,COALESCE(redirect.item_id,m.item_id) AS canonical_item_id
-      FROM story_memberships m
+    WITH candidate_memberships AS (
+      SELECT group_id,
+        CASE WHEN max(ended_at IS NULL)=1 THEN NULL ELSE max(ended_at) END AS candidate_group_ended_at
+      FROM story_memberships candidate INDEXED BY story_members_by_item
+      WHERE candidate.item_id=?
+      GROUP BY group_id
+    ), candidate_relations AS (
+      SELECT r.id,r.older_group_id,r.newer_group_id,r.reason,r.evidence,r.rule_version,
+        r.ended_at,candidate.candidate_group_ended_at
+      FROM candidate_memberships candidate
+      JOIN story_relations r INDEXED BY story_relation_by_newer
+        ON r.newer_group_id=candidate.group_id
+      WHERE r.reason='later_related_development'
+    ), current_older_members AS (
+      SELECT r.older_group_id AS group_id,COALESCE(redirect.item_id,m.item_id) AS canonical_item_id
+      FROM candidate_relations r
+      JOIN story_memberships m INDEXED BY story_members_group
+        ON m.group_id=r.older_group_id AND m.ended_at IS NULL
       LEFT JOIN item_redirects redirect ON redirect.old_id=m.item_id
-      WHERE m.ended_at IS NULL
+    ), canonical_member_ids AS (
+      SELECT group_id,canonical_item_id AS item_id FROM current_older_members
+      UNION
+      SELECT older.group_id,redirect.old_id
+      FROM current_older_members older
+      JOIN item_redirects redirect INDEXED BY item_redirects_item
+        ON redirect.item_id=older.canonical_item_id
+    ), snapshot_matches AS (
+      SELECT r.id AS relation_id,di.digest_id,di.position
+      FROM candidate_relations r
+      JOIN digest_items di INDEXED BY digest_item_by_group
+        ON di.group_id=r.older_group_id
+      UNION
+      SELECT r.id AS relation_id,di.digest_id,di.position
+      FROM candidate_relations r
+      JOIN canonical_member_ids member ON member.group_id=r.older_group_id
+      JOIN digest_items di INDEXED BY digest_item_by_item ON di.item_id=member.item_id
     )
     SELECT DISTINCT d.id AS delivery_id,d.status,d.provider_id,d.updated_at AS accepted_at,
       g.id AS edition_id,g.edition_date,r.older_group_id,r.newer_group_id,
       r.id AS relation_id,r.evidence AS relation_evidence,r.rule_version AS relation_version,
       r.reason AS relation_reason,r.ended_at AS relation_ended_at,
       di.item_id,di.group_id AS frozen_group_id,di.score_id,di.position,
-      candidate_membership.ended_at AS candidate_group_ended_at
-    FROM story_relations r
-    JOIN story_memberships candidate_membership
-      ON candidate_membership.group_id=r.newer_group_id AND candidate_membership.item_id=?
-    JOIN digest_items di ON di.group_id=r.older_group_id OR EXISTS (
-      SELECT 1 FROM current_older_members older
-      LEFT JOIN item_redirects frozen_redirect ON frozen_redirect.old_id=di.item_id
-      WHERE older.group_id=r.older_group_id
-        AND COALESCE(frozen_redirect.item_id,di.item_id)=older.canonical_item_id
-    )
+      r.candidate_group_ended_at
+    FROM snapshot_matches matched
+    JOIN candidate_relations r ON r.id=matched.relation_id
+    JOIN digest_items di INDEXED BY digest_item_position
+      ON di.digest_id=matched.digest_id AND di.position=matched.position
     JOIN digests g ON g.id=di.digest_id AND g.sealed=1
     JOIN deliveries d ON d.digest_id=g.id
-    WHERE r.reason='later_related_development'
-      AND (d.status IN ('sent','ambiguous') OR (d.status='sending' AND d.first_attempt_at IS NOT NULL))
-    ORDER BY CASE WHEN r.ended_at IS NULL AND candidate_membership.ended_at IS NULL THEN 0 ELSE 1 END,
+    WHERE d.status IN ('sent','ambiguous') OR (d.status='sending' AND d.first_attempt_at IS NOT NULL)
+    ORDER BY CASE WHEN r.ended_at IS NULL AND r.candidate_group_ended_at IS NULL THEN 0 ELSE 1 END,
       g.frozen_at DESC,g.edition_date DESC,d.id DESC,di.position LIMIT 101
   `,
     )
@@ -550,12 +597,23 @@ export function relatedDeliveryHistory(
             citation && typeof citation === "object"
               ? (citation as Record<string, unknown>)
               : {};
-          const cap = (value: unknown, limit: number) =>
-            typeof value === "string" ? value.slice(0, limit) : null;
+          const exactOrNull = (value: unknown, limit: number) => ({
+            value:
+              typeof value === "string" && value.length <= limit ? value : null,
+            truncated: typeof value === "string" && value.length > limit,
+          });
+          const sourceId = exactOrNull(ref.sourceId, 128);
+          const nativeId = exactOrNull(ref.nativeId, 256);
+          const url = exactOrNull(ref.url, 256);
           return {
-            sourceId: cap(ref.sourceId, 128),
-            nativeId: cap(ref.nativeId, 256),
-            url: cap(ref.url, 256),
+            sourceId: sourceId.value,
+            nativeId: nativeId.value,
+            url: url.value,
+            truncatedFields: [
+              ...(sourceId.truncated ? ["sourceId"] : []),
+              ...(nativeId.truncated ? ["nativeId"] : []),
+              ...(url.truncated ? ["url"] : []),
+            ],
           };
         }),
       }
