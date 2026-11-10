@@ -72,7 +72,9 @@ describe("durable publication schedule", () => {
   function database() {
     const db = new Database(":memory:");
     db.exec(`CREATE TABLE publication_schedule_state(id INTEGER PRIMARY KEY, next_date TEXT NOT NULL, timezone TEXT NOT NULL, hour INTEGER NOT NULL, minute INTEGER NOT NULL, updated_at INTEGER NOT NULL);
-      CREATE TABLE publication_schedule_history(date TEXT PRIMARY KEY, due_at INTEGER, status TEXT NOT NULL, recorded_at INTEGER NOT NULL);
+      CREATE TABLE publication_schedule_history(date TEXT PRIMARY KEY, due_at INTEGER, status TEXT NOT NULL, details TEXT, recorded_at INTEGER NOT NULL);
+      CREATE TABLE digests(id TEXT PRIMARY KEY, edition_date TEXT UNIQUE, sealed INTEGER NOT NULL DEFAULT 0);
+      CREATE TABLE deliveries(digest_id TEXT);
       CREATE TABLE outbox(date TEXT PRIMARY KEY);`);
     return db;
   }
@@ -120,8 +122,8 @@ describe("durable publication schedule", () => {
         },
         now,
       ),
-    ).toEqual([
-      { date: "2026-03-29", status: "prepared" },
+    ).toEqual([{ date: "2026-03-29", status: "prepared" }]);
+    expect(runPublicationSchedule(db, london, () => "empty", now)).toEqual([
       { date: "2026-03-30", status: "empty" },
     ]);
     db.close();
@@ -165,6 +167,171 @@ describe("durable publication schedule", () => {
     expect(db.query("SELECT * FROM outbox").all()).toEqual([
       { date: "2026-05-01" },
     ]);
+    db.close();
+  });
+
+  test("timezone changes record a boundary and restart at the new local date", () => {
+    const db = database();
+    const changedAt = time("2026-03-30T05:00:00Z");
+    db.query(
+      "INSERT INTO publication_schedule_state(id,next_date,timezone,hour,minute,updated_at) VALUES(1,'2026-03-28','Europe/London',6,0,?)",
+    ).run(changedAt - 86_400_000);
+    const prepare = () => {
+      throw new Error(
+        "old local dates must not be reconstructed with a new timezone",
+      );
+    };
+    expect(
+      runPublicationSchedule(
+        db,
+        { timezone: "America/New_York", hour: 6, minute: 0 },
+        prepare,
+        changedAt,
+      ),
+    ).toEqual([]);
+    expect(
+      db
+        .query("SELECT date,status,details FROM publication_schedule_history")
+        .all(),
+    ).toMatchObject([
+      {
+        date: "2026-03-28",
+        status: "unavailable",
+        details: expect.stringContaining("schedule_configuration_changed"),
+      },
+      {
+        date: "2026-03-29",
+        status: "unavailable",
+        details: expect.stringContaining(
+          "missing_range=2026-03-28..2026-03-29",
+        ),
+      },
+    ]);
+    expect(
+      db
+        .query(
+          "SELECT next_date,timezone FROM publication_schedule_state WHERE id=1",
+        )
+        .get(),
+    ).toEqual({
+      next_date: "2026-03-30",
+      timezone: "America/New_York",
+    });
+    db.close();
+  });
+
+  test("timezone changes preserve frozen unsent editions for bounded preparation", () => {
+    const db = database();
+    const changedAt = time("2026-03-30T05:00:00Z");
+    db.query(
+      "INSERT INTO publication_schedule_state(id,next_date,timezone,hour,minute,updated_at) VALUES(1,'2026-03-28','Europe/London',6,0,?)",
+    ).run(changedAt - 86_400_000);
+    db.query(
+      "INSERT INTO digests(id,edition_date,sealed) VALUES('frozen','2026-03-28',1)",
+    ).run();
+    const prepared: string[] = [];
+    expect(
+      runPublicationSchedule(
+        db,
+        { timezone: "America/New_York", hour: 6, minute: 0 },
+        (date) => {
+          prepared.push(date);
+          return "prepared";
+        },
+        changedAt,
+      ),
+    ).toEqual([{ date: "2026-03-28", status: "prepared" }]);
+    expect(prepared).toEqual(["2026-03-28"]);
+    expect(
+      db
+        .query(
+          "SELECT date,status FROM publication_schedule_history ORDER BY date",
+        )
+        .all(),
+    ).toEqual(
+      [
+        { date: "2026-03-29", status: "unavailable" },
+        { date: "2026-03-28", status: "prepared" },
+      ].sort((a, b) => a.date.localeCompare(b.date)),
+    );
+    db.close();
+  });
+
+  test("timezone changes preserve a sealed unsent edition dated the old local date", () => {
+    const db = database();
+    const changedAt = time("2026-03-31T13:30:00Z");
+    db.query(
+      "INSERT INTO publication_schedule_state(id,next_date,timezone,hour,minute,updated_at) VALUES(1,'2026-03-31','America/Los_Angeles',6,0,?)",
+    ).run(changedAt - 86_400_000);
+    db.query(
+      "INSERT INTO digests(id,edition_date,sealed) VALUES('frozen','2026-03-31',1)",
+    ).run();
+    const prepared: string[] = [];
+    expect(
+      runPublicationSchedule(
+        db,
+        { timezone: "Pacific/Auckland", hour: 6, minute: 0, limit: 1 },
+        (date) => {
+          prepared.push(date);
+          return "prepared";
+        },
+        changedAt,
+      ),
+    ).toEqual([{ date: "2026-03-31", status: "prepared" }]);
+    expect(prepared).toEqual(["2026-03-31"]);
+    expect(
+      db.query("SELECT date,status FROM publication_schedule_history").all(),
+    ).toEqual([{ date: "2026-03-31", status: "prepared" }]);
+    expect(
+      db
+        .query("SELECT next_date,timezone FROM publication_schedule_state")
+        .get(),
+    ).toEqual({ next_date: "2026-04-01", timezone: "Pacific/Auckland" });
+    db.close();
+  });
+
+  test("reconciliation blocked dates retain their cursor and retry to completion", () => {
+    const db = database();
+    const now = time("2026-06-03T06:00:00Z");
+    db.query(
+      "INSERT INTO publication_schedule_state(id,next_date,timezone,hour,minute,updated_at) VALUES(1,'2026-06-02','Europe/London',6,0,?)",
+    ).run(now - 86_400_000);
+    expect(
+      runPublicationSchedule(
+        db,
+        { timezone: "Europe/London", hour: 6, minute: 0, limit: 1 },
+        () => ({
+          status: "processing",
+          reason: "prior_delivery_requires_reconciliation:item",
+        }),
+        now,
+      ),
+    ).toEqual([{ date: "2026-06-02", status: "processing" }]);
+    expect(
+      db
+        .query("SELECT date,status,details FROM publication_schedule_history")
+        .get(),
+    ).toMatchObject({
+      date: "2026-06-02",
+      status: "processing",
+      details: "prior_delivery_requires_reconciliation:item",
+    });
+    expect(
+      db
+        .query("SELECT next_date FROM publication_schedule_state WHERE id=1")
+        .get(),
+    ).toEqual({ next_date: "2026-06-02" });
+    expect(
+      runPublicationSchedule(
+        db,
+        { timezone: "Europe/London", hour: 6, minute: 0, limit: 1 },
+        () => "empty",
+        now,
+      ),
+    ).toEqual([{ date: "2026-06-02", status: "empty" }]);
+    expect(
+      db.query("SELECT date,status FROM publication_schedule_history").get(),
+    ).toEqual({ date: "2026-06-02", status: "empty" });
     db.close();
   });
 });

@@ -219,6 +219,11 @@ export class StoryStore {
               "ON CONFLICT(id) DO UPDATE SET fingerprint=excluded.fingerprint,updated_at=excluded.updated_at",
           )
           .run(fingerprint, now);
+        this.sqlite
+          .query(
+            "INSERT INTO story_grouping_events(state,event_at) VALUES('ready',?)",
+          )
+          .run(now);
         return {
           changed: true,
           groups: plan.groups.length,

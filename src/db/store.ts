@@ -110,6 +110,29 @@ export class Store {
         new URL("../../drizzle", import.meta.url),
       ),
     });
+    this.sqlite
+      .transaction(() => {
+        const invalidationPending = this.sqlite
+          .query<{ pending: number }, []>(
+            "SELECT pending FROM score_invalidation WHERE id=1",
+          )
+          .get()?.pending;
+        const latestGlobalEvent = this.sqlite
+          .query<{ kind: string }, []>(
+            "SELECT kind FROM score_validity_events WHERE kind IN ('global_invalidation','global_pass_complete') ORDER BY event_at DESC,id DESC LIMIT 1",
+          )
+          .get()?.kind;
+        if (
+          invalidationPending === 0 &&
+          latestGlobalEvent === "global_invalidation"
+        )
+          this.sqlite
+            .query(
+              "INSERT INTO score_validity_events(item_id,score_id,kind,event_at) VALUES(NULL,NULL,'global_pass_complete',?)",
+            )
+            .run(Date.now());
+      })
+      .immediate();
     this.stories = new StoryStore(this.sqlite);
   }
   close() {
@@ -340,6 +363,17 @@ export class Store {
     this.sqlite
       .query("UPDATE story_grouping_state SET fingerprint='dirty' WHERE id=1")
       .run();
+    const groupingState = this.sqlite
+      .query<{ state: string }, []>(
+        "SELECT state FROM story_grouping_events ORDER BY event_at DESC,id DESC LIMIT 1",
+      )
+      .get()?.state;
+    if (groupingState !== "dirty")
+      this.sqlite
+        .query(
+          "INSERT INTO story_grouping_events(state,event_at) VALUES('dirty',?)",
+        )
+        .run(now);
     const last = this.sqlite
       .query<{ generation: number; status: string }, [string]>(
         "SELECT generation,status FROM processing_jobs WHERE stage='group' AND item_id=? ORDER BY generation DESC LIMIT 1",
@@ -801,12 +835,13 @@ export class Store {
           !this.completeProcessing(job, "scored", now, JSON.stringify(record))
         )
           return false;
+        const scoreId = crypto.randomUUID();
         this.sqlite
           .query(
             "INSERT OR IGNORE INTO item_scores(id,item_id,generation,input_hash,criteria_version,provenance,result,created_at) VALUES(?,?,?,?,?,?,?,?)",
           )
           .run(
-            crypto.randomUUID(),
+            scoreId,
             job.item_id,
             job.generation,
             record.inputHash,
@@ -815,9 +850,24 @@ export class Store {
             JSON.stringify(record.result),
             now,
           );
+        const persistedScore = this.sqlite
+          .query<{ id: string }, [string, number, string]>(
+            "SELECT id FROM item_scores WHERE item_id=? AND generation=? AND input_hash=?",
+          )
+          .get(job.item_id, job.generation, record.inputHash);
         const future = scoreDeadlines(captured.input).filter(
           (deadline) => deadline > now,
         );
+        this.sqlite
+          .query(
+            "INSERT INTO score_validity_events(item_id,score_id,kind,event_at,valid_until) VALUES(?,?,'score_valid',?,?)",
+          )
+          .run(
+            job.item_id,
+            persistedScore?.id ?? scoreId,
+            now,
+            future.length ? Math.min(...future) : null,
+          );
         this.sqlite
           .query(
             "INSERT INTO score_refresh(job_id,criteria_version,due_at) VALUES(?,?,?) ON CONFLICT(job_id) DO UPDATE SET criteria_version=excluded.criteria_version,due_at=excluded.due_at",
@@ -989,6 +1039,12 @@ export class Store {
       .run(winner, loser, loser);
     this.sqlite
       .query("UPDATE item_redirects SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
+    // Activity rows are historical facts. Repoint their canonical owner before
+    // deleting the loser; the redirect event retains the old ID for detecting
+    // dates whose identity changed after their historical cutoff.
+    this.sqlite
+      .query("UPDATE digest_activity_events SET item_id=? WHERE item_id=?")
       .run(winner, loser);
     const body = this.sqlite
       .query<{ text: string; format: string }, [string]>(
@@ -1580,6 +1636,15 @@ export class Store {
           "SELECT stage,status,count(*) AS count FROM processing_jobs GROUP BY stage,status ORDER BY stage,status",
         )
         .all(),
+      publication_history: this.sqlite
+        .query(
+          "SELECT date,due_at,status,details,recorded_at FROM publication_schedule_history ORDER BY date DESC LIMIT 31",
+        )
+        .all(),
+      digest_history_evidence_from:
+        this.sqlite
+          .query("SELECT evidence_from FROM digest_history_state WHERE id=1")
+          .get() ?? null,
       items: this.sqlite.query("SELECT count(*) AS count FROM items").get(),
       milestone: "M2-in-progress",
       grouping: this.stories.status(),

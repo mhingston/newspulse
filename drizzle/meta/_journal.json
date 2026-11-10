@@ -302,6 +302,13 @@
       "when": 1794302265906,
       "tag": "0042_living_black_tarantula",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "6",
+      "when": 1794314290704,
+      "tag": "0043_historical_recovery",
+      "breakpoints": true
     }
   ]
 }

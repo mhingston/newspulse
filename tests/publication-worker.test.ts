@@ -238,7 +238,7 @@ test("restarts with a missed frozen edition and sends the original snapshot once
   }
 });
 
-test("a scheduling failure does not starve a previously prepared delivery", async () => {
+test("an earlier unresolved delivery blocks current overlap but still sends", async () => {
   const store = new Store(":memory:");
   try {
     await fixture(store);
@@ -272,12 +272,9 @@ test("a scheduling failure does not starve a previously prepared delivery", asyn
       () => previous,
       now,
     );
-    store.sqlite.exec(
-      "CREATE TRIGGER fail_next_delivery BEFORE INSERT ON deliveries BEGIN SELECT RAISE(ABORT, 'injected failure'); END",
-    );
     const calls: string[] = [];
     const { publication } = worker(store, calls);
-    await expect(publication.tick(now)).rejects.toThrow("injected failure");
+    await publication.tick(now);
     expect(deliveries.list()[0]!.status).toBe("sent");
     expect(calls).toHaveLength(1);
     expect(new DigestStore(store.sqlite).get(today)).toBeNull();

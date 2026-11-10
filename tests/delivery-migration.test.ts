@@ -39,7 +39,7 @@ test("populated pre-delivery database migrates and delivery state survives backu
   const db = new Database(path);
   migrate(drizzle(db), { migrationsFolder: prior });
   db.exec(
-    "INSERT INTO items(id,identity,title,ingested_at) VALUES('prior','identity','Prior',1); INSERT INTO content(item_id,text) VALUES('prior','searchable provenance')",
+    "INSERT INTO sources(id,url,title) VALUES('prior-source','https://example.com/feed','Prior feed'); INSERT INTO items(id,identity,title,ingested_at) VALUES('prior','identity','Prior',1); INSERT INTO content(item_id,text) VALUES('prior','searchable provenance'); INSERT INTO content_versions(item_id,source_id,native_id,url,title,text,observed_at) VALUES('prior','prior-source','native','https://example.com/prior','Prior','searchable provenance',1)",
   );
   const frozen = new DigestStore(db).freeze(
     {
@@ -65,6 +65,24 @@ test("populated pre-delivery database migrates and delivery state survives backu
   try {
     store = new Store(path);
     expect(store.search("searchable")[0]!.id).toBe("prior");
+    expect(
+      store.sqlite
+        .query(
+          "SELECT count(*) AS count FROM digest_activity_events WHERE item_id='prior'",
+        )
+        .get(),
+    ).toEqual({ count: 0 });
+    expect(
+      store.sqlite
+        .query("SELECT evidence_from FROM digest_history_state WHERE id=1")
+        .get(),
+    ).toMatchObject({ evidence_from: expect.any(Number) });
+    expect(store.sqlite.query("PRAGMA integrity_check").get()).toEqual({
+      integrity_check: "ok",
+    });
+    store.sqlite.exec(
+      "INSERT INTO items_fts(items_fts) VALUES('integrity-check')",
+    );
     expect(new DigestStore(store.sqlite).get("2026-11-09")).toEqual(frozen);
     const deliveries = new DeliveryStore(store.sqlite);
     const now = Date.parse("2026-11-09T06:00:00Z");

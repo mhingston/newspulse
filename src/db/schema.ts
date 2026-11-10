@@ -94,6 +94,25 @@ export const digestActivity = sqliteTable(
   },
   (t) => [index("digest_activity_time").on(t.activityAt, t.itemId)],
 );
+/** Append-only activity facts used to reconstruct digest intake after downtime. */
+export const digestActivityEvents = sqliteTable(
+  "digest_activity_events",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    relatedItemId: text("related_item_id"),
+    activityAt: integer("activity_at").notNull(),
+    kind: text().notNull(),
+  },
+  (t) => [index("digest_activity_events_time").on(t.activityAt, t.itemId)],
+);
+/** Earliest point at which complete activity evidence is guaranteed. */
+export const digestHistoryState = sqliteTable("digest_history_state", {
+  id: integer().primaryKey(),
+  evidenceFrom: integer("evidence_from").notNull(),
+});
 export const itemSources = sqliteTable(
   "item_sources",
   {
@@ -279,6 +298,25 @@ export const scoreInvalidation = sqliteTable("score_invalidation", {
   passGeneration: integer("pass_generation").notNull().default(0),
 });
 
+/** Time-indexed proof of which score was valid and when it became stale. */
+export const scoreValidityEvents = sqliteTable(
+  "score_validity_events",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    itemId: text("item_id"),
+    scoreId: text("score_id"),
+    kind: text().notNull(),
+    eventAt: integer("event_at").notNull(),
+    validUntil: integer("valid_until"),
+  },
+  (t) => [
+    index("score_validity_item_time").on(t.itemId, t.eventAt),
+    index("score_validity_score").on(t.scoreId, t.eventAt),
+    index("score_validity_global_time").on(t.kind, t.eventAt),
+    index("score_validity_time").on(t.eventAt),
+  ],
+);
+
 /** Development groups never replace items or original citations. */
 export const storyGroups = sqliteTable("story_groups", {
   id: text().primaryKey(),
@@ -337,6 +375,15 @@ export const storyGroupingState = sqliteTable("story_grouping_state", {
   fingerprint: text().notNull(),
   updatedAt: integer("updated_at").notNull(),
 });
+export const storyGroupingEvents = sqliteTable(
+  "story_grouping_events",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    state: text().notNull(),
+    eventAt: integer("event_at").notNull(),
+  },
+  (t) => [index("story_grouping_events_time").on(t.eventAt, t.id)],
+);
 
 /** Frozen content is historical evidence, not proof of delivery. */
 export const digests = sqliteTable("digests", {
@@ -420,6 +467,7 @@ export const publicationScheduleHistory = sqliteTable(
     date: text().primaryKey(),
     dueAt: integer("due_at"),
     status: text().notNull(),
+    details: text(),
     recordedAt: integer("recorded_at").notNull(),
   },
 );

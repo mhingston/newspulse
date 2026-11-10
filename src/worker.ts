@@ -2,6 +2,7 @@ import type { SourceAdapter } from "./domain";
 import { HttpError } from "./adapters/rss";
 import { Store } from "./db/store";
 import { normalizeNewsletter } from "./adapters/newsletter";
+import { pruneHistoricalDigestActivity } from "./historical-digest";
 export function log(event: string, details: Record<string, unknown> = {}) {
   console.error(
     JSON.stringify({ at: new Date().toISOString(), event, ...details }),
@@ -66,8 +67,18 @@ export function schedule(
   let stopping = false;
   const stageActive = new Map<string, Promise<unknown>>();
   let inboundNext = 0;
+  let digestHistoryPruneNext = 0;
   const tick = () => {
     if (stopping) return;
+    const now = Date.now();
+    if (now >= digestHistoryPruneNext) {
+      digestHistoryPruneNext = now + 3_600_000;
+      try {
+        pruneHistoricalDigestActivity(store, now);
+      } catch (error) {
+        log("digest_history_prune_error", { error: String(error) });
+      }
+    }
     try {
       store.indexNextNewsletter(normalizeNewsletter);
     } catch (error) {

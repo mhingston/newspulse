@@ -8,6 +8,9 @@ export function invalidateScores(
 ): void {
   if (itemId === undefined) {
     db.query(
+      "INSERT INTO score_validity_events(item_id,score_id,kind,event_at) VALUES(NULL,NULL,'global_invalidation',?)",
+    ).run(now);
+    db.query(
       `INSERT INTO score_invalidation(id,cursor,pending,generation,pass_generation) VALUES(1,NULL,1,1,1)
       ON CONFLICT(id) DO UPDATE SET cursor=CASE WHEN pending=0 THEN NULL ELSE cursor END,
         pass_generation=CASE WHEN pending=0 THEN generation+1 ELSE pass_generation END,
@@ -15,6 +18,9 @@ export function invalidateScores(
     ).run();
     return;
   }
+  db.query(
+    "INSERT INTO score_validity_events(item_id,score_id,kind,event_at) VALUES(?,NULL,'item_invalidation',?)",
+  ).run(itemId, now);
   db.query(
     `UPDATE processing_jobs SET status='pending', attempts=0, available_at=?, lease_token=NULL, lease_until=NULL, last_error=NULL
     WHERE stage='score' AND item_id=? AND generation=(SELECT max(e.generation) FROM processing_jobs e WHERE e.item_id=processing_jobs.item_id AND e.stage='extract')`,
@@ -43,12 +49,26 @@ export function advanceScoreInvalidation(db: Database, now: number): void {
   const invalidate =
     db.query(`UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,lease_token=NULL,lease_until=NULL,last_error=NULL
     WHERE id=? AND generation=(SELECT max(e.generation) FROM processing_jobs e WHERE e.item_id=processing_jobs.item_id AND e.stage='extract')`);
-  for (const row of rows) invalidate.run(now, row.id);
-  if (rows.length < 32)
+  for (const row of rows) {
+    if (invalidate.run(now, row.id).changes)
+      db.query(
+        "INSERT INTO score_validity_events(item_id,score_id,kind,event_at) VALUES(?,NULL,'item_invalidation',?)",
+      ).run(row.item_id, now);
+  }
+  if (rows.length < 32) {
     db.query(
       "UPDATE score_invalidation SET pending=CASE WHEN generation=pass_generation THEN 0 ELSE 1 END,cursor=NULL,pass_generation=generation WHERE id=1",
     ).run();
-  else
+    const after = db
+      .query<{ pending: number }, []>(
+        "SELECT pending FROM score_invalidation WHERE id=1",
+      )
+      .get();
+    if (after && !after.pending)
+      db.query(
+        "INSERT INTO score_validity_events(item_id,score_id,kind,event_at) VALUES(NULL,NULL,'global_pass_complete',?)",
+      ).run(now);
+  } else
     db.query("UPDATE score_invalidation SET cursor=? WHERE id=1").run(
       rows[rows.length - 1]!.id,
     );
