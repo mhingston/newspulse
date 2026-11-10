@@ -305,6 +305,7 @@ export const storyMemberships = sqliteTable(
     uniqueIndex("story_current_member")
       .on(t.itemId)
       .where(sql`ended_at IS NULL`),
+    index("story_members_by_item").on(t.itemId),
     index("story_members_group").on(t.groupId, t.endedAt),
   ],
 );

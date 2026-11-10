@@ -149,7 +149,24 @@ test("failed deliveries are not accepted and legacy snapshots cannot fabricate a
 
 test("distinct related developments compare against accepted frozen history without suppressing them", () => {
   const directory = mkdtempSync(join(tmpdir(), "newspulse-related-history-"));
-  const f = fixture(undefined, join(directory, "state.sqlite"));
+  const longFrozenText = `${oldText} ${Array.from({ length: 2000 }, () => "historicmaterial").join(" ")}`;
+  const f = fixture(
+    {
+      scoreSnapshot: {
+        id: "score",
+        result: { total: 42 },
+        provenance: {
+          input: { title: "Breakthrough robotics", text: longFrozenText },
+        },
+      },
+      citations: Array.from({ length: 12 }, (_, index) => ({
+        sourceId: `frozen-source-${index}`,
+        nativeId: `frozen-native-${index}`,
+        url: `https://old.example/story/${index}`,
+      })),
+    },
+    join(directory, "state.sqlite"),
+  );
   try {
     f.store.sqlite
       .query(
@@ -196,15 +213,28 @@ test("distinct related developments compare against accepted frozen history with
       editionId: f.delivery.digest_id,
       groupId: "group",
       relationship: { olderGroupId: "group", newerGroupId: "new-group" },
-      frozenSourceReferences: [
-        {
-          sourceId: "frozen-source",
-          nativeId: "frozen-native",
-          url: "https://old.example/story",
-        },
-      ],
+      scoreSnapshotReference: { id: "score", total: 42, eligible: null },
       suppress: false,
     });
+    const references = (
+      compared?.evidence as {
+        frozenSourceReferences: {
+          count: number;
+          truncated: boolean;
+          items: { sourceId: string; nativeId: string; url: string | null }[];
+        };
+      }
+    ).frozenSourceReferences;
+    expect(references).toMatchObject({ count: 12, truncated: true });
+    expect(references.items[0]).toEqual({
+      sourceId: "frozen-source-0",
+      nativeId: "frozen-native-0",
+      url: "https://old.example/story/0",
+    });
+    expect(JSON.stringify(compared?.evidence).length).toBeLessThan(8_000);
+    expect(JSON.stringify(compared?.evidence)).not.toContain(
+      "historicmaterial",
+    );
     f.store.close();
     f.store = new Store(join(directory, "state.sqlite"));
     expect(
@@ -220,10 +250,32 @@ test("distinct related developments compare against accepted frozen history with
     ).toMatchObject({
       state: "possible_follow_up",
       editionId: f.delivery.digest_id,
-      frozenSourceReferences: [
-        { sourceId: "frozen-source", nativeId: "frozen-native" },
-      ],
     });
+
+    f.store.sqlite
+      .query(
+        "UPDATE story_relations SET evidence=? WHERE newer_group_id='new-group'",
+      )
+      .run(JSON.stringify({ sharedTerms: ["differentbrand", "9"] }));
+    expect(
+      relatedDeliveryHistory(
+        f.store.sqlite,
+        "new",
+        "new-group",
+        "Breakthrough robotics update",
+        newText,
+        3500,
+        4000,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "relationship_content_conflict",
+    });
+    f.store.sqlite
+      .query(
+        "UPDATE story_relations SET evidence=? WHERE newer_group_id='new-group'",
+      )
+      .run(JSON.stringify({ sharedTerms: ["robotics", "breakthrough"] }));
 
     f.store.sqlite
       .query("UPDATE deliveries SET status='ambiguous' WHERE digest_id=?")
@@ -454,7 +506,9 @@ test("score provenance preserves direct ambiguous history instead of replacing i
       relatedComparison: {
         state: "possible_follow_up",
         editionId: accepted.digest_id,
-        frozenSourceReferences: [{ sourceId: "frozen-older" }],
+        frozenSourceReferences: {
+          items: [{ sourceId: "frozen-older" }],
+        },
       },
     });
     const ambiguous = deliveries.prepare(
@@ -487,6 +541,132 @@ test("score provenance preserves direct ambiguous history instead of replacing i
       ),
     ).toBe(true);
     expect(accepted.digest_id).not.toBe(ambiguous.digest_id);
+  } finally {
+    store.close();
+  }
+});
+
+test("canonical member redirects keep an edition match when its group ID changes", () => {
+  const f = fixture({
+    scoreSnapshot: {
+      id: "score",
+      result: { total: 42 },
+      provenance: {
+        input: { title: "Breakthrough robotics", text: oldText },
+      },
+    },
+    citations: [
+      { sourceId: "frozen-source", nativeId: "frozen-native", url: null },
+    ],
+  });
+  try {
+    f.store.sqlite
+      .query(
+        "INSERT INTO items(id,identity,title,ingested_at,published_at) VALUES('item','old-canonical-identity','Breakthrough robotics',1000,900),('canonical-old','canonical-old-identity','Breakthrough robotics',1000,900),('new','new-canonical-identity','Breakthrough robotics update',3500,3400)",
+      )
+      .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO item_redirects(old_id,item_id) VALUES('item','canonical-old')",
+      )
+      .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO story_groups(id,first_seen) VALUES('replacement-group',900),('new-group',3400)",
+      )
+      .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('replacement-group','canonical-old','{}','v1',900),('new-group','new','{}','v1',3400)",
+      )
+      .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO story_relations(older_group_id,newer_group_id,reason,evidence,rule_version,started_at) VALUES('replacement-group','new-group','later_related_development','{\"sharedTerms\":[\"robotics\",\"breakthrough\"]}','specific-development-v1',3400)",
+      )
+      .run();
+    const source = f.store.addSource("https://example.com/feed");
+    f.store.sqlite
+      .query(
+        "INSERT INTO content_versions(item_id,source_id,native_id,title,text,observed_at) VALUES('new',?,'new-entry','Breakthrough robotics update',?,3500)",
+      )
+      .run(source.id, newText);
+    const claim = f.deliveries.claim(1000)!;
+    f.deliveries.beginSend(claim, 1000);
+    f.deliveries.sent(claim, "provider", 2000);
+    const result = relatedDeliveryHistory(
+      f.store.sqlite,
+      "new",
+      "new-group",
+      "Breakthrough robotics update",
+      newText,
+      3500,
+      4000,
+    );
+    expect(result?.evidence).toMatchObject({
+      frozenSourceReferences: {
+        items: [
+          {
+            sourceId: "frozen-source",
+            nativeId: "frozen-native",
+          },
+        ],
+      },
+    });
+    expect(result?.evidence).toMatchObject({
+      state: "possible_follow_up",
+      groupId: "replacement-group",
+      frozenGroupId: "group",
+      itemId: "item",
+    });
+  } finally {
+    f.store.close();
+  }
+});
+
+test("membership history lookup is indexed and bounded to 101 rows", () => {
+  const store = new Store(":memory:");
+  try {
+    store.sqlite
+      .query(
+        "INSERT INTO items(id,identity,title,ingested_at) VALUES('many-memberships','many-memberships','robotics',1)",
+      )
+      .run();
+    const insertGroup = store.sqlite.query(
+      "INSERT INTO story_groups(id,first_seen) VALUES(?,1)",
+    );
+    const insertMembership = store.sqlite.query(
+      "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at,ended_at) VALUES(?,?,'{}','v1',1,2)",
+    );
+    store.sqlite.transaction(() => {
+      for (let index = 0; index < 101; index++) {
+        const groupId = `history-${index}`;
+        insertGroup.run(groupId);
+        insertMembership.run(groupId, "many-memberships");
+      }
+    })();
+    const plan = store.sqlite
+      .query<{ detail: string }, [string]>(
+        "EXPLAIN QUERY PLAN SELECT count(*) AS count FROM (SELECT 1 FROM story_memberships WHERE item_id=? LIMIT 101)",
+      )
+      .all("many-memberships")
+      .map((row) => row.detail)
+      .join(" ");
+    expect(plan).toContain("story_members_by_item");
+    expect(
+      relatedDeliveryHistory(
+        store.sqlite,
+        "many-memberships",
+        null,
+        "robotics",
+        "robotics research",
+        null,
+        10,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "membership_history_limit",
+    });
   } finally {
     store.close();
   }

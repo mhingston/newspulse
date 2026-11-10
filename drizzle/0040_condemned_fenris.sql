@@ -1,0 +1,1 @@
+CREATE INDEX `story_members_by_item` ON `story_memberships` (`item_id`);

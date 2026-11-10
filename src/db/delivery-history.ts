@@ -277,7 +277,7 @@ export function relatedDeliveryHistory(
   const membershipCount =
     db
       .query<{ count: number }, [string]>(
-        "SELECT count(*) AS count FROM story_memberships WHERE item_id=?",
+        "SELECT count(*) AS count FROM (SELECT 1 FROM story_memberships WHERE item_id=? LIMIT 101)",
       )
       .get(candidateItemId)?.count ?? 0;
   if (!membershipCount) return null;
@@ -308,6 +308,7 @@ export function relatedDeliveryHistory(
         relation_reason: string;
         relation_ended_at: number | null;
         item_id: string;
+        frozen_group_id: string | null;
         score_id: string | null;
         position: number;
         candidate_group_ended_at: number | null;
@@ -315,15 +316,27 @@ export function relatedDeliveryHistory(
       [string]
     >(
       `
-    SELECT d.id AS delivery_id,d.status,d.provider_id,d.updated_at AS accepted_at,
+    WITH current_older_members AS (
+      SELECT m.group_id,COALESCE(redirect.item_id,m.item_id) AS canonical_item_id
+      FROM story_memberships m
+      LEFT JOIN item_redirects redirect ON redirect.old_id=m.item_id
+      WHERE m.ended_at IS NULL
+    )
+    SELECT DISTINCT d.id AS delivery_id,d.status,d.provider_id,d.updated_at AS accepted_at,
       g.id AS edition_id,g.edition_date,r.older_group_id,r.newer_group_id,
       r.id AS relation_id,r.evidence AS relation_evidence,r.rule_version AS relation_version,
       r.reason AS relation_reason,r.ended_at AS relation_ended_at,
-      di.item_id,di.score_id,di.position,candidate_membership.ended_at AS candidate_group_ended_at
+      di.item_id,di.group_id AS frozen_group_id,di.score_id,di.position,
+      candidate_membership.ended_at AS candidate_group_ended_at
     FROM story_relations r
     JOIN story_memberships candidate_membership
       ON candidate_membership.group_id=r.newer_group_id AND candidate_membership.item_id=?
-    JOIN digest_items di ON di.group_id=r.older_group_id
+    JOIN digest_items di ON di.group_id=r.older_group_id OR EXISTS (
+      SELECT 1 FROM current_older_members older
+      LEFT JOIN item_redirects frozen_redirect ON frozen_redirect.old_id=di.item_id
+      WHERE older.group_id=r.older_group_id
+        AND COALESCE(frozen_redirect.item_id,di.item_id)=older.canonical_item_id
+    )
     JOIN digests g ON g.id=di.digest_id AND g.sealed=1
     JOIN deliveries d ON d.digest_id=g.id
     WHERE r.reason='later_related_development'
@@ -346,6 +359,7 @@ export function relatedDeliveryHistory(
       relationEndedAt: row.relation_ended_at,
       candidateMembershipEndedAt: row.candidate_group_ended_at,
       olderGroupId: row.older_group_id,
+      frozenGroupId: row.frozen_group_id,
       newerGroupId: row.newer_group_id,
       itemId: row.item_id,
       scoreId: row.score_id,
@@ -463,6 +477,7 @@ export function relatedDeliveryHistory(
     sharedTerms.every(
       (term) => typeof term === "string" && term.trim().length > 0,
     );
+  const relationTerms = supported ? (sharedTerms as string[]) : [];
   const regrouped =
     newerGroupId === null ||
     row.newer_group_id !== newerGroupId ||
@@ -472,6 +487,16 @@ export function relatedDeliveryHistory(
     new Set(value.toLocaleLowerCase("en").match(/[\p{L}\p{N}]{4,}/gu) ?? []);
   const priorTerms = tokens(`${priorTitle}\n${priorText}`);
   const candidateTerms = tokens(`${title}\n${text}`);
+  const allTokens = (value: string) =>
+    new Set(value.toLocaleLowerCase("en").match(/[\p{L}\p{N}]+/gu) ?? []);
+  const frozenTokens = allTokens(`${priorTitle}\n${priorText}`);
+  const currentTokens = allTokens(`${title}\n${text}`);
+  const relationshipMatchesContent =
+    supported &&
+    relationTerms.every((term) => {
+      const normalized = term.toLocaleLowerCase("en");
+      return frozenTokens.has(normalized) && currentTokens.has(normalized);
+    });
   const newTerms = [...candidateTerms]
     .filter((term) => !priorTerms.has(term))
     .sort();
@@ -482,29 +507,84 @@ export function relatedDeliveryHistory(
     candidateTermCount: candidateTerms.size,
     priorTermCount: priorTerms.size,
     newTermCount: newTerms.length,
-    newTerms: newTerms.slice(0, 40),
+    newTerms: newTerms.slice(0, 10).map((term) => term.slice(0, 64)),
     overlapRatio: candidateTerms.size
       ? (candidateTerms.size - newTerms.length) / candidateTerms.size
       : 0,
+  };
+  const scoreSnapshot = snapshot.scoreSnapshot as
+    | {
+        id?: unknown;
+        result?: {
+          criteriaVersion?: unknown;
+          total?: unknown;
+          eligible?: unknown;
+        };
+      }
+    | undefined;
+  const frozenScoreEvidence = {
+    id:
+      typeof scoreSnapshot?.id === "string"
+        ? scoreSnapshot.id.slice(0, 128)
+        : row.score_id,
+    criteriaVersion:
+      typeof scoreSnapshot?.result?.criteriaVersion === "string"
+        ? scoreSnapshot.result.criteriaVersion.slice(0, 64)
+        : null,
+    total:
+      typeof scoreSnapshot?.result?.total === "number" &&
+      Number.isFinite(scoreSnapshot.result.total)
+        ? scoreSnapshot.result.total
+        : null,
+    eligible:
+      typeof scoreSnapshot?.result?.eligible === "boolean"
+        ? scoreSnapshot.result.eligible
+        : null,
+  };
+  const frozenCitations = Array.isArray(snapshot.citations)
+    ? {
+        count: snapshot.citations.length,
+        truncated: snapshot.citations.length > 10,
+        items: snapshot.citations.slice(0, 10).map((citation) => {
+          const ref =
+            citation && typeof citation === "object"
+              ? (citation as Record<string, unknown>)
+              : {};
+          const cap = (value: unknown, limit: number) =>
+            typeof value === "string" ? value.slice(0, limit) : null;
+          return {
+            sourceId: cap(ref.sourceId, 128),
+            nativeId: cap(ref.nativeId, 256),
+            url: cap(ref.url, 256),
+          };
+        }),
+      }
+    : null;
+  const projectedRelationEvidence = {
+    sharedTerms: relationTerms.slice(0, 10).map((term) => term.slice(0, 64)),
+    sharedTermCount: relationTerms.length,
+    truncated: relationTerms.length > 10,
   };
   return {
     input: null,
     evidence: {
       comparisonVersion: "related-delivery-v1",
       state:
-        timely && supported && !regrouped
+        timely && supported && relationshipMatchesContent && !regrouped
           ? ("possible_follow_up" as const)
           : ("unknown" as const),
       reason:
-        timely && supported && !regrouped
+        timely && supported && relationshipMatchesContent && !regrouped
           ? "directional_relation_and_post_acceptance_observation"
           : regrouped
             ? "relationship_or_membership_ended_after_regrouping"
             : firstObservation?.backfilled
               ? "earliest_observation_was_backfilled"
-              : supported
-                ? "stale_or_uncertain_observation"
-                : "weak_relationship_evidence",
+              : supported && !relationshipMatchesContent
+                ? "relationship_content_conflict"
+                : supported
+                  ? "stale_or_uncertain_observation"
+                  : "weak_relationship_evidence",
       editionId: row.edition_id,
       editionDate: row.edition_date,
       deliveryId: row.delivery_id,
@@ -512,27 +592,32 @@ export function relatedDeliveryHistory(
       acceptedAt: row.accepted_at,
       itemId: row.item_id,
       groupId: row.older_group_id,
+      frozenGroupId: row.frozen_group_id,
       scoreId: row.score_id,
-      scoreSnapshot: snapshot.scoreSnapshot ?? null,
-      frozenSourceReferences: Array.isArray(snapshot.citations)
-        ? snapshot.citations
-        : null,
+      scoreSnapshotReference: frozenScoreEvidence,
+      frozenSourceReferences: frozenCitations,
       relationship: {
         id: row.relation_id,
         version: row.relation_version,
         olderGroupId: row.older_group_id,
         newerGroupId: row.newer_group_id,
-        evidence: relation,
+        evidence: projectedRelationEvidence,
       },
       candidate: {
-        title,
         contentHash: createHash("sha256").update(text).digest("hex"),
         publishedAt,
-        firstPostAcceptanceObservation: firstObservation,
+        firstPostAcceptanceObservation: firstObservation
+          ? {
+              sourceId: firstObservation.source_id.slice(0, 128),
+              nativeId: firstObservation.native_id.slice(0, 256),
+              observedAt: firstObservation.observed_at,
+              backfilled: firstObservation.backfilled,
+            }
+          : null,
         currentContentObservation: latestObservation
           ? {
-              sourceId: latestObservation.source_id,
-              nativeId: latestObservation.native_id,
+              sourceId: latestObservation.source_id.slice(0, 128),
+              nativeId: latestObservation.native_id.slice(0, 256),
               observedAt: latestObservation.observed_at,
               backfilled: latestObservation.backfilled,
               contentMatchesObservation: currentContentMatchesObservation,
@@ -540,7 +625,7 @@ export function relatedDeliveryHistory(
           : null,
       },
       priorContent: {
-        title: priorTitle,
+        title: priorTitle.slice(0, 256),
         contentHash: createHash("sha256").update(priorText).digest("hex"),
       },
       contentComparison,
