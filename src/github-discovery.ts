@@ -7,6 +7,7 @@ import { ProfileStore, type Interest } from "./profiles";
 import { assertDiscoveryRestoreElapsed } from "./discovery-restore-guard";
 import { runDiscovery, type DiscoveryRunOptions } from "./discovery-service";
 import { GithubSearchProvider } from "./adapters/github";
+import type { GithubFetcher } from "./adapters/github";
 import type { SearchProvider, SearchResult } from "./search-provider";
 import { restorePauseMessage } from "./scheduled-discovery";
 import type { GithubDiscoveryConfig } from "./github-discovery-config";
@@ -91,16 +92,30 @@ function followedRepositoryPaths(store: Store): Set<string> {
   return new Set(
     store
       .sources()
-      .filter((source) => source.kind === "github" && !source.removed)
       .map((source) => {
+        // Include REST streams and Atom/RSS feeds for the same repository.
         const match = /^https:\/\/github\.com\/([^/]+)\/([^/]+)\//i.exec(
           source.url,
         );
         return match
           ? `${match[1]!.toLowerCase()}/${match[2]!.toLowerCase()}`
-          : source.url.toLowerCase();
-      }),
+          : null;
+      })
+      .filter((path): path is string => path !== null),
   );
+}
+
+/**
+ * Stable cadence identity for a planned query. The query text embeds a rolling
+ * `pushed:>DATE` cutoff, so using it as the schedule key would reset the
+ * interval at every UTC date change. Interest lineage is stable across days.
+ */
+function githubScheduleKey(query: PlannedQuery): string {
+  const lineage = query.interestLineage
+    .map((entry) => `${entry.id}@${entry.version}`)
+    .sort()
+    .join(",");
+  return `github:${lineage || normalizeDiscoveryQuery(query.query)}`;
 }
 
 function allowGithubResult(query: PlannedQuery, followed: Set<string>) {
@@ -137,9 +152,11 @@ export async function runScheduledGithubDiscovery(
   store: Store,
   config: GithubDiscoveryConfig,
   now = Date.now(),
-  provider: SearchProvider = new GithubSearchProvider(),
+  provider?: SearchProvider,
   clock: () => number = Date.now,
+  token?: string,
 ): Promise<number> {
+  const searchProvider = provider ?? new GithubSearchProvider(token);
   const dayStart = Math.floor(now / 86_400_000) * 86_400_000;
   const dailyUsage = store.sqlite
     .query<
@@ -189,7 +206,7 @@ export async function runScheduledGithubDiscovery(
       .query<{ at: number | null }, [string]>(
         "SELECT max(r.started_at) AS at FROM discovery_runs r WHERE r.schedule_key=? AND EXISTS(SELECT 1 FROM discovery_pages p WHERE p.run_id=r.id)",
       )
-      .get(query.key)!.at;
+      .get(githubScheduleKey(query))!.at;
     if (last === null || last <= now - config.intervalMs) due.push(query);
   }
   if (!due.length) return 0;
@@ -201,13 +218,13 @@ export async function runScheduledGithubDiscovery(
     const options: DiscoveryRunOptions = {
       runId,
       queryKind: query.kind,
-      scheduleKey: query.key,
+      scheduleKey: githubScheduleKey(query),
       interestLineage: query.interestLineage,
       allowResult: allowGithubResult(query, followed),
     };
     const outcome = await runDiscovery(
       store,
-      provider,
+      searchProvider,
       query.query,
       {
         ...config.limits,
@@ -229,6 +246,8 @@ export function createGithubDiscoveryTick(
   dbPath: string,
   store: Store,
   config: GithubDiscoveryConfig,
+  token?: string,
+  fetcher?: GithubFetcher,
 ): () => Promise<void> {
   return async () => {
     try {
@@ -238,6 +257,11 @@ export function createGithubDiscoveryTick(
         return;
       throw error;
     }
-    await runScheduledGithubDiscovery(store, config);
+    await runScheduledGithubDiscovery(
+      store,
+      config,
+      Date.now(),
+      new GithubSearchProvider(token, fetcher),
+    );
   };
 }

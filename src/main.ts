@@ -156,7 +156,12 @@ const scheduler = schedule(
     : undefined,
   githubDiscovery
     ? {
-        tick: createGithubDiscoveryTick(cfg.DB_PATH, store, githubDiscovery),
+        tick: createGithubDiscoveryTick(
+          cfg.DB_PATH,
+          store,
+          githubDiscovery,
+          cfg.GITHUB_TOKEN,
+        ),
       }
     : undefined,
 );

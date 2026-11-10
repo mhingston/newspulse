@@ -191,6 +191,138 @@ describe("GitHub followed-repository adapter", () => {
     expect(requests[1]!.headers["if-none-match"]).toBe('"p1"');
   });
 
+  test("entry limits cap ingestion and mark the window truncated", async () => {
+    const { fetcher } = recordingFetcher(({ url }) => {
+      const page = Number(url.searchParams.get("page") ?? "1");
+      return json(
+        Array.from({ length: 100 }, (_, index) =>
+          releaseRow((page - 1) * 100 + index + 1),
+        ),
+        { etag: `"p${page}"` },
+      );
+    });
+    const result = await new GitHubSourceAdapter(undefined, fetcher).poll(
+      releasesUrl,
+      {},
+      { maxEntries: 150, maxBytes: 10_000_000 },
+    );
+    expect(result.items).toHaveLength(150);
+    expect(result.entryCount).toBe(150);
+    expect(result.truncated).toBe(true);
+    const cursor = JSON.parse(result.cursor!);
+    expect(Object.keys(cursor.releases)).toHaveLength(150);
+    // The partially consumed page is refetched rather than cached as complete.
+    expect(cursor.pages[1].etag).toBeUndefined();
+  });
+
+  test("a changed earlier page keeps terminal-page completeness across a 304", async () => {
+    const page1 = Array.from({ length: 100 }, (_, index) =>
+      releaseRow(index + 1),
+    );
+    let first = true;
+    const { fetcher } = recordingFetcher(({ url, headers }) => {
+      const page = Number(url.searchParams.get("page") ?? "1");
+      if (page === 2 && headers["if-none-match"] === '"p2"')
+        return new Response(null, { status: 304 });
+      if (first)
+        return json(page === 1 ? page1 : [releaseRow(101)], {
+          etag: page === 1 ? '"p1"' : '"p2"',
+        });
+      return json(page === 1 ? [releaseRow(102), ...page1.slice(0, 99)] : [], {
+        etag: page === 1 ? '"p1b"' : '"p2"',
+      });
+    });
+    const initial = await poll(
+      fetcher,
+      releasesUrl,
+      {},
+      { maxEntries: 200, maxBytes: 10_000_000 },
+    );
+    expect(JSON.parse(initial.cursor!).complete).toBe(true);
+    first = false;
+    const second = await poll(
+      fetcher,
+      releasesUrl,
+      { cursor: initial.cursor, etag: initial.etag },
+      { maxEntries: 200, maxBytes: 10_000_000 },
+    );
+    // Page 1 changed, but the unchanged terminal page still proves completeness.
+    expect(JSON.parse(second.cursor!).complete).toBe(true);
+    expect(second.items.map((item) => item.nativeId)).toContain(
+      "github-release:102",
+    );
+  });
+
+  test("a repository rename produces a new observation for the same release", async () => {
+    let first = true;
+    const { fetcher } = recordingFetcher(() => {
+      if (first) {
+        first = false;
+        return json([releaseRow(1)]);
+      }
+      return json([
+        releaseRow(1, {
+          html_url: "https://github.com/acme/renamed/releases/tag/v1.0.1",
+        }),
+      ]);
+    });
+    const initial = await poll(fetcher, releasesUrl);
+    expect(initial.items).toHaveLength(1);
+    const second = await poll(fetcher, releasesUrl, {
+      cursor: initial.cursor,
+      etag: initial.etag,
+    });
+    expect(second.items).toHaveLength(1);
+    expect(second.items[0]!.url).toBe(
+      "https://github.com/acme/renamed/releases/tag/v1.0.1",
+    );
+  });
+
+  test("still-visible events survive history trimming", async () => {
+    const seen = Array.from({ length: 300 }, (_, index) => String(index + 1));
+    const cursor = JSON.stringify({
+      version: 1,
+      stream: "events",
+      pages: [],
+      releases: {},
+      seenEvents: seen,
+    });
+    const { fetcher } = recordingFetcher(() =>
+      json([
+        {
+          id: "1",
+          type: "IssuesEvent",
+          payload: {
+            action: "closed",
+            issue: {
+              number: 1,
+              html_url: "https://github.com/acme/widgets/issues/1",
+            },
+          },
+        },
+        {
+          id: "301",
+          type: "IssuesEvent",
+          payload: {
+            action: "closed",
+            issue: {
+              number: 2,
+              html_url: "https://github.com/acme/widgets/issues/2",
+            },
+          },
+        },
+      ]),
+    );
+    const result = await poll(fetcher, eventsUrl, { cursor });
+    expect(result.items.map((item) => item.nativeId)).toEqual([
+      "github-event:301",
+    ]);
+    const next = JSON.parse(result.cursor!);
+    expect(next.seenEvents).toContain("1");
+    expect(next.seenEvents).toContain("301");
+    expect(next.seenEvents).toHaveLength(300);
+  });
+
   test("repository renames switch API paths and keep stable item identity", async () => {
     let first = true;
     const { fetcher, requests } = recordingFetcher(() => {
@@ -413,6 +545,7 @@ describe("GitHub followed-repository adapter", () => {
               pull_request: {
                 number: 9,
                 title: "Refactor auth",
+                merged: true,
                 merged_at: "2026-02-04T06:07:08Z",
                 html_url: "https://github.com/acme/widgets/pull/9",
               },
@@ -426,6 +559,20 @@ describe("GitHub followed-repository adapter", () => {
               action: "closed",
               pull_request: {
                 html_url: "https://github.com/acme/widgets/pull/10",
+              },
+            },
+          },
+          {
+            id: "6",
+            type: "PullRequestEvent",
+            payload: {
+              action: "closed",
+              pull_request: {
+                number: 11,
+                title: "Abandoned change",
+                merged: false,
+                merged_at: null,
+                html_url: "https://github.com/acme/widgets/pull/11",
               },
             },
           },

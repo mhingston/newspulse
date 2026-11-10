@@ -1,4 +1,7 @@
 import { describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { GithubSearchProvider } from "../src/adapters/github";
 import { Store } from "../src/db/store";
 import { runDiscovery } from "../src/discovery-service";
@@ -7,7 +10,10 @@ import {
   githubDiscoveryConfig,
   type GithubDiscoveryConfig,
 } from "../src/github-discovery-config";
-import { runScheduledGithubDiscovery } from "../src/github-discovery";
+import {
+  createGithubDiscoveryTick,
+  runScheduledGithubDiscovery,
+} from "../src/github-discovery";
 import type { GithubFetcher } from "../src/adapters/github";
 import { ProfileStore, type Interest } from "../src/profiles";
 import type { SearchProvider } from "../src/search-provider";
@@ -80,22 +86,25 @@ describe("GitHub repository search provider", () => {
     const first = await provider.search({ query: "widgets", limit: 150 });
     expect(requests[0]!.url.searchParams.get("per_page")).toBe("100");
     expect(first.results).toHaveLength(100);
-    expect(first.nextCursor).toBe("2");
+    expect(first.nextCursor).toBe("2:100");
     const second = await provider.search({
       query: "widgets",
       limit: 150,
-      cursor: "2",
+      cursor: "2:100",
     });
     expect(second.results.map((result) => result.title)).toEqual([
       "acme/second — Description for acme/second",
     ]);
     expect(second.nextCursor).toBeUndefined();
     await expect(
-      provider.search({ query: "widgets", limit: 150, cursor: "11" }),
+      provider.search({ query: "widgets", limit: 150, cursor: "11:100" }),
     ).rejects.toThrow("Invalid GitHub search cursor");
     await expect(
       provider.search({ query: "widgets", limit: 150, cursor: "page" }),
     ).rejects.toThrow("Invalid GitHub search cursor");
+    await expect(
+      provider.search({ query: "widgets", limit: 50, cursor: "2:100" }),
+    ).rejects.toThrow("GitHub search cursor page size changed");
   });
 
   test("rejects invalid queries and limits before any request", async () => {
@@ -462,6 +471,88 @@ describe("scheduled GitHub repository discovery", () => {
       expect(second.pages).toBe(0);
     } finally {
       store.close();
+    }
+  });
+
+  test("a repository followed through an Atom feed is not reported as new", async () => {
+    const store = new Store(":memory:");
+    try {
+      new ProfileStore(store.sqlite).import([interest]);
+      store.addSource("https://github.com/acme/widgets/releases.atom");
+      const fetcher: GithubFetcher = async () => repoRow("acme/widgets");
+      const dispatched = await runScheduledGithubDiscovery(
+        store,
+        config,
+        start,
+        provider(fetcher),
+        ticking(start),
+      );
+      expect(dispatched).toBe(1);
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) AS n FROM discovery_results",
+          )
+          .get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("the rolling date window does not reset the discovery interval", async () => {
+    const store = new Store(":memory:");
+    try {
+      new ProfileStore(store.sqlite).import([interest]);
+      const weekly: GithubDiscoveryConfig = {
+        ...config,
+        intervalMs: 7 * 24 * 3_600_000,
+      };
+      const fetcher: GithubFetcher = async () => repoRow("acme/widgets");
+      const first = await runScheduledGithubDiscovery(
+        store,
+        weekly,
+        start,
+        provider(fetcher),
+        ticking(start),
+      );
+      expect(first).toBe(1);
+      const nextDay = start + 86_400_000;
+      const second = await runScheduledGithubDiscovery(
+        store,
+        weekly,
+        nextDay,
+        provider(fetcher),
+        ticking(nextDay),
+      );
+      expect(second).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("scheduled discovery uses the configured token", async () => {
+    const store = new Store(":memory:");
+    const dir = mkdtempSync(join(tmpdir(), "newspulse-github-token-"));
+    try {
+      new ProfileStore(store.sqlite).import([interest]);
+      const headers: Record<string, string>[] = [];
+      const fetcher: GithubFetcher = async (_url, init) => {
+        headers.push(Object.fromEntries(new Headers(init?.headers).entries()));
+        return repoRow("acme/widgets");
+      };
+      const tick = createGithubDiscoveryTick(
+        join(dir, "db.sqlite"),
+        store,
+        config,
+        "scheduled-token",
+        fetcher,
+      );
+      await tick();
+      expect(headers[0]!.authorization).toBe("Bearer scheduled-token");
+    } finally {
+      store.close();
+      rmSync(dir, { recursive: true, force: true });
     }
   });
 });

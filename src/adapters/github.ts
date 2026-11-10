@@ -30,6 +30,8 @@ const maxSearchResponseBytes = 1_000_000;
 interface PageState {
   ids: string[];
   etag?: string;
+  /** The page was shorter than the requested size, so it ended the list. */
+  short?: boolean;
 }
 interface ReleaseSnapshot {
   fingerprint: string;
@@ -72,7 +74,14 @@ function readCursor(raw: string | undefined, stream: GithubSourceStream) {
     if (
       cursor.pages.length > maxReleasePages ||
       cursor.seenEvents.length > maxSeenEvents ||
-      Object.keys(cursor.releases).length > 1000
+      Object.keys(cursor.releases).length > 1000 ||
+      cursor.pages.some(
+        (page) =>
+          !page ||
+          typeof page !== "object" ||
+          !Array.isArray(page.ids) ||
+          (page.short !== undefined && typeof page.short !== "boolean"),
+      )
     )
       throw new Error();
     return cursor;
@@ -197,12 +206,15 @@ function parseBoundedJson(bytes: Uint8Array, label: string): unknown {
   }
 }
 
-function githubRequestInit(headers: Record<string, string>): RequestInit {
+function githubRequestInit(
+  headers: Record<string, string>,
+  timeoutMs = 20_000,
+): RequestInit {
   return {
     method: "GET",
     headers,
     redirect: "manual",
-    signal: AbortSignal.timeout(20_000),
+    signal: AbortSignal.timeout(timeoutMs),
   };
 }
 
@@ -230,9 +242,12 @@ export class GitHubSourceAdapter implements SourceAdapter {
     const source = parseGithubSource(url);
     if (!source) throw new Error("Invalid GitHub repository source URL");
     const cursor = readCursor(state.cursor, source.stream);
+    // Keep the whole paginated poll below the worker's 60s claim lease so a
+    // slow provider cannot make the store reject an otherwise valid result.
+    const deadline = Date.now() + 45_000;
     if (source.stream === "releases")
-      return this.pollReleases(source, cursor, state, limits);
-    return this.pollEvents(source, cursor, state, limits);
+      return this.pollReleases(source, cursor, state, limits, deadline);
+    return this.pollEvents(source, cursor, state, limits, deadline);
   }
 
   private headers(etag?: string): Record<string, string> {
@@ -250,13 +265,17 @@ export class GitHubSourceAdapter implements SourceAdapter {
     target: URL,
     etag: string | undefined,
     maxBytes: number,
+    deadline: number,
   ): Promise<JsonResponse> {
     let requestUrl = target;
     let response: Response;
+    const remaining = deadline - Date.now();
+    if (remaining <= 0)
+      throw new HttpError("GitHub poll exceeded its time budget", 30_000);
     try {
       response = await this.fetcher(
         requestUrl,
-        githubRequestInit(this.headers(etag)),
+        githubRequestInit(this.headers(etag), Math.min(20_000, remaining)),
       );
       if ([301, 302, 307, 308].includes(response.status)) {
         const location = response.headers.get("location");
@@ -289,9 +308,15 @@ export class GitHubSourceAdapter implements SourceAdapter {
         for (const [key, value] of target.searchParams)
           next.searchParams.set(key, value);
         requestUrl = next;
+        const redirectRemaining = deadline - Date.now();
+        if (redirectRemaining <= 0)
+          throw new HttpError("GitHub poll exceeded its time budget", 30_000);
         response = await this.fetcher(
           requestUrl,
-          githubRequestInit(this.headers(etag)),
+          githubRequestInit(
+            this.headers(etag),
+            Math.min(20_000, redirectRemaining),
+          ),
         );
       }
     } catch (error) {
@@ -343,6 +368,7 @@ export class GitHubSourceAdapter implements SourceAdapter {
     prior: GitHubCursor,
     state: PollState,
     limits: { maxEntries: number; maxBytes: number },
+    deadline: number,
   ): Promise<PollResult> {
     const maxItems = Math.min(Math.max(1, limits.maxEntries), 1000);
     const perPage = Math.min(maxItems, 100);
@@ -358,7 +384,13 @@ export class GitHubSourceAdapter implements SourceAdapter {
     let bytesUsed = 0;
     let allNotModified = true;
     let shortPage = false;
-    for (let page = 1; page <= pagesAllowed && !shortPage; page++) {
+    let accepted = 0;
+    let limitReached = false;
+    for (
+      let page = 1;
+      page <= pagesAllowed && !shortPage && !limitReached;
+      page++
+    ) {
       const requestUrl = new URL(`${apiRoot}${api}`);
       requestUrl.searchParams.set("per_page", String(perPage));
       requestUrl.searchParams.set("page", String(page));
@@ -366,6 +398,7 @@ export class GitHubSourceAdapter implements SourceAdapter {
         requestUrl,
         page === 1 ? state.etag : prior.pages[page - 1]?.etag,
         Math.max(0, limits.maxBytes - bytesUsed),
+        deadline,
       );
       api = response.apiPath;
       bytesUsed += response.bytes;
@@ -373,12 +406,22 @@ export class GitHubSourceAdapter implements SourceAdapter {
       if (response.status === 304) {
         if (!saved)
           throw new HttpError("GitHub returned 304 without a saved page");
-        pageStates.push(saved);
-        refreshedPages.push(false);
+        const restored: string[] = [];
         for (const id of saved.ids) {
+          if (accepted >= maxItems) {
+            limitReached = true;
+            break;
+          }
           const snapshot = prior.releases[id];
-          if (snapshot) current[id] = snapshot;
+          if (snapshot) {
+            current[id] = snapshot;
+            restored.push(id);
+            accepted++;
+          }
         }
+        pageStates.push({ ...saved, ids: restored });
+        refreshedPages.push(false);
+        if (saved.short) shortPage = true;
         continue;
       }
       allNotModified = false;
@@ -392,18 +435,27 @@ export class GitHubSourceAdapter implements SourceAdapter {
         const release = this.parseRelease(row, source, prior);
         return release ? [release] : [];
       });
+      const pageIds: string[] = [];
       for (const release of parsed) {
+        if (accepted >= maxItems) {
+          limitReached = true;
+          break;
+        }
         current[release.id] = release.snapshot;
         parsedById.set(release.id, release.candidate);
+        pageIds.push(release.id);
+        accepted++;
         // Repository renames are learned from the original release URLs.
         if (release.repoFullName) prior.repoFullName = release.repoFullName;
       }
       pageStates.push({
-        ids: parsed.map((release) => release.id),
-        etag: response.etag,
+        ids: pageIds,
+        // A partially consumed page must be refetched, not cached as complete.
+        etag: limitReached ? undefined : response.etag,
+        short: !limitReached && rows.length < perPage,
       });
       refreshedPages.push(true);
-      if (rows.length < perPage) shortPage = true;
+      if (!limitReached && rows.length < perPage) shortPage = true;
     }
     // A short page fully enumerates the list; without one the window may have
     // cut releases off. If every page was unchanged, completeness carries over.
@@ -495,6 +547,9 @@ export class GitHubSourceAdapter implements SourceAdapter {
         publishedAt,
         updatedAt: text(row.updated_at, 50),
         prerelease: row.prerelease === true,
+        // A repository rename changes the release URL; treat it as a new
+        // observation so the store can register the new canonical alias.
+        url,
       }),
       title,
       url,
@@ -534,14 +589,13 @@ export class GitHubSourceAdapter implements SourceAdapter {
     prior: GitHubCursor,
     state: PollState,
     limits: { maxEntries: number; maxBytes: number },
+    deadline: number,
   ): Promise<PollResult> {
-    const perPage = Math.min(100, Math.max(1, limits.maxEntries));
-    const pagesAllowed = Math.min(
-      maxEventPages,
-      Math.ceil(Math.min(limits.maxEntries, 300) / perPage),
-    );
+    const maxItems = Math.min(Math.max(1, limits.maxEntries), 300);
+    const perPage = Math.min(100, maxItems);
+    const pagesAllowed = Math.min(maxEventPages, Math.ceil(maxItems / perPage));
     const seen = new Set(prior.seenEvents);
-    const nextSeen = new Set(prior.seenEvents);
+    const currentIds = new Set<string>();
     const pageStates: PageState[] = [];
     const items: Candidate[] = [];
     let api = apiPath(prior, source);
@@ -549,7 +603,13 @@ export class GitHubSourceAdapter implements SourceAdapter {
     let entryCount = 0;
     let allNotModified = true;
     let shortPage = false;
-    for (let page = 1; page <= pagesAllowed && !shortPage; page++) {
+    let accepted = 0;
+    let limitReached = false;
+    for (
+      let page = 1;
+      page <= pagesAllowed && !shortPage && !limitReached;
+      page++
+    ) {
       const requestUrl = new URL(`${apiRoot}${api}`);
       requestUrl.searchParams.set("per_page", String(perPage));
       requestUrl.searchParams.set("page", String(page));
@@ -557,6 +617,7 @@ export class GitHubSourceAdapter implements SourceAdapter {
         requestUrl,
         page === 1 ? state.etag : prior.pages[page - 1]?.etag,
         Math.max(0, limits.maxBytes - bytesUsed),
+        deadline,
       );
       api = response.apiPath;
       bytesUsed += response.bytes;
@@ -564,7 +625,19 @@ export class GitHubSourceAdapter implements SourceAdapter {
         const saved = prior.pages[page - 1];
         if (!saved)
           throw new HttpError("GitHub returned 304 without a saved event page");
-        pageStates.push(saved);
+        const restored: string[] = [];
+        for (const id of saved.ids) {
+          if (accepted >= maxItems) {
+            limitReached = true;
+            break;
+          }
+          restored.push(id);
+          currentIds.add(id);
+          accepted++;
+        }
+        entryCount += restored.length;
+        pageStates.push({ ...saved, ids: restored });
+        if (saved.short) shortPage = true;
         continue;
       }
       allNotModified = false;
@@ -578,24 +651,39 @@ export class GitHubSourceAdapter implements SourceAdapter {
       for (const row of rows) {
         const parsed = this.parseEvent(row, source);
         if (!parsed) continue;
+        if (accepted >= maxItems) {
+          limitReached = true;
+          break;
+        }
         ids.push(parsed.id);
-        nextSeen.add(parsed.id);
+        currentIds.add(parsed.id);
+        accepted++;
         if (!seen.has(parsed.id)) items.push(parsed.candidate);
       }
       entryCount += ids.length;
-      pageStates.push({ ids, etag: response.etag });
-      if (rows.length < perPage) shortPage = true;
+      pageStates.push({
+        ids,
+        etag: limitReached ? undefined : response.etag,
+        short: !limitReached && rows.length < perPage,
+      });
+      if (!limitReached && rows.length < perPage) shortPage = true;
     }
     const next = emptyCursor("events");
     next.repoFullName = prior.repoFullName;
     next.pages = pageStates;
-    next.seenEvents = [...nextSeen].slice(-maxSeenEvents);
+    // Keep IDs still visible in the current window ahead of older history so a
+    // still-listed event is never dropped and re-ingested on the next poll.
+    next.seenEvents = [
+      ...prior.seenEvents.filter((id) => !currentIds.has(id)),
+      ...currentIds,
+    ].slice(-maxSeenEvents);
     return {
       items,
       etag: pageStates[0]?.etag,
       cursor: serializeCursor(next),
       entryCount,
-      truncated: !shortPage && pageStates.length === pagesAllowed,
+      truncated:
+        !shortPage && (limitReached || pageStates.length === pagesAllowed),
       notModified: allNotModified && items.length === 0,
     };
   }
@@ -628,11 +716,18 @@ export class GitHubSourceAdapter implements SourceAdapter {
       activity = "closed";
     } else if (
       event.type === "PullRequestEvent" &&
-      payload.action === "closed" &&
-      (payload.pull_request as Record<string, unknown> | undefined)
-        ?.merged_at !== undefined
+      payload.action === "closed"
     ) {
-      target = payload.pull_request as Record<string, unknown> | undefined;
+      const pull = payload.pull_request as Record<string, unknown> | undefined;
+      // A closed-but-unmerged pull request has `merged_at: null`; only a real
+      // merge timestamp (and the merged flag) counts as merged activity.
+      if (
+        !pull ||
+        pull.merged !== true ||
+        parseTimestamp(pull.merged_at) === undefined
+      )
+        return;
+      target = pull;
       kind = "Pull request";
       activity = "merged";
     } else return;
@@ -706,12 +801,14 @@ export class GithubSearchProvider implements SearchProvider {
     const perPage = Math.min(input.limit, 100);
     let page = 1;
     if (input.cursor !== undefined) {
-      if (
-        !/^[1-9]\d{0,2}$/.test(input.cursor) ||
-        Number(input.cursor) > maxSearchPages
-      )
+      const match = /^([1-9]\d{0,2}):([1-9]\d{0,2})$/.exec(input.cursor);
+      if (!match || Number(match[1]) > maxSearchPages || Number(match[2]) > 100)
         throw new Error("Invalid GitHub search cursor");
-      page = Number(input.cursor);
+      page = Number(match[1]);
+      // The numeric page offset only means the same thing for the same page
+      // size; reject a changed reservation instead of silently shifting it.
+      if (Number(match[2]) !== perPage)
+        throw new Error("GitHub search cursor page size changed");
     }
     const url = new URL(`${apiRoot}/search/repositories`);
     url.searchParams.set("q", query);
@@ -772,7 +869,9 @@ export class GithubSearchProvider implements SearchProvider {
       results,
       truncated: rows.length === perPage,
       nextCursor:
-        rows.length === perPage && !exhausted ? String(page + 1) : undefined,
+        rows.length === perPage && !exhausted
+          ? `${page + 1}:${perPage}`
+          : undefined,
     };
   }
 
