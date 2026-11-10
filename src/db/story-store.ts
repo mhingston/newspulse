@@ -195,10 +195,11 @@ export class StoryStore {
               .query("UPDATE story_groups SET retired_at=? WHERE id=?")
               .run(now, group.id);
 
-        this.reconcileRelations(plan, now);
+        const relationGroups = this.reconcileRelations(plan, now);
         // A changed membership can alter delivery history for its former and
         // new peers. Fence only these groups and the changed items themselves.
         const affectedGroups = new Set<string>();
+        for (const groupId of relationGroups) affectedGroups.add(groupId);
         for (const row of current)
           if (changedItems.has(row.item_id)) affectedGroups.add(row.group_id);
         for (const itemId of changedItems) {
@@ -227,7 +228,8 @@ export class StoryStore {
       .immediate();
   }
 
-  private reconcileRelations(plan: StoryPlan, now: number): void {
+  private reconcileRelations(plan: StoryPlan, now: number): Set<string> {
+    const changedGroups = new Set<string>();
     const current = this.sqlite
       .query<CurrentRelation, []>(
         "SELECT id,older_group_id,newer_group_id,reason,evidence,rule_version " +
@@ -257,11 +259,15 @@ export class StoryStore {
         next.delete(key(row.older_group_id, row.newer_group_id));
         continue;
       }
+      changedGroups.add(row.older_group_id);
+      changedGroups.add(row.newer_group_id);
       this.sqlite
         .query("UPDATE story_relations SET ended_at=? WHERE id=?")
         .run(now, row.id);
     }
-    for (const relation of next.values())
+    for (const relation of next.values()) {
+      changedGroups.add(relation.olderGroupId);
+      changedGroups.add(relation.newerGroupId);
       this.sqlite
         .query(
           "INSERT INTO story_relations(older_group_id,newer_group_id,reason,evidence,rule_version,started_at) VALUES(?,?,?,?,?,?)",
@@ -274,6 +280,8 @@ export class StoryStore {
           plan.version,
           now,
         );
+    }
+    return changedGroups;
   }
 
   forItem(itemId: string) {

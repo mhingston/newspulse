@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import { observedUpdate, type ObservedUpdate } from "../observed-update";
 
 /** Only confirmed provider acceptance is positive evidence. These are not read receipts. */
@@ -256,4 +257,208 @@ export function deliveryHistory(
         : null,
     },
   } as const;
+}
+
+/**
+ * Cross-group comparison deliberately records a possible follow-up without
+ * treating a lexical story relation as duplicate coverage. Only accepted,
+ * bounded edition snapshots are considered; uncertainty is preserved.
+ */
+export function relatedDeliveryHistory(
+  db: Database,
+  candidateItemId: string,
+  newerGroupId: string | null,
+  title: string,
+  text: string,
+  publishedAt: number | null,
+  now = Date.now(),
+) {
+  if (!newerGroupId) return null;
+  const rows = db
+    .query<
+      {
+        delivery_id: string;
+        status: string;
+        provider_id: string | null;
+        accepted_at: number;
+        edition_id: string;
+        edition_date: string;
+        older_group_id: string;
+        newer_group_id: string;
+        relation_id: number;
+        relation_evidence: string;
+        relation_version: string;
+        item_id: string;
+        score_id: string | null;
+        position: number;
+        source_refs: string;
+      },
+      [string]
+    >(
+      `
+    SELECT d.id AS delivery_id,d.status,d.provider_id,d.updated_at AS accepted_at,
+      g.id AS edition_id,g.edition_date,r.older_group_id,r.newer_group_id,
+      r.id AS relation_id,r.evidence AS relation_evidence,r.rule_version AS relation_version,
+      di.item_id,di.score_id,di.position,
+      COALESCE((SELECT json_group_array(json_object('sourceId',s.id,'nativeId',isrc.native_id,
+        'url',isrc.url))
+        FROM item_sources isrc JOIN sources s ON s.id=isrc.source_id
+        WHERE isrc.item_id=di.item_id),'[]') AS source_refs
+    FROM story_relations r
+    JOIN digest_items di ON di.group_id=r.older_group_id
+    JOIN digests g ON g.id=di.digest_id AND g.sealed=1
+    JOIN deliveries d ON d.digest_id=g.id
+    WHERE r.newer_group_id=? AND r.ended_at IS NULL
+      AND (d.status IN ('sent','ambiguous') OR (d.status='sending' AND d.first_attempt_at IS NOT NULL))
+    ORDER BY g.frozen_at DESC,g.edition_date DESC,d.id DESC,di.position LIMIT 101
+  `,
+    )
+    .all(newerGroupId);
+  if (!rows.length) return null;
+  const unknown = (reason: string, row = rows[0]!) => ({
+    input: null,
+    evidence: {
+      comparisonVersion: "related-delivery-v1",
+      state: "unknown" as const,
+      reason,
+      editionId: row.edition_id,
+      relationId: row.relation_id,
+      relationVersion: row.relation_version,
+      olderGroupId: row.older_group_id,
+      newerGroupId: row.newer_group_id,
+      itemId: row.item_id,
+      scoreId: row.score_id,
+    },
+  });
+  if (rows.length > 100) return unknown("history_limit");
+  if (rows.some((row) => row.status !== "sent"))
+    return unknown(
+      "ambiguous_delivery",
+      rows.find((row) => row.status !== "sent")!,
+    );
+  const row = rows[0]!;
+  const bytes = db
+    .query<{ bytes: number }, [string, number]>(
+      "SELECT length(CAST(snapshot AS BLOB)) AS bytes FROM digest_items WHERE digest_id=? AND position=?",
+    )
+    .get(row.edition_id, row.position)?.bytes;
+  if (bytes === undefined || bytes > 250_000)
+    return unknown("historical_snapshot_limit", row);
+  const raw = db
+    .query<{ snapshot: string }, [string, number]>(
+      "SELECT snapshot FROM digest_items WHERE digest_id=? AND position=?",
+    )
+    .get(row.edition_id, row.position)?.snapshot;
+  let snapshot: any;
+  try {
+    snapshot = JSON.parse(raw ?? "null");
+  } catch {
+    return unknown("invalid_historical_snapshot", row);
+  }
+  const old = snapshot?.scoreSnapshot?.provenance?.input;
+  const priorTitle = typeof old?.title === "string" ? old.title : null;
+  const priorText = typeof old?.text === "string" ? old.text : null;
+  if (!priorTitle || !priorText?.trim())
+    return unknown("historical_content_unavailable", row);
+  const observation = db
+    .query<
+      {
+        source_id: string;
+        native_id: string;
+        observed_at: number;
+        backfilled: number;
+      },
+      [string]
+    >(
+      "SELECT source_id,native_id,observed_at,backfilled FROM content_versions WHERE item_id=? ORDER BY id LIMIT 1",
+    )
+    .get(candidateItemId);
+  const candidateSourceReferences = db
+    .query<
+      { source_id: string; native_id: string; url: string | null },
+      [string]
+    >(
+      "SELECT source_id,native_id,url FROM item_sources WHERE item_id=? ORDER BY id",
+    )
+    .all(candidateItemId);
+  const timely =
+    publishedAt !== null &&
+    publishedAt > row.accepted_at &&
+    publishedAt <= now &&
+    observation !== null &&
+    observation.backfilled === 0 &&
+    observation.observed_at > row.accepted_at &&
+    publishedAt <= observation.observed_at &&
+    observation.observed_at <= now;
+  let relation: unknown = null;
+  try {
+    relation = JSON.parse(row.relation_evidence);
+  } catch {
+    return unknown("invalid_relationship_evidence", row);
+  }
+  const sharedTerms = (relation as { sharedTerms?: unknown })?.sharedTerms;
+  const supported = Array.isArray(sharedTerms) && sharedTerms.length >= 2;
+  const tokens = (value: string) =>
+    new Set(value.toLocaleLowerCase("en").match(/[\p{L}\p{N}]{4,}/gu) ?? []);
+  const priorTerms = tokens(`${priorTitle}\n${priorText}`);
+  const candidateTerms = tokens(`${title}\n${text}`);
+  const newTerms = [...candidateTerms]
+    .filter((term) => !priorTerms.has(term))
+    .sort();
+  const contentComparison = {
+    sameContent:
+      createHash("sha256").update(text).digest("hex") ===
+      createHash("sha256").update(priorText).digest("hex"),
+    candidateTermCount: candidateTerms.size,
+    priorTermCount: priorTerms.size,
+    newTermCount: newTerms.length,
+    newTerms: newTerms.slice(0, 40),
+    overlapRatio: candidateTerms.size
+      ? (candidateTerms.size - newTerms.length) / candidateTerms.size
+      : 0,
+  };
+  return {
+    input: null,
+    evidence: {
+      comparisonVersion: "related-delivery-v1",
+      state:
+        timely && supported
+          ? ("possible_follow_up" as const)
+          : ("unknown" as const),
+      reason:
+        timely && supported
+          ? "directional_relation_and_post_acceptance_observation"
+          : "stale_or_uncertain_observation",
+      editionId: row.edition_id,
+      editionDate: row.edition_date,
+      deliveryId: row.delivery_id,
+      providerId: row.provider_id,
+      acceptedAt: row.accepted_at,
+      itemId: row.item_id,
+      groupId: row.older_group_id,
+      scoreId: row.score_id,
+      scoreSnapshot: snapshot.scoreSnapshot ?? null,
+      sourceReferences: JSON.parse(row.source_refs) as unknown,
+      candidateSourceReferences,
+      relationship: {
+        id: row.relation_id,
+        version: row.relation_version,
+        olderGroupId: row.older_group_id,
+        newerGroupId: row.newer_group_id,
+        evidence: relation,
+      },
+      candidate: {
+        title,
+        contentHash: createHash("sha256").update(text).digest("hex"),
+        publishedAt,
+        observation,
+      },
+      priorContent: {
+        title: priorTitle,
+        contentHash: createHash("sha256").update(priorText).digest("hex"),
+      },
+      contentComparison,
+      suppress: false,
+    },
+  };
 }

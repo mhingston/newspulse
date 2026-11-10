@@ -141,6 +141,58 @@ test("unrelated grouping changes do not invalidate an unchanged membership", () 
   }
 });
 
+test("a relation-only evidence change requeues scores in both related groups", () => {
+  const store = new Store(":memory:");
+  try {
+    ingest(store, "https://feed-one.example/rss", [
+      candidate("rel-old", "Acme Atlas 2 robotics model launches", 0),
+    ]);
+    ingest(store, "https://feed-two.example/rss", [
+      candidate("rel-new", "Acme Atlas 2 robotics model recalled", 9),
+    ]);
+    store.stories.reconcile(start + 20 * day);
+    const groups = store.sqlite
+      .query<{ id: string }, []>(
+        "SELECT id FROM story_groups WHERE retired_at IS NULL ORDER BY id",
+      )
+      .all();
+    expect(groups).toHaveLength(2);
+    expect(
+      store.sqlite
+        .query("SELECT 1 FROM story_relations WHERE ended_at IS NULL")
+        .get(),
+    ).not.toBeNull();
+    for (const item of store.search("robotics")) {
+      store.sqlite
+        .query(
+          "UPDATE processing_jobs SET status='done',outcome='extracted' WHERE item_id=? AND stage='extract'",
+        )
+        .run(item.id);
+      store.sqlite
+        .query(
+          "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,available_at,created_at) VALUES(?,?,'score',1,'done','scored',0,0)",
+        )
+        .run(`score-${item.id}`, item.id);
+    }
+    store.sqlite
+      .query("UPDATE story_relations SET evidence='{}' WHERE ended_at IS NULL")
+      .run();
+    store.sqlite
+      .query("UPDATE story_grouping_state SET fingerprint='dirty' WHERE id=1")
+      .run();
+    store.stories.reconcile(start + 21 * day);
+    const states = store.sqlite
+      .query<{ status: string }, []>(
+        "SELECT status FROM processing_jobs WHERE stage='score' ORDER BY item_id",
+      )
+      .all();
+    expect(states.length).toBeGreaterThanOrEqual(2);
+    expect(states.every((row) => row.status === "pending")).toBe(true);
+  } finally {
+    store.close();
+  }
+});
+
 test("regrouping fences affected peers but leaves unrelated score claims intact", () => {
   const store = new Store(":memory:");
   try {

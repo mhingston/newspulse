@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
 import { StoryStore } from "./story-store";
-import { deliveryHistory } from "./delivery-history";
+import { deliveryHistory, relatedDeliveryHistory } from "./delivery-history";
 import { createHash } from "node:crypto";
 import {
   currentObservedUpdate,
@@ -683,7 +683,10 @@ export class Store {
       )
       .get(job.item_id);
     const currentText = extraction?.text?.trim() || item.text || "";
-    const history = deliveryHistory(
+    let history: {
+      input: ScoringInput["history"] | null;
+      evidence: unknown;
+    } = deliveryHistory(
       this.sqlite,
       item.id,
       story?.group_id ?? null,
@@ -693,6 +696,20 @@ export class Store {
       now,
       job.generation,
     );
+    // A directional relation is only an advisory cross-development comparison.
+    // It never turns a distinct story into a duplicate or verified update.
+    if (history.input === null) {
+      const related = relatedDeliveryHistory(
+        this.sqlite,
+        item.id,
+        story?.group_id ?? null,
+        item.title,
+        currentText,
+        item.published_at,
+        now,
+      );
+      if (related) history = { input: null, evidence: related.evidence };
+    }
     const input: ScoringInput = {
       itemId: item.id,
       title: item.title,

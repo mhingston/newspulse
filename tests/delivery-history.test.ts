@@ -2,7 +2,10 @@ import { expect, test } from "bun:test";
 import { Store } from "../src/db/store";
 import { DigestStore } from "../src/db/digest-store";
 import { DeliveryStore } from "../src/db/delivery-store";
-import { deliveryHistory } from "../src/db/delivery-history";
+import {
+  deliveryHistory,
+  relatedDeliveryHistory,
+} from "../src/db/delivery-history";
 import { scoreItem, type ScoringInput } from "../src/scoring";
 
 const oldText =
@@ -123,6 +126,78 @@ test("failed deliveries are not accepted and legacy snapshots cannot fabricate a
       sameDevelopment: true,
       meaningfulUpdate: false,
       snapshotUnavailable: true,
+    });
+  } finally {
+    f.store.close();
+  }
+});
+
+test("distinct related developments compare against accepted frozen history without suppressing them", () => {
+  const f = fixture();
+  try {
+    f.store.sqlite
+      .query(
+        "INSERT INTO items(id,identity,title,ingested_at,published_at) VALUES('new','new-identity','Breakthrough robotics update',4000,3500)",
+      )
+      .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO story_groups(id,first_seen) VALUES('group',1000),('new-group',3000)",
+      )
+      .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('new-group','new','{}','v1',3000)",
+      )
+      .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO story_relations(older_group_id,newer_group_id,reason,evidence,rule_version,started_at) VALUES('group','new-group','later_related_development','{\"sharedTerms\":[\"robotics\",\"breakthrough\"]}','specific-development-v1',3000)",
+      )
+      .run();
+    const source = f.store.addSource("https://example.com/feed");
+    f.store.sqlite
+      .query(
+        "INSERT INTO content_versions(item_id,source_id,native_id,title,text,observed_at) VALUES('new',?,'entry','Breakthrough robotics update',?,3500)",
+      )
+      .run(source.id, newText);
+    const claim = f.deliveries.claim(1000)!;
+    f.deliveries.beginSend(claim, 1000);
+    f.deliveries.sent(claim, "provider", 2000);
+    const compared = relatedDeliveryHistory(
+      f.store.sqlite,
+      "new",
+      "new-group",
+      "Breakthrough robotics update",
+      newText,
+      3500,
+      4000,
+    );
+    expect(compared?.input).toBeNull();
+    expect(compared?.evidence).toMatchObject({
+      comparisonVersion: "related-delivery-v1",
+      state: "possible_follow_up",
+      editionId: f.delivery.digest_id,
+      groupId: "group",
+      relationship: { olderGroupId: "group", newerGroupId: "new-group" },
+      suppress: false,
+    });
+    f.store.sqlite
+      .query("UPDATE content_versions SET backfilled=1 WHERE item_id='new'")
+      .run();
+    expect(
+      relatedDeliveryHistory(
+        f.store.sqlite,
+        "new",
+        "new-group",
+        "Breakthrough robotics update",
+        newText,
+        3500,
+        4000,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "stale_or_uncertain_observation",
     });
   } finally {
     f.store.close();
