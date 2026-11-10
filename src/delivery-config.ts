@@ -7,6 +7,10 @@ export interface DeliveryConfig {
   timezone: string;
   hour: number;
   minute: number;
+  /** Dedicated secret for scoped, bearer-less feedback links. */
+  feedbackSecret: string;
+  /** Public origin the feedback links point at. */
+  feedbackBaseUrl: string;
 }
 
 /** Sending is opt-in and incomplete settings fail closed. */
@@ -30,6 +34,36 @@ export function deliveryConfig(
   const time = /^(\d\d):(\d\d)$/.exec(env.DELIVERY_TIME || "06:00");
   if (!time || Number(time[1]) > 23 || Number(time[2]) > 59)
     throw new Error("Invalid delivery time");
+  // Feedback links are bearer-less, so a dedicated secret is mandatory and
+  // must be distinct from the MCP token.
+  const feedbackSecret = env.FEEDBACK_SECRET?.trim();
+  if (!feedbackSecret || feedbackSecret.length < 32)
+    throw new Error("FEEDBACK_SECRET (min 32 chars) is required for delivery");
+  const mcpToken = env.MCP_TOKEN?.trim();
+  if (mcpToken && feedbackSecret === mcpToken)
+    throw new Error("FEEDBACK_SECRET must differ from MCP_TOKEN");
+  const rawBaseUrl = env.FEEDBACK_BASE_URL?.trim();
+  if (!rawBaseUrl)
+    throw new Error("FEEDBACK_BASE_URL is required for delivery");
+  let baseUrl: URL;
+  try {
+    baseUrl = new URL(rawBaseUrl);
+  } catch {
+    throw new Error("Invalid FEEDBACK_BASE_URL");
+  }
+  // Links are served from the fixed `/feedback/:token` route, so the base URL
+  // must be an origin; a path prefix would generate unusable links.
+  if (
+    baseUrl.protocol !== "https:" ||
+    baseUrl.username ||
+    baseUrl.password ||
+    baseUrl.search ||
+    baseUrl.hash ||
+    (baseUrl.pathname !== "/" && baseUrl.pathname !== "")
+  )
+    throw new Error(
+      "FEEDBACK_BASE_URL must be an HTTPS origin without a path, credentials or query",
+    );
   return {
     apiKey,
     sender,
@@ -37,5 +71,7 @@ export function deliveryConfig(
     timezone,
     hour: Number(time[1]),
     minute: Number(time[2]),
+    feedbackSecret,
+    feedbackBaseUrl: baseUrl.origin,
   };
 }

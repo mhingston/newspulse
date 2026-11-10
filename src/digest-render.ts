@@ -58,7 +58,9 @@ export function renderDigest(
     const caveats = item.uncertainty
       .map((value) => `<li>${escapeHtml(value)}</li>`)
       .join("");
-    return `<article><h2>${escapeHtml(item.title)}</h2>${item.summary ? `<p>Model summary: ${escapeHtml(item.summary)}</p>` : ""}${caveats ? `<p>Model uncertainty:</p><ul>${caveats}</ul>` : ""}<p>${escapeHtml(item.why)}</p><p>Sources: ${refs}</p></article>`;
+    // Delivery injects scoped feedback links between these stable markers;
+    // the frozen body itself never carries a token.
+    return `<article data-item-id="${escapeHtml(item.itemId)}"><h2>${escapeHtml(item.title)}</h2>${item.summary ? `<p>Model summary: ${escapeHtml(item.summary)}</p>` : ""}${caveats ? `<p>Model uncertainty:</p><ul>${caveats}</ul>` : ""}<p>${escapeHtml(item.why)}</p><p>Sources: ${refs}</p><!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
   });
   const textItems = items.map((item) => {
     const refs = item.references

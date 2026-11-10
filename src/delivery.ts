@@ -1,14 +1,18 @@
 import { DeliveryStore } from "./db/delivery-store";
 
+export interface DeliveryMessage {
+  from: string;
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+  digestId?: string;
+  editionDate?: string;
+  decisions?: string;
+}
 export interface DeliveryEmailProvider {
   send(
-    message: {
-      from: string;
-      to: string;
-      subject: string;
-      html: string;
-      text: string;
-    },
+    message: DeliveryMessage,
     idempotencyKey: string,
     signal: AbortSignal,
   ): Promise<{ id: string }>;

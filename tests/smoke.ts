@@ -75,17 +75,24 @@ export async function smoke() {
       JSON.stringify(tools.tools.map((tool) => tool.name).sort()) ===
         JSON.stringify(
           [
+            "add_source",
             "explain_ranking",
             "get_digest",
+            "get_feedback",
             "get_item",
             "get_sources",
             "get_status",
             "get_story_group",
             "get_submission",
+            "ingest_url",
+            "remove_source",
             "search_items",
+            "submit_feedback",
+            "trigger_discovery",
+            "update_interest",
           ].sort(),
         ),
-      "Expected all read-only MCP tools",
+      "Expected all read-only and mutation MCP tools",
     );
     const result = await client.callTool({
       name: "search_items",

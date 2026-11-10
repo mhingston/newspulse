@@ -64,6 +64,30 @@ describe("deterministic scoring", () => {
       ),
     ).toBeGreaterThan(0);
   });
+  test("explicit feedback adjusts relevance with provenance but never overrides matching", () => {
+    const base = scoreItem(input);
+    const useful = scoreItem({
+      ...input,
+      feedback: { useful: true, at: 999 },
+    });
+    const notUseful = scoreItem({
+      ...input,
+      feedback: { useful: false, at: 1000 },
+    });
+    expect(useful.total).toBeGreaterThan(base.total);
+    expect(notUseful.total).toBeLessThan(base.total);
+    expect(useful.reasons).toContain("explicit_feedback:useful@999");
+    expect(notUseful.reasons).toContain("explicit_feedback:not_useful@1000");
+    // Feedback is a bounded adjustment, not an eligibility override.
+    const unmatched = scoreItem({
+      ...input,
+      title: "Football",
+      text: "Football",
+      feedback: { useful: false, at: 1 },
+    });
+    expect(unmatched.eligible).toBe(false);
+    expect(unmatched.reasons).toContain("no_interest_match");
+  });
   test("stale coverage and meaningful updates receive distinct novelty", () => {
     const old = { ...input, publishedAt: input.now - 40 * 86_400_000 };
     expect(scoreItem(old).components.novelty).toBe(10);

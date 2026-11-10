@@ -814,6 +814,12 @@ export class Store {
           },
         };
     }
+    const feedbackRow = this.sqlite
+      .query<{ useful: number; created_at: number }, [string]>(
+        // Newest first; rowid breaks same-millisecond ties deterministically.
+        "SELECT useful,created_at FROM item_feedback WHERE item_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+      )
+      .get(item.id);
     const input: ScoringInput = {
       itemId: item.id,
       title: item.title,
@@ -825,6 +831,9 @@ export class Store {
       analysis: analysis?.result ?? null,
       history: history.input,
       observedUpdateAt: update?.observedAt ?? null,
+      feedback: feedbackRow
+        ? { useful: feedbackRow.useful === 1, at: feedbackRow.created_at }
+        : null,
     };
     const provenance = {
       input,
@@ -1080,6 +1089,10 @@ export class Store {
     // is deleted so the foreign key never dangles.
     this.sqlite
       .query("UPDATE manual_submissions SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
+    // Explicit feedback follows the surviving item so later scoring sees it.
+    this.sqlite
+      .query("UPDATE item_feedback SET item_id=? WHERE item_id=?")
       .run(winner, loser);
     this.sqlite
       .query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?")

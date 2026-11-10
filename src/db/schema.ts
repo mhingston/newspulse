@@ -670,3 +670,65 @@ export const manualSubmissions = sqliteTable(
     index("manual_submissions_url").on(t.url),
   ],
 );
+
+/**
+ * Payload-bound, expiring approvals for consequential MCP mutations. The
+ * digest binds the exact normalized payload, so a token issued for one change
+ * can never authorize a different one.
+ */
+export const mutationConfirmations = sqliteTable(
+  "mutation_confirmations",
+  {
+    id: text().primaryKey(),
+    action: text().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    preview: text().notNull(),
+    expiresAt: integer("expires_at").notNull(),
+    usedAt: integer("used_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("mutation_confirmations_expiry").on(t.expiresAt)],
+);
+
+/**
+ * Narrowly scoped digest feedback tokens. A token authorizes one feedback
+ * action on one dated edition; it is not an MCP credential and cannot mutate
+ * sources or trigger spending. `nonce` satisfies the unique link constraint
+ * that exempts link-prefetching scanners from one-click unsubscribe rules.
+ */
+export const digestFeedbackTokens = sqliteTable(
+  "digest_feedback_tokens",
+  {
+    tokenHash: text("token_hash").primaryKey(),
+    digestId: text("digest_id").notNull(),
+    editionDate: text("edition_date").notNull(),
+    itemId: text("item_id").notNull(),
+    action: text().notNull(),
+    nonce: text().notNull(),
+    usedAt: integer("used_at"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("digest_feedback_nonce").on(t.nonce),
+    index("digest_feedback_item").on(t.editionDate, t.itemId),
+  ],
+);
+
+/**
+ * Explicit feedback events. Item feedback may later be attributed to the
+ * edition that prompted it; `itemId` is a historical reference and survives
+ * canonical item merges. Missing clicks and unread material are never events.
+ */
+export const itemFeedback = sqliteTable(
+  "item_feedback",
+  {
+    id: text().primaryKey(),
+    itemId: text("item_id").notNull(),
+    useful: integer().notNull(),
+    source: text().notNull(),
+    editionDate: text("edition_date"),
+    digestId: text("digest_id"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [index("item_feedback_item").on(t.itemId, t.createdAt)],
+);

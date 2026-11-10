@@ -5,7 +5,38 @@ import type { Store } from "./db/store";
 import { DigestStore } from "./db/digest-store";
 import { draftDigest, digestDefaults } from "./digest-service";
 import { submissionFor } from "./manual";
-export function createMcp(store: Store): McpServer {
+import { GdeltSearchProvider } from "./adapters/gdelt";
+import type { SearchProvider } from "./search-provider";
+import {
+  MutationError,
+  confirmAddSource,
+  confirmIngestUrl,
+  confirmRemoveSource,
+  confirmSubmitFeedback,
+  confirmTriggerDiscovery,
+  confirmUpdateInterest,
+  previewAddSource,
+  previewIngestUrl,
+  previewRemoveSource,
+  previewSubmitFeedback,
+  previewTriggerDiscovery,
+  previewUpdateInterest,
+} from "./mutations";
+import { ConfirmationError } from "./confirmations";
+import { latestFeedback } from "./feedback";
+
+export interface McpOptions {
+  /** Providers are injected so tests use fakes and never spend money. */
+  discoveryProvider?: SearchProvider;
+  env?: Record<string, string | undefined>;
+  /** Database path, so manual discovery shares the process lock and restore guard. */
+  dbPath?: string;
+}
+
+export function createMcp(store: Store, options: McpOptions = {}): McpServer {
+  const env = options.env ?? process.env;
+  const discoveryProvider = () =>
+    options.discoveryProvider ?? new GdeltSearchProvider();
   const server = new McpServer(
     { name: "newspulse", version: "0.1.0" },
     {
@@ -153,18 +184,195 @@ export function createMcp(store: Store): McpServer {
         : { ...response({ error: "No submission for item" }), isError: true };
     },
   );
+  server.registerTool(
+    "get_feedback",
+    {
+      description:
+        "Read the latest explicit feedback per item, newest first. Missing clicks and unread material are never recorded.",
+      inputSchema: { limit: z.number().int().min(1).max(500).default(100) },
+      annotations,
+    },
+    async ({ limit }) =>
+      response({ feedback: latestFeedback(store.sqlite, limit) }),
+  );
+
+  // Mutation tools. Every consequential change is a two-step
+  // preview → confirm flow with a payload-bound, expiring, single-use token.
+  const mutation = {
+    readOnlyHint: false,
+    destructiveHint: true,
+    openWorldHint: false,
+  } as const;
+  const mutationError = (error: unknown) => {
+    const code =
+      error instanceof MutationError || error instanceof ConfirmationError
+        ? error.code
+        : error instanceof Error
+          ? error.message
+          : "invalid_request";
+    return { ...response({ error: code }), isError: true };
+  };
+
+  server.registerTool(
+    "add_source",
+    {
+      description:
+        "Preview adding or restoring a subscription, then confirm with the returned token. Confirmation creates the source and schedules polling; no request is made before confirmation.",
+      inputSchema: {
+        url: z.string().min(1).max(8192).optional(),
+        title: z.string().min(1).max(1000).optional(),
+        poll_seconds: z.number().int().min(60).max(31536000).optional(),
+        confirm_token: z.string().min(1).max(200).optional(),
+      },
+      annotations: mutation,
+    },
+    async ({ url, title, poll_seconds, confirm_token }) => {
+      try {
+        if (confirm_token)
+          return response(confirmAddSource(store, confirm_token));
+        return response(previewAddSource(store, { url, title, poll_seconds }));
+      } catch (error) {
+        return mutationError(error);
+      }
+    },
+  );
+  server.registerTool(
+    "remove_source",
+    {
+      description:
+        "Preview disabling a source's future polling (history and attribution are kept) and cancel its queued polls, then confirm with the returned token.",
+      inputSchema: {
+        source_id: z.string().min(1).max(200).optional(),
+        confirm_token: z.string().min(1).max(200).optional(),
+      },
+      annotations: mutation,
+    },
+    async ({ source_id, confirm_token }) => {
+      try {
+        if (confirm_token)
+          return response(confirmRemoveSource(store, confirm_token));
+        return response(previewRemoveSource(store, { source_id }));
+      } catch (error) {
+        return mutationError(error);
+      }
+    },
+  );
+  server.registerTool(
+    "update_interest",
+    {
+      description:
+        "Preview a new immutable version of an interest profile, then confirm with the returned token. Scores are re-derived; frozen editions are unchanged.",
+      inputSchema: {
+        interest: z.record(z.string(), z.unknown()).optional(),
+        confirm_token: z.string().min(1).max(200).optional(),
+      },
+      annotations: mutation,
+    },
+    async ({ interest, confirm_token }) => {
+      try {
+        if (confirm_token)
+          return response(confirmUpdateInterest(store, confirm_token));
+        return response(previewUpdateInterest(store, interest));
+      } catch (error) {
+        return mutationError(error);
+      }
+    },
+  );
+  server.registerTool(
+    "submit_feedback",
+    {
+      description:
+        "Preview recording explicit useful/not-useful feedback for an item (optionally tied to a delivered edition), then confirm with the returned token.",
+      inputSchema: {
+        item_id: z.string().min(1).max(200).optional(),
+        action: z.enum(["useful", "not_useful"]).optional(),
+        edition_date: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        confirm_token: z.string().min(1).max(200).optional(),
+      },
+      annotations: mutation,
+    },
+    async ({ item_id, action, edition_date, confirm_token }) => {
+      try {
+        if (confirm_token)
+          return response(confirmSubmitFeedback(store, confirm_token));
+        return response(
+          previewSubmitFeedback(store, { item_id, action, edition_date }),
+        );
+      } catch (error) {
+        return mutationError(error);
+      }
+    },
+  );
+  server.registerTool(
+    "ingest_url",
+    {
+      description:
+        "Preview an idempotent manual URL submission, then confirm with the returned token. Confirmation records the item and queues extraction; the destination is not fetched before confirmation.",
+      inputSchema: {
+        submission_id: z.string().min(1).max(128).optional(),
+        url: z.string().min(1).max(8192).optional(),
+        origin: z.enum(["manual", "bookmark", "email", "search"]).optional(),
+        confirm_token: z.string().min(1).max(200).optional(),
+      },
+      annotations: mutation,
+    },
+    async ({ submission_id, url, origin, confirm_token }) => {
+      try {
+        if (confirm_token)
+          return response(confirmIngestUrl(store, confirm_token));
+        return response(
+          previewIngestUrl(store, { submission_id, url, origin }),
+        );
+      } catch (error) {
+        return mutationError(error);
+      }
+    },
+  );
+  server.registerTool(
+    "trigger_discovery",
+    {
+      description:
+        "Preview one budgeted interest query, then confirm with the returned token. The run re-checks persisted daily budgets, reservations and provider pacing, so repeated or concurrent triggers stay within limits.",
+      inputSchema: {
+        query: z.string().min(1).max(500).optional(),
+        confirm_token: z.string().min(1).max(200).optional(),
+      },
+      annotations: mutation,
+    },
+    async ({ query, confirm_token }) => {
+      try {
+        if (confirm_token)
+          return response(
+            await confirmTriggerDiscovery(
+              store,
+              confirm_token,
+              discoveryProvider(),
+              env,
+              options.dbPath,
+            ),
+          );
+        return response(previewTriggerDiscovery(store, { query }, env));
+      } catch (error) {
+        return mutationError(error);
+      }
+    },
+  );
   return server;
 }
 export async function handleMcp(
   store: Store,
   request: Request,
+  options: McpOptions = {},
 ): Promise<Response> {
   const transport = new WebStandardStreamableHTTPServerTransport({
     sessionIdGenerator: undefined,
     enableJsonResponse: true,
     maxRequestBodySize: 65536,
   });
-  const server = createMcp(store);
+  const server = createMcp(store, options);
   await server.connect(transport);
   try {
     return await transport.handleRequest(request);
