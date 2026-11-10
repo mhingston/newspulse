@@ -196,9 +196,21 @@ export class StoryStore {
               .run(now, group.id);
 
         this.reconcileRelations(plan, now);
-        // Scoring snapshots contain the item's own membership, not other
-        // members or relations. Requeue only changed snapshot inputs.
-        for (const itemId of changedItems)
+        // A changed membership can alter delivery history for its former and
+        // new peers. Fence only these groups and the changed items themselves.
+        const affectedGroups = new Set<string>();
+        for (const row of current)
+          if (changedItems.has(row.item_id)) affectedGroups.add(row.group_id);
+        for (const itemId of changedItems) {
+          const next = target.get(itemId);
+          if (next) affectedGroups.add(next.groupId);
+        }
+        const affectedItems = new Set(changedItems);
+        for (const row of current)
+          if (affectedGroups.has(row.group_id)) affectedItems.add(row.item_id);
+        for (const [itemId, next] of target)
+          if (affectedGroups.has(next.groupId)) affectedItems.add(itemId);
+        for (const itemId of affectedItems)
           invalidateScores(this.sqlite, now, itemId);
         this.sqlite
           .query(

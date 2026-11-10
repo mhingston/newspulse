@@ -1,6 +1,6 @@
 # Implementation roadmap and handoff coverage
 
-**M2 implementation snapshot (2026-11-09):** #5 and #6 have merged implementations. #7 scoring has merged; #8 offline replay has merged; #9 digest curation is under review. Prior-presentation redundancy and its production acceptance are deferred to required follow-up #42, after #9 and #12 provide immutable editions and delivery state. GitHub issues and merged code remain authoritative for execution state.
+**Implementation snapshot (2026-11-09):** #5–#12 provide analysis, grouping, scoring, offline replay, digest curation, inbound newsletters and optional daily delivery. #42 connects scoring to confirmed delivery history using immutable snapshots. Unfrozen historical catch-up remains assigned to #48; actionable feedback links remain assigned to #18. GitHub issues and merged code remain authoritative for execution state.
 
 [Completion tracker #32](https://github.com/mhingston/newspulse/issues/32) is the entry point for the complete backlog. It links **23 required core issues and 9 conditional refinement issues**. The original request is preserved in [handoff.md](handoff.md), durable constraints in [decisions.md](decisions.md), and contributor instructions in [AGENTS.md](../AGENTS.md).
 

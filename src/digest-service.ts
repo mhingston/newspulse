@@ -1,7 +1,11 @@
 import { createHash } from "node:crypto";
 import type { Store } from "./db/store";
 import { DigestStore } from "./db/digest-store";
-import { curateDigest, type CurationCandidate } from "./curation";
+import {
+  curateDigest,
+  type CurationCandidate,
+  type PriorEdition,
+} from "./curation";
 import { renderDigest } from "./digest-render";
 import { SCORING_CRITERIA_VERSION } from "./scoring";
 
@@ -40,7 +44,7 @@ function validateDate(date: string, timezone: string) {
     throw new Error("Invalid edition timezone");
   }
 }
-/** Draft is read-only. No delivery or user-feedback history exists yet. */
+/** Draft is read-only; provider acceptance is not evidence of readership. */
 export function draftDigest(store: Store, options: DigestOptions) {
   return store.sqlite
     .transaction(() => draftDigestSnapshot(store, options))
@@ -160,11 +164,12 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
         group_id: string | null;
         score_id: string;
         result: string;
+        provenance: string | null;
         summary: string | null;
       },
       string[]
     >(
-      `SELECT i.id AS item_id,i.title,m.group_id,s.id AS score_id,s.result,
+      `SELECT i.id AS item_id,i.title,m.group_id,s.id AS score_id,s.result,CASE WHEN length(CAST(s.provenance AS BLOB))<=200000 THEN s.provenance ELSE NULL END AS provenance,
     (SELECT a.result FROM analyses a WHERE a.item_id=i.id AND a.generation=j.generation ORDER BY a.created_at DESC,a.rowid DESC LIMIT 1) AS summary
     FROM items i JOIN processing_jobs j ON j.item_id=i.id AND j.stage='score'
     JOIN item_scores s ON s.id=(SELECT x.id FROM item_scores x WHERE x.item_id=i.id AND x.generation=j.generation ORDER BY x.created_at DESC,x.rowid DESC LIMIT 1)
@@ -245,6 +250,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
       : [];
   });
   const limitedIds = new Set(limited.map((decision) => decision.itemId));
+  const priorEditions: PriorEdition[] = [];
   const candidates: CurationCandidate[] = rows
     .filter((row) => !limitedIds.has(row.item_id))
     .map((row) => {
@@ -260,6 +266,43 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
           })
         : null;
       const summary = analysis?.summary ?? null;
+      const provenance = JSON.parse(row.provenance!) as {
+        history?: {
+          state?: string;
+          reason?: string;
+          editionId?: string;
+          acceptedAt?: number;
+          update?: { observedAt?: number } | null;
+        };
+      };
+      const history = provenance.history;
+      // The score captured the matching evidence under the same invalidation
+      // fence. Use candidate identity here so regrouping cannot create a new
+      // historical assertion within curation.
+      if (
+        history?.state === "accepted" &&
+        history.editionId &&
+        typeof history.acceptedAt === "number"
+      ) {
+        priorEditions.push({
+          editionId: history.editionId,
+          state: "sent",
+          publishedAt: history.acceptedAt,
+          items: [{ itemId: row.item_id, groupId: null }],
+        });
+      } else if (
+        history?.state === "unknown" &&
+        (history.reason === "ambiguous_delivery" ||
+          history.reason === "history_limit" ||
+          history.reason === "historical_snapshot_limit")
+      ) {
+        priorEditions.push({
+          editionId: history.editionId ?? `unknown:${row.item_id}`,
+          state: "ambiguous",
+          publishedAt: null,
+          items: [{ itemId: row.item_id, groupId: null }],
+        });
+      }
       return {
         itemId: row.item_id,
         groupId: row.group_id,
@@ -277,12 +320,22 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
           score.reasons.join("; ") || "No score explanation available",
         citations: [...(groupReferences.get(groupKey(row)) ?? [])],
         discovery: false,
-        update: null,
+        update:
+          history?.state === "accepted" &&
+          history.editionId &&
+          typeof history.update?.observedAt === "number"
+            ? {
+                priorEditionId: history.editionId,
+                observedAt: history.update.observedAt,
+                evidence:
+                  "Conservative comparison with the accepted edition snapshot",
+              }
+            : null,
       };
     });
   const result = curateDigest({
     candidates,
-    priorEditions: [],
+    priorEditions,
     minScore: options.minScore,
     maxItems: options.maxItems,
     maxPerInterest: options.maxPerInterest,
@@ -327,11 +380,11 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
     };
   for (const item of result.selected) {
     const row = store.sqlite
-      .query<{ provenance: string; size: number }, [string]>(
-        "SELECT provenance,length(CAST(provenance AS BLOB)) AS size FROM item_scores WHERE id=?",
+      .query<{ provenance: string | null; size: number }, [string]>(
+        "SELECT CASE WHEN length(CAST(provenance AS BLOB))<=200000 THEN provenance ELSE NULL END AS provenance,length(CAST(provenance AS BLOB)) AS size FROM item_scores WHERE id=?",
       )
       .get(item.scoreId);
-    if (!row || row.size > 200_000)
+    if (!row || row.size > 200_000 || row.provenance === null)
       throw new Error("Score snapshot changed during draft");
     item.scoreSnapshot = {
       ...(item.scoreSnapshot as object),
@@ -364,7 +417,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
     timezone: options.timezone,
     asOf: options.now,
     intake,
-    history: "delivery_history_unavailable" as const,
+    history: "provider_acceptance_and_unresolved_attempts" as const,
   };
 }
 /** Confirmation binds the operator to an exact draft and expires after five minutes. */

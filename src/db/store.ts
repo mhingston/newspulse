@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { StoryStore } from "./story-store";
+import { deliveryHistory } from "./delivery-history";
 import { createHash } from "node:crypto";
 import {
   currentObservedUpdate,
@@ -642,20 +643,39 @@ export class Store {
         }
       : null;
     const story = this.sqlite
-      .query(
+      .query<
+        {
+          group_id: string;
+          evidence: string;
+          rule_version: string;
+          started_at: number;
+        },
+        [string]
+      >(
         "SELECT group_id,evidence,rule_version,started_at FROM story_memberships WHERE item_id=? AND ended_at IS NULL",
       )
       .get(job.item_id);
+    const currentText = extraction?.text?.trim() || item.text || "";
+    const history = deliveryHistory(
+      this.sqlite,
+      item.id,
+      story?.group_id ?? null,
+      item.title,
+      currentText,
+      update,
+      now,
+      job.generation,
+    );
     const input: ScoringInput = {
       itemId: item.id,
       title: item.title,
-      text: extraction?.text?.trim() || item.text || "",
+      text: currentText,
       publishedAt: item.published_at,
       now,
       interests,
       editorialProfiles: editorial,
       analysis: analysis?.result ?? null,
-      history: null,
+      history: history.input,
       observedUpdateAt: update?.observedAt ?? null,
     };
     const provenance = {
@@ -672,7 +692,7 @@ export class Store {
       extraction,
       story,
       generation: job.generation,
-      history: null,
+      history: history.evidence,
       observedUpdate: update,
     };
     const inputHash = createHash("sha256")

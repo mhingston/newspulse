@@ -366,6 +366,7 @@ export const digestItems = sqliteTable(
   (t) => [
     uniqueIndex("digest_item_position").on(t.digestId, t.position),
     uniqueIndex("digest_item_identity").on(t.digestId, t.itemId),
+    index("digest_item_by_item").on(t.itemId, t.digestId),
   ],
 );
 
@@ -394,6 +395,7 @@ export const deliveries = sqliteTable(
   },
   (t) => [
     uniqueIndex("delivery_edition_recipient").on(t.editionDate, t.recipient),
+    index("delivery_by_digest").on(t.digestId),
     index("delivery_due").on(t.status, t.availableAt, t.leaseUntil),
   ],
 );

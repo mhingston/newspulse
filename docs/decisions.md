@@ -24,7 +24,7 @@ Interests describe what matters to this user; editorial profiles describe how a 
 
 ## D6 — Deterministic decisions first, bounded optional AI
 
-Use deterministic filtering, ranking, novelty, redundancy and curation wherever practical. Use OpenAI-compatible providers for structured analysis behind a small interface; optional specialist judgments must expose their provenance and failure fallback. The initial scoring baseline records its components, versioned profiles and uncertainty, and does not infer prior publication from grouping or source edits. Prior-presentation redundancy and its production acceptance are assigned to required follow-up #42 after immutable editions and delivery state exist. Offline regression reports preserve explicit label coverage and unknown cost; synthetic fixtures do not establish real-world quality. Do not build an internal conversational assistant. Embeddings require a measured retrieval gap after simpler FTS improvements have been evaluated. Basis: §§3, 6, 7, 9, 13, 14.
+Use deterministic filtering, ranking, novelty, redundancy and curation wherever practical. Use OpenAI-compatible providers for structured analysis behind a small interface; optional specialist judgments must expose their provenance and failure fallback. Scoring records components, versioned profiles and uncertainty, and uses confirmed provider acceptance or reconciled sent state and the frozen edition snapshot for prior-presentation evidence. Grouping, source edits and a prepared edition do not establish prior delivery; unresolved outcomes remain uncertain. Provider acceptance does not establish readership. Conservative update comparisons use historical snapshot evidence and preserve earlier editions and scores. Offline regression reports preserve explicit label coverage and unknown cost; synthetic fixtures do not establish real-world quality. Do not build an internal conversational assistant. Embeddings require a measured retrieval gap after simpler FTS improvements have been evaluated. Basis: §§3, 6, 7, 9, 13, 14.
 
 ## D7 — Discovery is explicit, budgeted and auditable
 
@@ -36,7 +36,7 @@ Use official SDK Streamable HTTP and source-linked tools; stdio is optional. Rea
 
 ## D9 — Email originals and delivery have durable state
 
-Resend is the initial inbound/outbound provider, isolated behind small interfaces so IMAP can follow later without changing domain logic. Verify and persist webhook events quickly, then retrieve/process asynchronously; reconcile received-email listings for missed events. Freeze immutable digest editions and durable send state before calling the provider. Use provider idempotency within its actual guarantees; an unknown send beyond the key lifetime must be reconciled rather than retried blindly. Basis: §§5, 10, 11. Default publication is configurable 06:00 Europe/London, with persisted local edition identity and DST tests.
+Resend is the initial inbound/outbound provider, isolated behind small interfaces so IMAP can follow later without changing domain logic. Verify and persist webhook events quickly, then retrieve/process asynchronously; reconcile received-email listings for missed events. Freeze immutable digest editions and durable send state before calling the provider. Use provider idempotency within its actual guarantees; an ambiguous send must be reconciled rather than retried automatically. Basis: §§5, 10, 11. Default publication is configurable 06:00 Europe/London, with persisted local edition identity and DST tests.
 
 ## D10 — History outlives disposable content
 
@@ -62,6 +62,6 @@ Inbound implementation: verified raw Resend webhooks commit message/event identi
 
 ### Outbound delivery and deferred acceptance
 
-The #12 implementation uses a conservative 23-hour retry window within Resend's documented 24-hour idempotency retention, and treats an unknown outcome beyond that window as requiring operator reconciliation. The first possible attempt and immutable envelope are persisted before network work. An exclusive process lock and payload-bound confirmation protect reconciliation. Provider acceptance is not inbox delivery.
+The #42 implementation requires operator reconciliation for an ambiguous send outcome immediately, including within Resend's documented idempotency retention window. The first possible attempt and immutable envelope are persisted before network work. An exclusive process lock and payload-bound confirmation protect reconciliation. Provider acceptance is not inbox delivery.
 
 Catch-up has an unresolved boundary: prior-day drafts cannot be reconstructed from the current mutable scores and grouping snapshots. The current implementation can enqueue an already-frozen missed edition and records other missed days as skipped; The user authorized deferring point-in-time reconstruction of unfrozen missed editions to required issue [#48](https://github.com/mhingston/newspulse/issues/48). The required feedback links and mixed-edition link test remain assigned to [#18](https://github.com/mhingston/newspulse/issues/18); the HTTP boundary permits only the verified inbound webhook to be public.

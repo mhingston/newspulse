@@ -81,11 +81,8 @@ test("fences stale claims, safely reclaims before send and blocks expired ambigu
     const b = deliveries.claim(61001)!;
     expect(deliveries.beginSend(a, 61001)).toBe(false);
     expect(deliveries.beginSend(b, 61001)).toBe(true);
-    const c = deliveries.claim(121002)!;
-    expect(c.idempotency_key).toBe(row.idempotency_key);
+    expect(deliveries.claim(121002)).toBeNull();
     expect(deliveries.sent(b, "provider", 121002)).toBe(false);
-    expect(deliveries.beginSend(c, 121002)).toBe(true);
-    expect(deliveries.fail(c, "ambiguous", 121003)).toBe(true);
     expect(deliveries.claim(61001 + DELIVERY_RETRY_WINDOW)).toBeNull();
     expect(deliveries.get(row.id)?.status).toBe("ambiguous");
     deliveries.reconcile(
@@ -101,7 +98,7 @@ test("fences stale claims, safely reclaims before send and blocks expired ambigu
   }
 });
 
-test("crash after acceptance retries with same key and produces one effective send", async () => {
+test("crash after acceptance requires reconciliation without another provider call", async () => {
   const { store, deliveries, prepare } = fixture();
   try {
     const row = prepare();
@@ -120,28 +117,26 @@ test("crash after acceptance retries with same key and produces one effective se
         return { id };
       },
     };
-    // Simulate restart after lease expiry: same key reaches fake provider.
+    // Restart cannot infer acceptance and must not send again.
     await new DeliveryWorker(deliveries, provider).send(Date.now());
-    expect(calls).toBe(1);
+    expect(calls).toBe(0);
     expect(accepted.size).toBe(1);
+    expect(deliveries.get(row.id)?.status).toBe("ambiguous");
+    deliveries.reconcile(row.id, "accepted", "provider_1");
     expect(deliveries.get(row.id)?.status).toBe("sent");
   } finally {
     store.close();
   }
 });
 
-test("ambiguous sends stop after ten attempts until verified not sent", () => {
+test("ambiguous sends stop immediately until verified not sent", () => {
   const { store, deliveries, prepare } = fixture();
   try {
     const row = prepare();
-    for (let i = 0; i < DELIVERY_MAX_ATTEMPTS; i++) {
-      const now = 1000 + i * 60_001;
-      const claim = deliveries.claim(now)!;
-      expect(claim.attempts).toBe(i + 1);
-      expect(deliveries.beginSend(claim, now)).toBe(true);
-      expect(deliveries.fail(claim, "ambiguous", now)).toBe(true);
-    }
-    expect(deliveries.claim(1_000_000)).toBeNull();
+    const claim = deliveries.claim(1000)!;
+    expect(deliveries.beginSend(claim, 1000)).toBe(true);
+    expect(deliveries.fail(claim, "ambiguous", 1000)).toBe(true);
+    expect(deliveries.claim(61_000)).toBeNull();
     expect(deliveries.get(row.id)?.status).toBe("ambiguous");
     deliveries.reconcile(row.id, "not_sent", null, 1_000_000);
     expect(deliveries.claim(1_000_000)?.attempts).toBe(1);
