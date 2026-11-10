@@ -16,7 +16,7 @@ test("synthetic replay is deterministic and keeps unknown evidence explicit", ()
   const first = evaluateCorpus(corpus, { k: 5 });
   expect(evaluateCorpus(corpus, { k: 5 })).toEqual(first);
   expect(first.config).toMatchObject({
-    criteriaVersion: "deterministic-v2",
+    criteriaVersion: "deterministic-v3",
     groupingVersion: "specific-development-v1",
     profiles: [{ id: "synthetic-robotics", version: 1 }],
     models: [],
@@ -271,7 +271,7 @@ test("CLI replay uses neither database nor configured provider", async () => {
 
 test("checked-in baseline matches a fresh deterministic replay", async () => {
   const baseline = await Bun.file(
-    "docs/baselines/synthetic-robotics-scoring-v2.json",
+    "docs/baselines/synthetic-robotics-scoring-v3.json",
   ).json();
   expect(evaluateCorpus(corpus, { k: 5 })).toEqual(baseline);
 });

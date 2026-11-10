@@ -8,6 +8,7 @@ import { runDiscovery } from "./discovery-service";
 import type { SearchProvider } from "./search-provider";
 import { resolvedUrl } from "./domain";
 import { discoveryConfig } from "./discovery-config";
+import { withDiscoveryDispatch } from "./discovery-dispatch";
 
 /**
  * Application services shared by MCP and CLI. Both transports call these; no
@@ -442,27 +443,34 @@ export function previewTriggerDiscovery(
 /**
  * Execute the confirmed run. Budget checks happen inside `runDiscovery` using
  * the same persisted ledger as scheduled discovery, so two concurrent
- * confirmations cannot both spend a slot.
+ * confirmations cannot both spend a slot. The run also holds the exclusive
+ * discovery lock and re-checks the restore guard through the shared dispatch
+ * boundary, so an MCP trigger cannot race reconciliation or spend after a
+ * restore. The guard runs before the approval is consumed, so a blocked run
+ * leaves the token usable once discovery is permitted again.
  */
 export async function confirmTriggerDiscovery(
   store: Store,
   token: string,
   provider: SearchProvider,
   env: Record<string, string | undefined> = process.env,
+  dbPath?: string,
 ) {
   const limits = discoveryConfig(env);
-  const preview = confirmationPreview(
-    store,
-    token,
-    MUTATION_ACTIONS.trigger_discovery,
-  );
-  // Consume the approval in its own short transaction; network work never
-  // runs inside one.
-  const { query } = consumeConfirmation(store.sqlite, {
-    action: MUTATION_ACTIONS.trigger_discovery,
-    token,
-    payload: { query: preview.query },
-    apply: () => ({ query: preview.query as string }),
+  return withDiscoveryDispatch(dbPath, () => {
+    const preview = confirmationPreview(
+      store,
+      token,
+      MUTATION_ACTIONS.trigger_discovery,
+    );
+    // Consume the approval in its own short transaction; network work never
+    // runs inside one.
+    const { query } = consumeConfirmation(store.sqlite, {
+      action: MUTATION_ACTIONS.trigger_discovery,
+      token,
+      payload: { query: preview.query },
+      apply: () => ({ query: preview.query as string }),
+    });
+    return runDiscovery(store, provider, query, limits);
   });
-  return runDiscovery(store, provider, query, limits);
 }

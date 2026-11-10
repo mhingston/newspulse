@@ -814,6 +814,12 @@ export class Store {
           },
         };
     }
+    const feedbackRow = this.sqlite
+      .query<{ useful: number; created_at: number }, [string]>(
+        // Newest first; rowid breaks same-millisecond ties deterministically.
+        "SELECT useful,created_at FROM item_feedback WHERE item_id=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+      )
+      .get(item.id);
     const input: ScoringInput = {
       itemId: item.id,
       title: item.title,
@@ -825,6 +831,9 @@ export class Store {
       analysis: analysis?.result ?? null,
       history: history.input,
       observedUpdateAt: update?.observedAt ?? null,
+      feedback: feedbackRow
+        ? { useful: feedbackRow.useful === 1, at: feedbackRow.created_at }
+        : null,
     };
     const provenance = {
       input,

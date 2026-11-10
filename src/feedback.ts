@@ -19,7 +19,22 @@ export interface FeedbackEvent {
   createdAt: number;
 }
 
-/** Record one explicit feedback event and invalidate derived item scores. */
+/** Follow a canonical item redirect so feedback targets the surviving item. */
+export function canonicalItemId(db: Database, itemId: string): string {
+  return (
+    db
+      .query<{ item_id: string }, [string]>(
+        "SELECT item_id FROM item_redirects WHERE old_id=?",
+      )
+      .get(itemId)?.item_id ?? itemId
+  );
+}
+
+/**
+ * Record one explicit feedback event and invalidate derived item scores.
+ * `itemId` is resolved through canonical redirects, so feedback arriving after
+ * a merge still reaches the surviving item's discovery results and score job.
+ */
 export function recordFeedback(
   db: Database,
   event: {
@@ -34,12 +49,16 @@ export function recordFeedback(
   const now = event.now ?? Date.now();
   const useful = event.action === "useful";
   const id = randomUUID();
+  const itemId = canonicalItemId(db, event.itemId);
   db.transaction(() => {
+    // Re-resolve inside the transaction so a concurrent merge cannot leave a
+    // stale target between the lookup above and the insert.
+    const target = canonicalItemId(db, itemId);
     db.query(
       "INSERT INTO item_feedback(id,item_id,useful,source,edition_date,digest_id,created_at) VALUES(?,?,?,?,?,?,?)",
     ).run(
       id,
-      event.itemId,
+      target,
       Number(useful),
       event.source,
       event.editionDate ?? null,
@@ -53,17 +72,17 @@ export function recordFeedback(
       .query<{ id: number }, [string]>(
         "SELECT r.id FROM discovery_results r JOIN discovery_pages p ON p.id=r.page_id JOIN discovery_runs run ON run.id=p.run_id WHERE r.item_id=? ORDER BY run.started_at DESC,r.id DESC LIMIT 1",
       )
-      .get(event.itemId);
+      .get(target);
     if (result)
       db.query(
         "INSERT INTO discovery_result_feedback(result_id,useful,created_at) VALUES(?,?,?)",
       ).run(result.id, Number(useful), now);
     // Scores are derived views; a feedback change re-derives them explicitly.
-    invalidateScores(db, now, event.itemId);
+    invalidateScores(db, now, target);
   }).immediate();
   return {
     id,
-    itemId: event.itemId,
+    itemId,
     useful,
     source: event.source,
     editionDate: event.editionDate ?? null,
@@ -87,7 +106,11 @@ export function latestFeedback(db: Database, limit = 100): FeedbackEvent[] {
       },
       [number]
     >(
-      "SELECT id,item_id,useful,source,edition_date,digest_id,created_at FROM item_feedback f WHERE created_at=(SELECT max(last.created_at) FROM item_feedback last WHERE last.item_id=f.item_id) ORDER BY created_at DESC,id DESC LIMIT ?",
+      // `rowid` breaks same-millisecond ties by insertion order, so an item
+      // never exposes two contradicting "latest" rows or duplicates them.
+      `SELECT id,item_id,useful,source,edition_date,digest_id,created_at FROM item_feedback f
+      WHERE rowid=(SELECT last.rowid FROM item_feedback last WHERE last.item_id=f.item_id ORDER BY last.created_at DESC,last.rowid DESC LIMIT 1)
+      ORDER BY created_at DESC,rowid DESC LIMIT ?`,
     )
     .all(Math.max(1, Math.min(1000, limit)))
     .map((row) => ({

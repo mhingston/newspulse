@@ -29,6 +29,8 @@ export interface McpOptions {
   /** Providers are injected so tests use fakes and never spend money. */
   discoveryProvider?: SearchProvider;
   env?: Record<string, string | undefined>;
+  /** Database path, so manual discovery shares the process lock and restore guard. */
+  dbPath?: string;
 }
 
 export function createMcp(store: Store, options: McpOptions = {}): McpServer {
@@ -349,6 +351,7 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
               confirm_token,
               discoveryProvider(),
               env,
+              options.dbPath,
             ),
           );
         return response(previewTriggerDiscovery(store, { query }, env));

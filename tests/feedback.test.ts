@@ -104,6 +104,41 @@ describe("explicit feedback", () => {
     }
   });
 
+  test("the latest feedback reaches the score input with same-millisecond ties broken deterministically", () => {
+    const store = new Store(":memory:");
+    try {
+      store.addSource("https://example.com/feed");
+      store.enqueueDue();
+      store.complete(store.claim()!, {
+        items: [{ nativeId: "1", title: "Item", text: "body" }],
+      });
+      const item = store.search("body")[0]!;
+      const extract = store.claimProcessing("extract")!;
+      store.completeProcessing(extract, "extracted");
+      // Two explicit judgments in the same millisecond: the later row wins, so
+      // the ledger never exposes two contradicting "latest" rows.
+      recordFeedback(store.sqlite, {
+        itemId: item.id,
+        action: "not_useful",
+        source: "mcp",
+        now: 5,
+      });
+      recordFeedback(store.sqlite, {
+        itemId: item.id,
+        action: "useful",
+        source: "mcp",
+        now: 5,
+      });
+      expect(latestFeedback(store.sqlite)).toHaveLength(1);
+      expect(latestFeedback(store.sqlite)[0]!.useful).toBe(true);
+      const job = store.claimProcessing("score")!;
+      const snapshot = store.scoringSnapshot(job)!;
+      expect(snapshot.input.feedback).toEqual({ useful: true, at: 5 });
+    } finally {
+      store.close();
+    }
+  });
+
   test("feedback on a discovered item changes subsequent query selection", async () => {
     const store = new Store(":memory:");
     try {

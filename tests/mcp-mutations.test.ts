@@ -112,6 +112,42 @@ describe("MCP mutation tools over the real SDK and HTTP server", () => {
     });
   });
 
+  test("an oversized preview is rejected instead of stored truncated", async () => {
+    await withMcp(async ({ store, call }) => {
+      const interest = {
+        id: "huge",
+        description: "Huge interest",
+        entities: [],
+        keywords: Array.from(
+          { length: 60 },
+          (_, i) => `${i}-${"k".repeat(480)}`,
+        ),
+        priority: 3,
+        positive: [],
+        negative: [],
+        queries: [],
+        lifetime: "persistent",
+        feedbackRefs: [],
+      };
+      const preview = await call("update_interest", { interest });
+      expect(preview.isError).toBe(true);
+      expect(preview.data.error).toBe("too_large");
+      // Nothing is persisted: no unusable token and no profile version.
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) AS n FROM mutation_confirmations",
+          )
+          .get()!.n,
+      ).toBe(0);
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>("SELECT count(*) AS n FROM profiles")
+          .get()!.n,
+      ).toBe(0);
+    });
+  });
+
   test("add_source requires a confirmed preview and creates one source", async () => {
     await withMcp(async ({ store, call }) => {
       const preview = await call("add_source", {

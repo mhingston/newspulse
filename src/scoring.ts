@@ -1,7 +1,7 @@
 import type { Interest } from "./profiles";
 
 /** Version this whenever a rule, range or weight changes. */
-export const SCORING_CRITERIA_VERSION = "deterministic-v2";
+export const SCORING_CRITERIA_VERSION = "deterministic-v3";
 export type ScoreComponent =
   | "relevance"
   | "novelty"
@@ -36,6 +36,8 @@ export interface ScoringInput {
     snapshotUnavailable?: boolean;
   } | null;
   observedUpdateAt?: number | null;
+  /** The latest *explicit* judgment for this item, if any. Never inferred. */
+  feedback?: { useful: boolean; at: number } | null;
 }
 export interface ScoreResult {
   criteriaVersion: string;
@@ -132,12 +134,24 @@ export function scoreItem(input: ScoringInput): ScoreResult {
         : "previously_accepted_development",
     );
   if (input.observedUpdateAt != null) reasons.push("observed_source_update");
+  // Explicit feedback is a bounded adjustment to relevance, not an override:
+  // a not-useful judgment cannot make an unmatched item eligible.
+  let relevance = best;
+  if (input.feedback) {
+    relevance = Math.max(
+      0,
+      Math.min(100, best + (input.feedback.useful ? 10 : -25)),
+    );
+    reasons.push(
+      `explicit_feedback:${input.feedback.useful ? "useful" : "not_useful"}@${input.feedback.at}`,
+    );
+  }
   if (!input.analysis) uncertainty.push("analysis_unavailable");
   else if (input.analysis.uncertainty.length)
     uncertainty.push("analysis_reports_uncertainty");
   const length = input.text.trim().length;
   const components: Components = {
-    relevance: best,
+    relevance,
     novelty,
     substance:
       length >= 2000 ? 100 : length >= 500 ? 70 : length >= 100 ? 40 : 10,

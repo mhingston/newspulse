@@ -27,7 +27,20 @@ export class FeedbackLinkDelivery implements DeliveryEmailProvider {
     signal: AbortSignal,
   ): Promise<{ id: string }> {
     const { html, text } = this.render(message);
-    return this.inner.send({ ...message, html, text }, idempotencyKey, signal);
+    // Forward only the outbound email fields. The internal delivery context
+    // (digest ID, edition date, decision snapshot) must never reach the
+    // provider, whose adapter serializes the whole message.
+    return this.inner.send(
+      {
+        from: message.from,
+        to: message.to,
+        subject: message.subject,
+        html,
+        text,
+      },
+      idempotencyKey,
+      signal,
+    );
   }
 
   private render(message: DeliveryMessage): { html: string; text: string } {

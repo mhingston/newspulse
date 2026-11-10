@@ -13,7 +13,12 @@ const maxPreviewChars = 20_000;
 export class ConfirmationError extends Error {
   constructor(
     readonly code:
-      "not_found" | "expired" | "used" | "payload_changed" | "action_mismatch",
+      | "not_found"
+      | "expired"
+      | "used"
+      | "payload_changed"
+      | "action_mismatch"
+      | "too_large",
     message: string,
   ) {
     super(message);
@@ -68,7 +73,15 @@ export function prepareMutation<T>(
   const ttlMs = input.ttlMs ?? CONFIRMATION_TTL_MS;
   if (!Number.isSafeInteger(ttlMs) || ttlMs < 1 || ttlMs > 3_600_000)
     throw new Error("Invalid confirmation lifetime");
-  const preview = JSON.stringify(input.preview).slice(0, maxPreviewChars);
+  // The stored preview must stay valid JSON: a truncated document would make
+  // the confirmation unusable. A preview larger than the HTTP body ceiling is
+  // rejected up front instead.
+  const preview = JSON.stringify(input.preview);
+  if (preview.length > maxPreviewChars)
+    throw new ConfirmationError(
+      "too_large",
+      "Preview exceeds the confirmation size limit",
+    );
   const token = randomUUID();
   const expiresAt = now + ttlMs;
   db.query(

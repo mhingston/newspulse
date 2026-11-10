@@ -501,6 +501,8 @@ async function main() {
           store,
           required(0, "token"),
           new GdeltSearchProvider(),
+          process.env,
+          path,
         );
         console.log(JSON.stringify(result, null, 2));
         break;

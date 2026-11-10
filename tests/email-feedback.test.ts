@@ -147,6 +147,7 @@ async function deliverEdition() {
     token,
     allowedHosts: ["127.0.0.1"],
     allowedOrigins: [],
+    feedbackOrigin: baseUrl,
   });
   const server = Bun.serve({
     hostname: "127.0.0.1",
@@ -405,6 +406,76 @@ test("a feedback link expires after its window", async () => {
         )
         .get()!.n,
     ).toBe(0);
+  } finally {
+    await edition.close();
+  }
+});
+
+test("the feedback POST accepts the configured origin and rejects others", async () => {
+  const edition = await deliverEdition();
+  try {
+    const { message, store, url } = edition;
+    const link = linkFrom(message.html, edition.rss.id, "useful");
+    // A browser opening the emailed link posts from the feedback origin, which
+    // is allowed even with an empty ALLOWED_ORIGINS.
+    const allowed = await fetch(local(url, link), {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: baseUrl,
+      },
+      body: "action=useful",
+    });
+    expect(allowed.status).toBe(200);
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>("SELECT count(*) AS n FROM item_feedback")
+        .get()!.n,
+    ).toBe(1);
+    // Any other origin is still refused before the token is considered.
+    const other = linkFrom(message.html, edition.newsletter.id, "useful");
+    const denied = await fetch(local(url, other), {
+      method: "POST",
+      headers: {
+        "content-type": "application/x-www-form-urlencoded",
+        origin: "https://evil.example",
+      },
+      body: "action=useful",
+    });
+    expect(denied.status).toBe(403);
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>("SELECT count(*) AS n FROM item_feedback")
+        .get()!.n,
+    ).toBe(1);
+  } finally {
+    await edition.close();
+  }
+});
+
+test("an oversized feedback body is rejected without recording", async () => {
+  const edition = await deliverEdition();
+  try {
+    const { message, store, url } = edition;
+    const link = linkFrom(message.html, edition.rss.id, "useful");
+    const response = await fetch(local(url, link), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: `action=useful&pad=${"x".repeat(8000)}`,
+    });
+    expect(response.status).toBe(413);
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>("SELECT count(*) AS n FROM item_feedback")
+        .get()!.n,
+    ).toBe(0);
+    // The token remains usable once a well-formed request arrives.
+    const ok = await fetch(local(url, link), {
+      method: "POST",
+      headers: { "content-type": "application/x-www-form-urlencoded" },
+      body: "action=useful",
+    });
+    expect(ok.status).toBe(200);
   } finally {
     await edition.close();
   }

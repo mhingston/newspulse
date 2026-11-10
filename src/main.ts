@@ -69,7 +69,8 @@ const app = createApp(store, {
     inboundStore && inboundProvider
       ? inboundWebhook(inboundStore, inboundProvider)
       : undefined,
-  mcp: {},
+  mcp: { dbPath: cfg.DB_PATH },
+  feedbackOrigin: delivery?.feedbackBaseUrl,
 });
 const server = Bun.serve({
   hostname: cfg.HOST,
