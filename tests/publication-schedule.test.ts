@@ -257,6 +257,39 @@ describe("durable publication schedule", () => {
     db.close();
   });
 
+  test("timezone changes preserve a sealed unsent edition dated the old local date", () => {
+    const db = database();
+    const changedAt = time("2026-03-31T13:30:00Z");
+    db.query(
+      "INSERT INTO publication_schedule_state(id,next_date,timezone,hour,minute,updated_at) VALUES(1,'2026-03-31','America/Los_Angeles',6,0,?)",
+    ).run(changedAt - 86_400_000);
+    db.query(
+      "INSERT INTO digests(id,edition_date,sealed) VALUES('frozen','2026-03-31',1)",
+    ).run();
+    const prepared: string[] = [];
+    expect(
+      runPublicationSchedule(
+        db,
+        { timezone: "Pacific/Auckland", hour: 6, minute: 0, limit: 1 },
+        (date) => {
+          prepared.push(date);
+          return "prepared";
+        },
+        changedAt,
+      ),
+    ).toEqual([{ date: "2026-03-31", status: "prepared" }]);
+    expect(prepared).toEqual(["2026-03-31"]);
+    expect(
+      db.query("SELECT date,status FROM publication_schedule_history").all(),
+    ).toEqual([{ date: "2026-03-31", status: "prepared" }]);
+    expect(
+      db
+        .query("SELECT next_date,timezone FROM publication_schedule_state")
+        .get(),
+    ).toEqual({ next_date: "2026-04-01", timezone: "Pacific/Auckland" });
+    db.close();
+  });
+
   test("reconciliation blocked dates retain their cursor and retry to completion", () => {
     const db = database();
     const now = time("2026-06-03T06:00:00Z");

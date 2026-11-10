@@ -213,7 +213,7 @@ export function runPublicationSchedule(
         .query<{ date: string | null }, [string, string, string]>(
           `SELECT min(edition_date) AS date FROM digests d WHERE d.sealed=1
            AND NOT EXISTS (SELECT 1 FROM deliveries x WHERE x.digest_id=d.id)
-           AND (d.edition_date=? OR (d.edition_date>=? AND d.edition_date<?))`,
+           AND (d.edition_date=? OR (d.edition_date>=? AND d.edition_date<=?))`,
         )
         .get(today, state.next_date, oldToday)?.date ?? today;
     for (let i = 0; i < 366; i++) {
