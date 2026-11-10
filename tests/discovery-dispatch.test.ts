@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Store } from "../src/db/store";
 import { acquireDiscoveryLock } from "../src/discovery-lock";
-import { withDiscoveryDispatch } from "../src/discovery-dispatch";
+import {
+  withDiscoveryDispatch,
+  type DiscoveryDispatchBoundary,
+} from "../src/discovery-dispatch";
 import { markRestoredDiscovery } from "../src/discovery-restore-guard";
 import {
   confirmTriggerDiscovery,
@@ -76,6 +79,77 @@ describe("confirmed discovery shares the process lock and restore guard", () => 
       ).rejects.toThrow(/restore/i);
       expect(ran).toBe(false);
     });
+  });
+
+  test("re-checks the guard under the lock so a restore that lands while waiting still blocks work", async () => {
+    const order: string[] = [];
+    let checks = 0;
+    let closed = false;
+    const boundary: DiscoveryDispatchBoundary = {
+      assertElapsed: () => {
+        checks++;
+        order.push(`check:${checks}`);
+        // The first check passes; the restore completes while this dispatch
+        // waits for the lock, so the under-lock check must fail.
+        if (checks === 2) throw new Error("restore pending");
+      },
+      held: () => null,
+      acquire: () => {
+        order.push("acquire");
+        return {
+          close() {
+            closed = true;
+            order.push("release");
+          },
+        };
+      },
+    };
+    let ran = false;
+    await expect(
+      withDiscoveryDispatch(
+        "/tmp/dispatch-ordering.sqlite",
+        () => {
+          ran = true;
+        },
+        boundary,
+      ),
+    ).rejects.toThrow(/restore/i);
+    // The guard is checked before contending, then again under the lock, and
+    // the lock is always released even though work never ran.
+    expect(order).toEqual(["check:1", "acquire", "check:2", "release"]);
+    expect(ran).toBe(false);
+    expect(closed).toBe(true);
+  });
+
+  test("re-checks the guard when this process already holds the lock", async () => {
+    const order: string[] = [];
+    let checks = 0;
+    const boundary: DiscoveryDispatchBoundary = {
+      assertElapsed: () => {
+        checks++;
+        order.push(`check:${checks}`);
+        if (checks === 2) throw new Error("restore pending");
+      },
+      held: () => {
+        order.push("held");
+        return { close() {} };
+      },
+      acquire: () => {
+        throw new Error("must not acquire a held lock");
+      },
+    };
+    let ran = false;
+    await expect(
+      withDiscoveryDispatch(
+        "/tmp/dispatch-held.sqlite",
+        () => {
+          ran = true;
+        },
+        boundary,
+      ),
+    ).rejects.toThrow(/restore/i);
+    expect(order).toEqual(["check:1", "held", "check:2"]);
+    expect(ran).toBe(false);
   });
 
   test("a confirmed trigger is refused under the restore guard without spending or consuming the token", async () => {
