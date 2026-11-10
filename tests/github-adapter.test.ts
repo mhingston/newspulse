@@ -341,6 +341,7 @@ describe("GitHub followed-repository adapter", () => {
     ).poll(releasesUrl, {}, limits);
     expect(requests).toHaveLength(1);
     expect(result.cursor).not.toContain("secret-token-for-tests");
+    expect(JSON.stringify(result)).not.toContain("secret-token-for-tests");
   });
 
   test("byte budgets and malformed responses fail closed", async () => {

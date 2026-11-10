@@ -312,34 +312,156 @@ describe("scheduled GitHub repository discovery", () => {
         ],
       }),
     );
-  const founder = new InterestFinder();
+  const start = Date.parse("2026-03-01T00:00:00Z");
+  const interest: Interest = {
+    kind: "interest",
+    id: "rust-compilers",
+    version: 1,
+    description: "Rust compilers",
+    entities: ["rust"],
+    keywords: ["compilers"],
+    priority: 3,
+    positive: [],
+    negative: [],
+    queries: [],
+    lifetime: "persistent",
+    feedbackRefs: [],
+  };
 
   test("an un-followed relevant repository is recorded without a browser", async () => {
     const store = new Store(":memory:");
-    let fetches = 0;
     try {
-      store.sqlite
-        .query("INSERT INTO interest_profiles_holder VALUES(1)")
-        .run();
-    } catch {
-      // This store always fails; the interest import path is used below.
-    }
-    store.close();
-    expect(founder.placeholder()).toBe(undefined);
-    try {
-      expect(fetches).toBe(0);
+      new ProfileStore(store.sqlite).import([interest]);
+      const requests: URL[] = [];
+      const fetcher: GithubFetcher = async (url) => {
+        requests.push(url);
+        return repoRow("acme/widgets");
+      };
+      const dispatched = await runScheduledGithubDiscovery(
+        store,
+        config,
+        start,
+        provider(fetcher),
+        ticking(start),
+      );
+      expect(dispatched).toBe(1);
+      expect(requests).toHaveLength(1);
+      expect(requests[0]!.searchParams.get("q")).toBe(query);
+
+      const run = store.sqlite
+        .query<
+          {
+            provider: string;
+            status: string;
+            query_kind: string;
+            interest_lineage: string;
+          },
+          []
+        >(
+          "SELECT provider,status,query_kind,interest_lineage FROM discovery_runs",
+        )
+        .get()!;
+      expect(run.provider).toBe("github");
+      expect(run.status).toBe("completed");
+      expect(run.query_kind).toBe("interest");
+      expect(JSON.parse(run.interest_lineage)).toEqual([
+        { id: "rust-compilers", version: 1 },
+      ]);
+
+      const page = store.sqlite
+        .query<
+          { status: string; reserved_results: number; usage: string | null },
+          []
+        >("SELECT status,reserved_results,usage FROM discovery_pages")
+        .get()!;
+      expect(page.status).toBe("completed");
+      expect(page.reserved_results).toBe(25);
+      expect(JSON.parse(page.usage!)).toEqual({
+        results: 1,
+        truncated: false,
+      });
+
+      const result = store.sqlite
+        .query<{ origin: string; url: string; item_id: string }, []>(
+          "SELECT origin,url,item_id FROM discovery_results",
+        )
+        .get()!;
+      expect(result.origin).toBe("discovered");
+      expect(result.url).toBe("https://github.com/acme/widgets");
+
+      const item = store.sqlite
+        .query<{ id: string; url: string }, []>("SELECT id,url FROM items")
+        .get()!;
+      expect(item.url).toBe("https://github.com/acme/widgets");
+      expect(item.id).toBe(result.item_id);
+
+      expect(
+        store.sqlite
+          .query<{ source_id: string }, []>(
+            "SELECT source_id FROM item_sources",
+          )
+          .all(),
+      ).toEqual([{ source_id: "discovery:github" }]);
     } finally {
-      void query;
-      void provider;
-      void repoRow;
-      void config;
+      store.close();
+    }
+  });
+
+  test("a followed repository is not reported as a new project", async () => {
+    const store = new Store(":memory:");
+    try {
+      new ProfileStore(store.sqlite).import([interest]);
+      store.addSource("https://github.com/acme/widgets/releases");
+      const fetcher: GithubFetcher = async () => repoRow("acme/widgets");
+      const dispatched = await runScheduledGithubDiscovery(
+        store,
+        config,
+        start,
+        provider(fetcher),
+        ticking(start),
+      );
+      expect(dispatched).toBe(1);
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) AS n FROM discovery_results",
+          )
+          .get(),
+      ).toEqual({ n: 0 });
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>("SELECT count(*) AS n FROM items")
+          .get(),
+      ).toEqual({ n: 0 });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("provider pacing blocks a second dispatch inside the GitHub gap", async () => {
+    const store = new Store(":memory:");
+    try {
+      const fixed = () => start;
+      const fetcher: GithubFetcher = async () => repoRow("acme/widgets");
+      const first = await runDiscovery(
+        store,
+        provider(fetcher),
+        query,
+        config.limits,
+        fixed,
+      );
+      expect(first.status).toBe("complete");
+      const second = await runDiscovery(
+        store,
+        provider(fetcher),
+        query,
+        config.limits,
+        fixed,
+      );
+      expect(second.status).toBe("budget_exhausted");
+      expect(second.pages).toBe(0);
+    } finally {
+      store.close();
     }
   });
 });
-
-/** Placeholder that keeps the file compiling while the suite is stabilised. */
-class InterestFinder {
-  placeholder(): undefined {
-    return undefined;
-  }
-}
