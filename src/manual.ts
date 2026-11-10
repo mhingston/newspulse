@@ -242,6 +242,14 @@ export function submissionFor(
   store: Store,
   itemId: string,
 ): Record<string, unknown> | null {
+  // A merged item's former ID stays resolvable, so provenance follows the
+  // redirect to the surviving item instead of returning nothing.
+  const canonicalId =
+    store.sqlite
+      .query<{ item_id: string }, [string]>(
+        "SELECT item_id FROM item_redirects WHERE old_id=?",
+      )
+      .get(itemId)?.item_id ?? itemId;
   const rows = store.sqlite
     .query<
       {
@@ -261,7 +269,7 @@ export function submissionFor(
       // them are returned so no provenance is hidden.
       "SELECT id,item_id,url,origin,title,snippet,metadata,submitted_at FROM manual_submissions WHERE item_id=? ORDER BY submitted_at,rowid",
     )
-    .all(itemId);
+    .all(canonicalId);
   const row = rows[0];
   if (!row) return null;
   const item = store.getItem(row.item_id);

@@ -181,6 +181,19 @@ test("merging a duplicate repoints manual submission provenance", () => {
         )
         .get(),
     ).toEqual({ item_id: first.itemId });
+    // The former item ID still resolves to the surviving provenance.
+    // The earliest submission stays primary; all of them follow the redirect.
+    expect(submissionFor(store, "legacy")).toMatchObject({
+      submission_id: "legacy-sub",
+      origin: "bookmark",
+    });
+    expect(
+      (
+        submissionFor(store, "legacy")!.submissions as {
+          submission_id: string;
+        }[]
+      ).map((entry) => entry.submission_id),
+    ).toEqual(["legacy-sub", "s1", "s2"]);
     // No submission references a deleted item.
     expect(
       store.sqlite
