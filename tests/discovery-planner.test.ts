@@ -577,6 +577,100 @@ describe("discovery planning", () => {
     }
   });
 
+  test("a profile collision becoming adjacent is reallocated before dispatch", async () => {
+    const store = new Store(":memory:");
+    try {
+      const now = 3_000_000;
+      const robotics = interest({
+        id: "robotics",
+        priority: 5,
+        entities: ["robotics"],
+        keywords: ["robotics"],
+        queries: [],
+      });
+      const climate = interest({
+        id: "climate",
+        priority: 1,
+        entities: ["climate"],
+        keywords: ["climate"],
+        queries: ["robotics climate"],
+      });
+      new ProfileStore(store.sqlite).import([robotics, climate]);
+      const configured = planDiscoveryQueries([robotics, climate]).find(
+        (query) => query.query === "robotics climate",
+      )!;
+      expect(configured.kind).toBe("interest");
+      const planner = new DiscoveryPlannerStore(store.sqlite);
+      planner.sync([configured], now, 60_000);
+      store.sqlite
+        .query(
+          "UPDATE discovery_query_state SET next_due_at=? WHERE query_key=?",
+        )
+        .run(now + 10_000, configured.key);
+      let calls = 0;
+      const provider: SearchProvider = {
+        name: "fixture",
+        version: "1",
+        async search() {
+          calls++;
+          return { results: [], truncated: false };
+        },
+      };
+      const config = {
+        limits: {
+          maxQueriesPerDay: 10,
+          maxQueriesPerRun: 1,
+          maxResultsPerDay: 10,
+          maxResultsPerRun: 5,
+          maxCostMicrosPerDay: 10,
+          maxCostMicrosPerRun: 5,
+          reservedCostMicrosPerQuery: 1,
+        },
+        intervalMs: 60_000,
+        adjacentPercent: 0,
+      };
+      await runScheduledDiscovery(store, config, now, provider, () => now);
+      new ProfileStore(store.sqlite).import([
+        interest({
+          id: "climate",
+          version: 2,
+          priority: 1,
+          entities: ["climate"],
+          keywords: ["climate"],
+          queries: [],
+        }),
+      ]);
+      expect(
+        await runScheduledDiscovery(
+          store,
+          config,
+          now + 11_000,
+          provider,
+          () => now + 11_000,
+        ),
+      ).toBe(0);
+      expect(
+        store.sqlite
+          .query<{ kind: string }, [string]>(
+            "SELECT kind FROM discovery_query_state WHERE query_key=?",
+          )
+          .get(configured.key)?.kind,
+      ).toBe("adjacent");
+      expect(
+        await runScheduledDiscovery(
+          store,
+          config,
+          now + 12_000,
+          provider,
+          () => now + 12_000,
+        ),
+      ).toBe(0);
+      expect(calls).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
   test("populated scheduled-query state migrates with lineage defaults", () => {
     const dir = mkdtempSync(join(tmpdir(), "newspulse-discovery-migration-"));
     const prior = join(dir, "prior-migrations");

@@ -131,6 +131,7 @@ export async function runScheduledDiscovery(
           if (staleSelection) {
             state.sync(currentPlan, now, config.intervalMs);
             scheduleSyncTimes.set(store, now);
+            return [];
           }
           return selected.flatMap((query) => {
             const current = currentQueries.get(query.key);
