@@ -1,3 +1,17 @@
+import { discoveryConfig } from "./discovery-config";
+import { runDiscovery } from "./discovery-service";
+import { GdeltSearchProvider } from "./adapters/gdelt";
+import {
+  markRestoredDiscovery,
+  assertDiscoveryRestoreElapsed,
+} from "./discovery-restore-guard";
+import { acquireDiscoveryLock } from "./discovery-lock";
+import {
+  previewDiscoveryReconciliation,
+  confirmDiscoveryReconciliation,
+  previewInterruptedDiscoveryRun,
+  confirmInterruptedDiscoveryRun,
+} from "./discovery-reconcile";
 import {
   markRestoredDelivery,
   previewDeliveryRestoreAcknowledgment,
@@ -96,10 +110,14 @@ async function main() {
     mkdirSync(dirname(path), { recursive: true });
     const restoreLock =
       process.platform === "linux" ? acquireDeliveryLock(path) : null;
+    const discoveryRestoreLock =
+      process.platform === "linux" ? acquireDiscoveryLock(path) : null;
     try {
       markRestoredDelivery(path);
+      markRestoredDiscovery(path);
       copyFileSync(backup, path, constants.COPYFILE_EXCL);
     } finally {
+      discoveryRestoreLock?.close();
       restoreLock?.close();
     }
     console.log(`Restored to ${path}`);
@@ -117,9 +135,102 @@ async function main() {
     command === "delivery-restore-confirm"
       ? acquireDeliveryLock(path)
       : null;
+  const discoveryLock = [
+    "discover",
+    "discovery-reconcile-preview",
+    "discovery-reconcile",
+    "discovery-run-reconcile-preview",
+    "discovery-run-reconcile",
+  ].includes(command ?? "")
+    ? acquireDiscoveryLock(path)
+    : null;
   const store = new Store(path);
   try {
     switch (command) {
+      case "discovery-run-reconcile-preview":
+        console.log(
+          JSON.stringify(
+            previewInterruptedDiscoveryRun(store.sqlite, required(0, "run ID")),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "discovery-run-reconcile":
+        confirmInterruptedDiscoveryRun(
+          store.sqlite,
+          required(0, "run ID"),
+          Number(required(1, "preview asOf")),
+          required(2, "preview hash"),
+        );
+        console.log(
+          "Discovery run marked interrupted; reservations remain charged",
+        );
+        break;
+      case "discovery-reconcile-preview":
+        console.log(
+          JSON.stringify(
+            previewDiscoveryReconciliation(
+              store.sqlite,
+              required(0, "page ID"),
+            ),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "discovery-reconcile":
+        confirmDiscoveryReconciliation(
+          store.sqlite,
+          required(0, "page ID"),
+          Number(required(1, "preview asOf")),
+          required(2, "preview hash"),
+        );
+        console.log(
+          "Discovery page reconciled; its reservation remains charged",
+        );
+        break;
+      case "discover":
+        assertDiscoveryRestoreElapsed(path);
+        console.log(
+          JSON.stringify(
+            await runDiscovery(
+              store,
+              new GdeltSearchProvider(),
+              required(0, "query"),
+              discoveryConfig(),
+            ),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "discovery-runs":
+        console.log(
+          JSON.stringify(
+            store.sqlite
+              .query(
+                "SELECT id,query,provider,provider_version,status,started_at,finished_at,last_error FROM discovery_runs ORDER BY started_at DESC LIMIT 100",
+              )
+              .all(),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "discovery-pages":
+        console.log(
+          JSON.stringify(
+            store.sqlite
+              .query(
+                "SELECT id,run_id,cursor,status,started_at,finished_at,reserved_results,reserved_cost_micros,actual_cost_micros,last_error FROM discovery_pages ORDER BY started_at DESC LIMIT 100",
+              )
+              .all(),
+            null,
+            2,
+          ),
+        );
+        break;
       case "delivery-restore-preview": {
         console.log(
           JSON.stringify(previewDeliveryRestoreAcknowledgment(path), null, 2),
@@ -353,13 +464,14 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
     store.close();
     analysisLock?.close();
     deliveryLock?.close();
+    discoveryLock?.close();
   }
 }
 main().catch((e) => {

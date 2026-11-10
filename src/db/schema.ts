@@ -479,3 +479,67 @@ export const inboundReconciliation = sqliteTable(
   },
   (t) => [index("inbound_reconciliation_due").on(t.availableAt, t.leaseUntil)],
 );
+
+/** Search observations and reservations survive restarts and uncertain provider outcomes. */
+export const discoveryRuns = sqliteTable("discovery_runs", {
+  id: text().primaryKey(),
+  query: text().notNull(),
+  provider: text().notNull(),
+  providerVersion: text("provider_version").notNull(),
+  subscriptionSnapshot: text("subscription_snapshot").notNull(),
+  status: text().notNull(),
+  startedAt: integer("started_at").notNull(),
+  finishedAt: integer("finished_at"),
+  lastError: text("last_error"),
+});
+
+export const discoveryPages = sqliteTable(
+  "discovery_pages",
+  {
+    id: text().primaryKey(),
+    runId: text("run_id")
+      .notNull()
+      .references(() => discoveryRuns.id),
+    cursor: text(),
+    nextCursor: text("next_cursor"),
+    budgetDay: integer("budget_day").notNull(),
+    reservedResults: integer("reserved_results").notNull(),
+    reservedCostMicros: integer("reserved_cost_micros").notNull(),
+    actualCostMicros: integer("actual_cost_micros"),
+    usage: text(),
+    status: text().notNull(),
+    startedAt: integer("started_at").notNull(),
+    finishedAt: integer("finished_at"),
+    latencyMs: integer("latency_ms"),
+    lastError: text("last_error"),
+  },
+  (t) => [
+    index("discovery_pages_day").on(t.budgetDay),
+    index("discovery_pages_run").on(t.runId),
+    index("discovery_pages_status_finished").on(t.status, t.finishedAt),
+    index("discovery_pages_finished").on(t.finishedAt),
+  ],
+);
+
+export const discoveryResults = sqliteTable(
+  "discovery_results",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    pageId: text("page_id")
+      .notNull()
+      .references(() => discoveryPages.id),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    url: text().notNull(),
+    title: text().notNull(),
+    snippet: text().notNull(),
+    publishedAt: integer("published_at"),
+    observedAt: integer("observed_at"),
+    origin: text().notNull(),
+  },
+  (t) => [
+    index("discovery_results_item").on(t.itemId),
+    index("discovery_results_page").on(t.pageId),
+  ],
+);

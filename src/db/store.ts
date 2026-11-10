@@ -115,6 +115,33 @@ export class Store {
   close() {
     this.sqlite.close();
   }
+  /** Called inside the discovery page transaction; uses the normal identity path. */
+  ingestDiscovery(candidate: Candidate, now: number): string {
+    const sourceId = "discovery:gdelt";
+    this.sqlite
+      .query(
+        "INSERT OR IGNORE INTO sources(id,kind,url,title,enabled) VALUES(?, 'discovery', ?, 'GDELT discovery', 0)",
+      )
+      .run(sourceId, sourceId);
+    // Search metadata is not a publisher correction. Keep later observations
+    // in the discovery ledger without replacing the item's current title.
+    const previous = this.sqlite
+      .query<{ title: string; url: string | null }, [string, string]>(
+        "SELECT title,url FROM content_versions WHERE source_id=? AND native_id=? ORDER BY id DESC LIMIT 1",
+      )
+      .get(sourceId, candidate.nativeId);
+    return this.insert(
+      previous
+        ? {
+            ...candidate,
+            title: previous.title,
+            sourceUrl: previous.url ?? undefined,
+          }
+        : candidate,
+      sourceId,
+      now,
+    );
+  }
   addSource(url: string, title = url, pollSeconds = 1800): Source {
     if (
       !Number.isSafeInteger(pollSeconds) ||
@@ -908,6 +935,9 @@ export class Store {
       .run(winner, loser);
     this.sqlite
       .query("UPDATE inbound_messages SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
+    this.sqlite
+      .query("UPDATE discovery_results SET item_id=? WHERE item_id=?")
       .run(winner, loser);
     this.sqlite
       .query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?")
