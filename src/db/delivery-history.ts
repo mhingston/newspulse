@@ -400,7 +400,7 @@ export function relatedDeliveryHistory(
       },
       [string]
     >(
-      "SELECT source_id,native_id,observed_at,backfilled,title FROM content_versions WHERE item_id=? AND backfilled=0 ORDER BY id LIMIT 1",
+      "SELECT source_id,native_id,observed_at,backfilled,title FROM content_versions WHERE item_id=? ORDER BY id LIMIT 1",
     )
     .get(candidateItemId);
   const latestObservation = db
@@ -444,6 +444,7 @@ export function relatedDeliveryHistory(
     publishedAt <= now &&
     firstObservation !== null &&
     latestObservation !== null &&
+    firstObservation.backfilled === 0 &&
     firstObservation.observed_at > row.accepted_at &&
     publishedAt <= firstObservation.observed_at &&
     latestObservation.observed_at >= firstObservation.observed_at &&
@@ -459,7 +460,9 @@ export function relatedDeliveryHistory(
     row.relation_version === "specific-development-v1" &&
     Array.isArray(sharedTerms) &&
     sharedTerms.length >= 2 &&
-    sharedTerms.every((term) => typeof term === "string" && term.length >= 3);
+    sharedTerms.every(
+      (term) => typeof term === "string" && term.trim().length > 0,
+    );
   const regrouped =
     newerGroupId === null ||
     row.newer_group_id !== newerGroupId ||
@@ -497,9 +500,11 @@ export function relatedDeliveryHistory(
           ? "directional_relation_and_post_acceptance_observation"
           : regrouped
             ? "relationship_or_membership_ended_after_regrouping"
-            : supported
-              ? "stale_or_uncertain_observation"
-              : "weak_relationship_evidence",
+            : firstObservation?.backfilled
+              ? "earliest_observation_was_backfilled"
+              : supported
+                ? "stale_or_uncertain_observation"
+                : "weak_relationship_evidence",
       editionId: row.edition_id,
       editionDate: row.edition_date,
       deliveryId: row.delivery_id,

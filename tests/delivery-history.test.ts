@@ -5,6 +5,10 @@ import { join } from "node:path";
 import { Store } from "../src/db/store";
 import { DigestStore } from "../src/db/digest-store";
 import { DeliveryStore } from "../src/db/delivery-store";
+import { ProfileStore } from "../src/profiles";
+import { ProcessingWorker } from "../src/worker";
+import { scoringHandler } from "../src/scoring-service";
+import { draftDigest } from "../src/digest-service";
 import {
   deliveryHistory,
   relatedDeliveryHistory,
@@ -328,6 +332,11 @@ test("distinct related developments compare against accepted frozen history with
     f.store.sqlite
       .query("UPDATE content_versions SET backfilled=1 WHERE item_id='new'")
       .run();
+    f.store.sqlite
+      .query(
+        "INSERT INTO content_versions(item_id,source_id,native_id,title,text,observed_at,backfilled) VALUES('new',?,'later-live-entry','Breakthrough robotics update',?,3600,0)",
+      )
+      .run(source.id, newText);
     expect(
       relatedDeliveryHistory(
         f.store.sqlite,
@@ -340,7 +349,7 @@ test("distinct related developments compare against accepted frozen history with
       )?.evidence,
     ).toMatchObject({
       state: "unknown",
-      reason: "stale_or_uncertain_observation",
+      reason: "earliest_observation_was_backfilled",
     });
   } finally {
     f.store.close();
@@ -480,6 +489,249 @@ test("score provenance preserves direct ambiguous history instead of replacing i
     expect(accepted.digest_id).not.toBe(ambiguous.digest_id);
   } finally {
     store.close();
+  }
+});
+
+test("grouping, scoring and curation retain cross-group history through restart and fence relation-only races", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "newspulse-related-e2e-"));
+  const dbPath = join(directory, "state.sqlite");
+  let store = new Store(dbPath);
+  try {
+    const day = 86_400_000;
+    const candidateAt = Date.now() - 60 * 60 * 1000;
+    const acceptedAt = candidateAt - 9 * day;
+    const localDate = (time: number) => {
+      const parts = new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Europe/London",
+        year: "numeric",
+        month: "2-digit",
+        day: "2-digit",
+      }).formatToParts(time);
+      const part = (type: string) =>
+        parts.find((entry) => entry.type === type)!.value;
+      return `${part("year")}-${part("month")}-${part("day")}`;
+    };
+    const olderText =
+      "Acme Atlas robotics launch announced with initial field results and supporting measurements.";
+    const newerText =
+      "Acme Atlas robotics recall follows field reports after nine days of testing and further reliability measurements.";
+    new ProfileStore(store.sqlite).import([
+      {
+        kind: "interest",
+        id: "robotics",
+        version: 1,
+        description: "Robotics",
+        entities: [],
+        keywords: ["robotics"],
+        priority: 3,
+        positive: [],
+        negative: [],
+        queries: [],
+        lifetime: "persistent",
+        feedbackRefs: [],
+      },
+    ]);
+    const source = store.addSource("https://example.com/feed");
+    store.enqueueDue(acceptedAt, true);
+    store.complete(
+      store.claim(acceptedAt)!,
+      {
+        items: [
+          {
+            nativeId: "old-event",
+            title: "Acme Atlas 2 robotics model launches",
+            text: olderText,
+            publishedAt: acceptedAt - day,
+          },
+        ],
+      },
+      acceptedAt,
+    );
+    const olderId = store.search("robotics")[0]!.id;
+    const extraction = store.claimProcessing("extract", acceptedAt)!;
+    store.completeProcessing(extraction, "unavailable", acceptedAt + 1);
+    store.stories.reconcile(acceptedAt + 2);
+    const worker = new ProcessingWorker(store, {
+      score: scoringHandler(store),
+    });
+    await worker.drain("score");
+    const older = store.getItem(olderId)!;
+    const olderScore = store.scoreHistory(olderId)[0]!;
+    const olderGroupId = older.story.current!.group_id;
+    const digestStore = new DigestStore(store.sqlite);
+    const oldDigest = () =>
+      digestStore.freeze(
+        {
+          date: localDate(acceptedAt),
+          timezone: "Europe/London",
+          subject: "News",
+          html: "News",
+          text: "News",
+          decisionSnapshot: {},
+          items: [
+            {
+              itemId: olderId,
+              groupId: olderGroupId,
+              scoreId: olderScore.id,
+              snapshot: {
+                title: older.title,
+                citations: [
+                  {
+                    sourceId: source.id,
+                    nativeId: "old-event",
+                    url: "https://example.com/old-event",
+                  },
+                ],
+                scoreSnapshot: {
+                  id: olderScore.id,
+                  result: olderScore.result,
+                  provenance: olderScore.provenance,
+                },
+              },
+            },
+          ],
+        },
+        acceptedAt,
+      );
+    const deliveries = new DeliveryStore(store.sqlite);
+    deliveries.prepare(
+      localDate(acceptedAt),
+      "reader@example.test",
+      "sender@example.test",
+      oldDigest,
+      acceptedAt,
+    );
+    const deliveryClaim = deliveries.claim(acceptedAt)!;
+    deliveries.beginSend(deliveryClaim, acceptedAt);
+    deliveries.sent(deliveryClaim, "accepted-provider", acceptedAt + 1);
+
+    store.enqueueDue(candidateAt, true);
+    store.complete(
+      store.claim(candidateAt)!,
+      {
+        items: [
+          {
+            nativeId: "new-event",
+            title: "Acme Atlas 2 robotics model recalled",
+            text: newerText,
+            publishedAt: candidateAt,
+          },
+        ],
+      },
+      candidateAt,
+    );
+    const candidateId = store
+      .search("robotics")
+      .find((item) => item.id !== olderId)!.id;
+    const candidateExtraction = store.claimProcessing("extract", candidateAt)!;
+    store.completeProcessing(
+      candidateExtraction,
+      "unavailable",
+      candidateAt + 1,
+    );
+    const grouping = store.stories.reconcile(candidateAt + 2);
+    expect(grouping.groups).toBe(2);
+    expect(
+      store.sqlite
+        .query("SELECT 1 FROM story_relations WHERE ended_at IS NULL")
+        .get(),
+    ).not.toBeNull();
+    await worker.drain("score");
+
+    store.close();
+    store = new Store(dbPath);
+    const currentTime = Date.now();
+    const date = localDate(currentTime);
+    const options = {
+      date,
+      timezone: "Europe/London",
+      now: currentTime,
+      minScore: 50,
+      maxItems: 10,
+      maxPerInterest: 4,
+    };
+    const afterRestart = draftDigest(store, options);
+    expect(afterRestart.status).toBe("ready");
+    expect(afterRestart.selected.map((item) => item.itemId)).toContain(
+      candidateId,
+    );
+    expect(
+      afterRestart.selected.find((item) => item.itemId === candidateId),
+    ).toMatchObject({
+      scoreSnapshot: {
+        provenance: {
+          history: {
+            relatedComparison: { state: "possible_follow_up" },
+          },
+        },
+      },
+    });
+
+    const scoreId = store.sqlite
+      .query<{ id: string }, [string]>(
+        "SELECT id FROM processing_jobs WHERE item_id=? AND stage='score' ORDER BY generation DESC LIMIT 1",
+      )
+      .get(candidateId)!.id;
+    store.sqlite
+      .query(
+        "UPDATE processing_jobs SET status='pending',outcome=NULL WHERE id=?",
+      )
+      .run(scoreId);
+    const raceAt = Date.now();
+    const liveClaim = store.claimProcessing("score", raceAt)!;
+    const liveSnapshot = store.scoringSnapshot(liveClaim, raceAt)!;
+    expect(draftDigest(store, { ...options, now: raceAt }).status).toBe(
+      "processing",
+    );
+    store.sqlite
+      .query("UPDATE story_relations SET evidence='{}' WHERE ended_at IS NULL")
+      .run();
+    store.sqlite
+      .query("UPDATE story_grouping_state SET fingerprint='dirty' WHERE id=1")
+      .run();
+    store.stories.reconcile(raceAt + 1);
+    expect(
+      store.completeScore(
+        liveClaim,
+        {
+          inputHash: liveSnapshot.inputHash,
+          criteriaVersion: "deterministic-v2",
+          provenance: liveSnapshot.provenance,
+          result: scoreItem(liveSnapshot.input),
+          capturedAt: raceAt,
+        },
+        raceAt + 2,
+      ),
+    ).toBe(false);
+    expect(draftDigest(store, { ...options, now: raceAt + 2 }).status).toBe(
+      "processing",
+    );
+    const restartedWorker = new ProcessingWorker(store, {
+      score: scoringHandler(store),
+    });
+    await restartedWorker.drain("score");
+    const refreshedDraft = draftDigest(store, {
+      ...options,
+      now: Date.now(),
+    });
+    expect(refreshedDraft.status).toBe("ready");
+    expect(refreshedDraft.selected.map((item) => item.itemId)).toContain(
+      candidateId,
+    );
+    expect(
+      refreshedDraft.selected.find((item) => item.itemId === candidateId),
+    ).toMatchObject({
+      scoreSnapshot: {
+        provenance: {
+          history: {
+            relatedComparison: { state: "possible_follow_up" },
+          },
+        },
+      },
+    });
+  } finally {
+    store.close();
+    rmSync(directory, { recursive: true, force: true });
   }
 });
 
