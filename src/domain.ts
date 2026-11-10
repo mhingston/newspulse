@@ -40,9 +40,75 @@ export function canonicalUrl(value: string, base?: string): string {
   u.searchParams.sort();
   return u.href;
 }
+export interface RedditDiscussion {
+  postId: string;
+  subreddit?: string;
+  /** Host-independent discussion identity shared by redd.it and reddit.com. */
+  canonicalUrl: string;
+  originalUrl: string;
+}
+
+const redditHosts = new Set([
+  "reddit.com",
+  "www.reddit.com",
+  "old.reddit.com",
+  "new.reddit.com",
+  "m.reddit.com",
+  "np.reddit.com",
+  "redd.it",
+]);
+
+/**
+ * Reddit exposes the same discussion through many hosts and short links.
+ * Identity is the post ID, so a search result, a digest email and a manual
+ * submission resolve to one item; the original URL is retained separately.
+ */
+export function parseRedditDiscussion(
+  value: string,
+  base?: string,
+): RedditDiscussion | null {
+  let url: URL;
+  try {
+    url = new URL(resolvedUrl(value, base));
+  } catch {
+    return null;
+  }
+  if (!redditHosts.has(url.hostname.toLowerCase())) return null;
+  const postId =
+    /^\/r\/[A-Za-z0-9_]{1,50}\/comments\/([A-Za-z0-9]{1,20})(?:\/|$)/.exec(
+      url.pathname,
+    )?.[1] ??
+    /^\/comments\/([A-Za-z0-9]{1,20})(?:\/|$)/.exec(url.pathname)?.[1] ??
+    (url.hostname.toLowerCase() === "redd.it"
+      ? /^\/([A-Za-z0-9]{1,20})\/?$/.exec(url.pathname)?.[1]
+      : undefined);
+  if (!postId) return null;
+  const id = postId.toLowerCase();
+  return {
+    postId: id,
+    subreddit: /^\/r\/([A-Za-z0-9_]{1,50})\/comments\//
+      .exec(url.pathname)?.[1]
+      ?.toLowerCase(),
+    canonicalUrl: `https://www.reddit.com/comments/${id}`,
+    originalUrl: url.href,
+  };
+}
+
+/**
+ * Canonical identity for an item URL. Reddit discussions collapse to their
+ * post ID; every other URL uses the ordinary canonical form. Source/feed URLs
+ * keep using `canonicalUrl` so a Reddit feed is not rewritten.
+ */
+export function canonicalItemUrl(value: string, base?: string): string {
+  return (
+    parseRedditDiscussion(value, base)?.canonicalUrl ??
+    canonicalUrl(value, base)
+  );
+}
+
 export function identity(candidate: Candidate, sourceId: string): string {
   return candidate.url
-    ? `url:${canonicalUrl(candidate.url)}`
+    ? `url:${canonicalItemUrl(candidate.url)}`
     : `source:${sourceId}:${candidate.nativeId}`;
 }
 

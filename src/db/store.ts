@@ -15,6 +15,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
+  canonicalItemUrl,
   canonicalUrl,
   identity,
   isGithubSourceUrl,
@@ -181,6 +182,16 @@ export class Store {
       now,
     );
   }
+  /**
+   * Called inside the manual submission transaction. Uses the normal identity
+   * path so an already-followed article gains a manual reference instead of a
+   * duplicate item.
+   */
+  ingestManual(candidate: Candidate, sourceId: string, now: number): string {
+    if (!/^manual:[a-z]{3,20}$/.test(sourceId))
+      throw new Error("Invalid manual source");
+    return this.insert(candidate, sourceId, now);
+  }
   addSource(url: string, title = url, pollSeconds = 1800): Source {
     if (
       !Number.isSafeInteger(pollSeconds) ||
@@ -219,7 +230,8 @@ export class Store {
   sources(): Source[] {
     return this.sqlite
       .query<Source, []>(
-        "SELECT * FROM sources WHERE removed=0 ORDER BY title,id",
+        // Manual intake bookkeeping is not a polled subscription.
+        "SELECT * FROM sources WHERE removed=0 AND kind<>'manual' ORDER BY title,id",
       )
       .all();
   }
@@ -1148,7 +1160,7 @@ export class Store {
         "SELECT item_id,url FROM item_sources WHERE source_id=? AND native_id=?",
       )
       .get(sourceId, candidate.nativeId);
-    const url = candidate.url ? canonicalUrl(candidate.url) : null;
+    const url = candidate.url ? canonicalItemUrl(candidate.url) : null;
     const owner = url
       ? this.canonicalOwner(url, previousRef?.item_id)
       : previousRef?.item_id;
@@ -1215,7 +1227,7 @@ export class Store {
         if (candidate.url)
           this.sqlite
             .query("UPDATE items SET url=coalesce(url,?) WHERE id=?")
-            .run(canonicalUrl(candidate.url), prior.item_id);
+            .run(canonicalItemUrl(candidate.url), prior.item_id);
         this.enqueueProcessing(
           "extract",
           prior.item_id,
@@ -1687,6 +1699,13 @@ export class Store {
           .query("SELECT evidence_from FROM digest_history_state WHERE id=1")
           .get() ?? null,
       items: this.sqlite.query("SELECT count(*) AS count FROM items").get(),
+      // Manual submissions stay separate from subscription and discovery
+      // counts so discovery yield is not inflated by operator intake.
+      manual_submissions: this.sqlite
+        .query(
+          "SELECT origin,count(*) AS count FROM manual_submissions GROUP BY origin ORDER BY origin",
+        )
+        .all(),
       milestone: "M2-in-progress",
       grouping: this.stories.status(),
       ai: "optional",

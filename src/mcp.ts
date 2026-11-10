@@ -4,6 +4,7 @@ import { z } from "zod";
 import type { Store } from "./db/store";
 import { DigestStore } from "./db/digest-store";
 import { draftDigest, digestDefaults } from "./digest-service";
+import { submissionFor } from "./manual";
 export function createMcp(store: Store): McpServer {
   const server = new McpServer(
     { name: "newspulse", version: "0.1.0" },
@@ -136,6 +137,21 @@ export function createMcp(store: Store): McpServer {
     "get_status",
     { description: "Report ingestion and durable queue health.", annotations },
     async () => response(store.status()),
+  );
+  server.registerTool(
+    "get_submission",
+    {
+      description:
+        "Read manual/bookmark/email submission provenance for an item: origin, snippet, Reddit post and subreddit, and the recorded extraction status. Retrieval status distinguishes extracted text from unavailable or pending content.",
+      inputSchema: { id: z.string() },
+      annotations,
+    },
+    async ({ id }) => {
+      const submission = submissionFor(store, id);
+      return submission
+        ? response(submission)
+        : { ...response({ error: "No submission for item" }), isError: true };
+    },
   );
   return server;
 }
