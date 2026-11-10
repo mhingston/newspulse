@@ -133,3 +133,5 @@ If current provider terms, schema ownership or dependency contracts invalidate a
 The #10 and #11 inbound slices persist and reconcile received messages, index newsletter originals and ingest attributed linked articles. #12 adds opt-in outbound delivery. Reconstructing unfrozen missed editions remains required in [#48](https://github.com/mhingston/newspulse/issues/48); working feedback links remain required in [#18](https://github.com/mhingston/newspulse/issues/18).
 
 The user-authorized #12 scope split preserves unfrozen historical catch-up as required follow-up [#48](https://github.com/mhingston/newspulse/issues/48) and the complete-edition feedback-link test in [#18](https://github.com/mhingston/newspulse/issues/18). Same-day recovery, already-frozen missed editions and mixed RSS/inbound citations remain in #12.
+
+#13 adds an explicit, budgeted GDELT news-index query and durable discovery provenance. Automatic interest-query scheduling and refinement remain in #14; read-only discovery MCP completion remains in #19. The adapter does not establish general-web coverage or measure discovery quality.
