@@ -138,12 +138,24 @@ function serializeCursor(cursor: HnCursor): string {
   return encoded;
 }
 
-function text(value: unknown, max = 10_000): string {
+const maxCommentChars = 2000;
+
+function normalizeText(value: unknown): string {
   if (typeof value !== "string") return "";
-  return value
-    .replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, " ")
-    .slice(0, max)
-    .trim();
+  return value.replace(/[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]/g, " ");
+}
+
+function text(value: unknown, max = 10_000): string {
+  return normalizeText(value).slice(0, max).trim();
+}
+
+/** Length of the text before clipping, used to detect lossy extraction. */
+function trimmedLength(value: unknown): number {
+  return normalizeText(value).trim().length;
+}
+
+function commentText(value: unknown): string {
+  return text(value, maxCommentChars);
 }
 
 function isHttpUrl(value: unknown): value is string {
@@ -333,8 +345,10 @@ export class HackerNewsAdapter implements SourceAdapter {
         signal: controller.signal,
       });
     } catch {
-      // Our own deadline (rather than a provider outage) is a local bound.
-      if (required && timeout.aborted) throw new BudgetExhausted("time");
+      // Hitting the poll deadline is a local ingestion bound for any request;
+      // a single slow request below the deadline is a retryable provider error.
+      if (timeout.aborted) throw new BudgetExhausted("time");
+      if (required) throw new HttpError("Hacker News API request timed out");
       throw new HttpError("Hacker News API request failed or timed out");
     }
     if (!response.ok) {
@@ -526,15 +540,14 @@ export class HackerNewsAdapter implements SourceAdapter {
       if (!item) continue;
       rendered++;
       const indent = "  ".repeat(depth);
+      const body = commentText(item.text);
+      // Clipping an individual comment is lossy even when the whole
+      // discussion still fits, so it must be reported as truncation.
+      if (body.length < trimmedLength(item.text)) truncated = true;
       if (item.deleted) lines.push(`${indent}[deleted]`);
       else if (item.dead)
-        lines.push(
-          `${indent}[dead]${item.by ? ` ${item.by}` : ""}: ${text(item.text, 2000)}`,
-        );
-      else
-        lines.push(
-          `${indent}${item.by ?? "unknown"}: ${text(item.text, 2000)}`,
-        );
+        lines.push(`${indent}[dead]${item.by ? ` ${item.by}` : ""}: ${body}`);
+      else lines.push(`${indent}${item.by ?? "unknown"}: ${body}`);
       const childKids = item.kids ?? [];
       if (depth < maxCommentDepth)
         for (let index = childKids.length - 1; index >= 0; index--)

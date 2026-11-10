@@ -506,6 +506,69 @@ describe("Hacker News discussion adapter", () => {
     expect(text).toContain("  child-a: child of A");
   });
 
+  test("a comment request aborted at the poll deadline is a partial result", async () => {
+    const realNow = Date.now;
+    let skew = -15_000;
+    Date.now = () => realNow() + skew;
+    try {
+      const { fetcher } = recordingFetcher(({ url }, init) => {
+        if (url.pathname.endsWith("/item/100.json")) {
+          // Let the deadline expire while the comment request is in flight.
+          queueMicrotask(() => {
+            skew = 31_000;
+          });
+          return json(story({ kids: [101], descendants: 1 }));
+        }
+        // The fetch only settles when the adapter's own deadline aborts it.
+        return new Promise<Response>((_resolve, reject) => {
+          if (init?.signal?.aborted) return reject(new Error("aborted"));
+          init?.signal?.addEventListener("abort", () =>
+            reject(new Error("aborted")),
+          );
+        });
+      });
+      // Speed the wait up: the adapter caps its timeout at the remaining time.
+      const result = await Promise.race([
+        poll(fetcher, itemUrl),
+        new Promise<never>((_resolve, reject) =>
+          globalThis.setTimeout(
+            () => reject(new Error("adapter did not honour its bound")),
+            3000,
+          ),
+        ),
+      ]);
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0]!.text).toContain("Submitter: alice");
+      expect(result.truncated).toBe(true);
+    } finally {
+      Date.now = realNow;
+    }
+  }, 10_000);
+
+  test("clipping a single long comment marks the discussion truncated", async () => {
+    const { fetcher } = recordingFetcher(({ url }) =>
+      json(
+        url.pathname.endsWith("/item/100.json")
+          ? story({ kids: [101], descendants: 1 })
+          : {
+              id: 101,
+              type: "comment",
+              by: "bob",
+              text: "z".repeat(5_000),
+              kids: [],
+            },
+      ),
+    );
+    const result = await poll(fetcher, itemUrl);
+    // The whole text still fits the overall limit, so only the per-comment
+    // bound can explain the marker.
+    expect(result.items[0]!.text.length).toBeLessThan(20_000);
+    expect(result.truncated).toBe(true);
+    expect(result.items[0]!.text).toContain(
+      "[discussion truncated by ingestion bounds]",
+    );
+  });
+
   test("clipping large discussions reserves space for the truncation marker", async () => {
     const { fetcher } = recordingFetcher(({ url }) => {
       if (url.pathname.endsWith("/item/100.json"))
