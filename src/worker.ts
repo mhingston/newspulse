@@ -83,6 +83,7 @@ export function schedule(
   publication?: { tick(): Promise<void> },
   discovery?: { tick(): Promise<void> },
   githubDiscovery?: { tick(): Promise<void> },
+  hnDiscovery?: { tick(): Promise<void> },
 ): { stop(): Promise<void> } {
   let active: Promise<unknown> | undefined;
   let stopping = false;
@@ -136,6 +137,13 @@ export function schedule(
         )
         .finally(() => stageActive.delete("githubDiscovery"));
       stageActive.set("githubDiscovery", task);
+    }
+    if (hnDiscovery && !stageActive.has("hnDiscovery")) {
+      const task = hnDiscovery
+        .tick()
+        .catch((e) => log("hn_discovery_scheduler_error", { error: String(e) }))
+        .finally(() => stageActive.delete("hnDiscovery"));
+      stageActive.set("hnDiscovery", task);
     }
     if (processing)
       for (const stage of ["extract", "analyse", "group", "score"] as const) {

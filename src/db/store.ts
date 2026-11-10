@@ -18,6 +18,7 @@ import {
   canonicalUrl,
   identity,
   isGithubSourceUrl,
+  isHackerNewsSourceUrl,
   type Candidate,
   type PollResult,
 } from "../domain";
@@ -148,7 +149,14 @@ export class Store {
     if (!/^[a-z][a-z0-9-]{0,19}$/.test(provider))
       throw new Error("Invalid discovery provider");
     const sourceId = `discovery:${provider}`;
-    const label = provider === "gdelt" ? "GDELT discovery" : "GitHub discovery";
+    const label =
+      provider === "gdelt"
+        ? "GDELT discovery"
+        : provider === "github"
+          ? "GitHub discovery"
+          : provider === "hackernews"
+            ? "Hacker News discovery"
+            : `${provider} discovery`;
     this.sqlite
       .query(
         "INSERT OR IGNORE INTO sources(id,kind,url,title,enabled) VALUES(?, 'discovery', ?, ?, 0)",
@@ -197,6 +205,7 @@ export class Store {
   }
   private sourceKind(url: string): string {
     if (isGithubSourceUrl(url)) return "github";
+    if (isHackerNewsSourceUrl(url)) return "hackernews";
     const parsed = new URL(url);
     if (parsed.hostname.toLowerCase() === "github.com") {
       const path = parsed.pathname.toLowerCase();
@@ -228,8 +237,14 @@ export class Store {
       .transaction(() => {
         const source = this.source(id);
         if (!source || source.removed) throw new Error("Source not found");
-        if (source.kind !== "rss" && source.kind !== "github")
-          throw new Error("Only RSS or GitHub sources can be managed here");
+        if (
+          source.kind !== "rss" &&
+          source.kind !== "github" &&
+          source.kind !== "hackernews"
+        )
+          throw new Error(
+            "Only RSS, GitHub or Hacker News sources can be managed here",
+          );
         const title = changes.title ?? source.title;
         if (!title.trim() || title.length > 1000)
           throw new Error("Invalid source title");
@@ -312,7 +327,7 @@ export class Store {
         if (
           !this.sqlite
             .query(
-              "UPDATE sources SET removed=1,enabled=0 WHERE id=? AND removed=0 AND kind IN ('rss','github')",
+              "UPDATE sources SET removed=1,enabled=0 WHERE id=? AND removed=0 AND kind IN ('rss','github','hackernews')",
             )
             .run(id).changes
         )
@@ -349,7 +364,9 @@ export class Store {
         let count = 0;
         for (const s of this.sources().filter(
           (s) =>
-            (s.kind === "rss" || s.kind === "github") &&
+            (s.kind === "rss" ||
+              s.kind === "github" ||
+              s.kind === "hackernews") &&
             s.enabled &&
             (force || s.next_poll <= now),
         )) {
@@ -374,7 +391,7 @@ export class Store {
         return this.sqlite
           .query<Job, [string, number, number]>(
             `UPDATE jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=?
-        WHERE id=(SELECT j.id FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind IN ('rss','github') AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 1)
+        WHERE id=(SELECT j.id FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind IN ('rss','github','hackernews') AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 1)
         RETURNING id,source_id,attempts,lease_token`,
           )
           .get(crypto.randomUUID(), now + 60_000, now);

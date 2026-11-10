@@ -95,3 +95,61 @@ export function parseGithubSource(value: string): GithubSource | null {
 export function isGithubSourceUrl(url: string): boolean {
   return parseGithubSource(url) !== null;
 }
+
+/** Hacker News list feeds exposed by the official Firebase API. */
+export type HackerNewsList = "top" | "new" | "best" | "ask" | "show" | "job";
+export type HackerNewsSource =
+  { kind: "item"; id: number } | { kind: "list"; list: HackerNewsList };
+
+const hackerNewsLists: Record<string, HackerNewsList> = {
+  "/": "top",
+  "/news": "top",
+  "/top": "top",
+  "/newest": "new",
+  "/new": "new",
+  "/best": "best",
+  "/ask": "ask",
+  "/show": "show",
+  "/jobs": "job",
+  "/job": "job",
+};
+
+/**
+ * A followed HN source is either one discussion item or one of the public list
+ * feeds. Item identity is the discussion URL; a linked article is a separate
+ * child item so RSS coverage is not duplicated.
+ */
+export function parseHackerNewsSource(value: string): HackerNewsSource | null {
+  let url: URL;
+  try {
+    url = new URL(value);
+  } catch {
+    return null;
+  }
+  if (
+    url.protocol !== "https:" ||
+    url.hostname.toLowerCase() !== "news.ycombinator.com" ||
+    url.username ||
+    url.password ||
+    url.hash
+  )
+    return null;
+  if (url.pathname === "/item") {
+    const id = url.searchParams.get("id");
+    if (
+      !id ||
+      !/^[1-9]\d{0,9}$/.test(id) ||
+      url.searchParams.size !== 1 ||
+      Number(id) > 2_147_483_647
+    )
+      return null;
+    return { kind: "item", id: Number(id) };
+  }
+  if (url.search) return null;
+  const path = url.pathname.replace(/\/+$/, "") || "/";
+  const list = hackerNewsLists[path];
+  return list ? { kind: "list", list } : null;
+}
+export function isHackerNewsSourceUrl(url: string): boolean {
+  return parseHackerNewsSource(url) !== null;
+}
