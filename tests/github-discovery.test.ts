@@ -64,7 +64,7 @@ describe("GitHub repository search provider", () => {
       limit: 25,
     });
     expect(requests).toHaveLength(1);
-    expect(requests[0]!.url.searchParams.get("per_page")).toBe("25");
+    expect(requests[0]!.url.searchParams.get("per_page")).toBe("100");
     expect(requests[0]!.url.searchParams.get("page")).toBe("1");
     expect(page.results).toHaveLength(1);
     expect(page.nextCursor).toBeUndefined();
@@ -86,48 +86,49 @@ describe("GitHub repository search provider", () => {
     const first = await provider.search({ query: "widgets", limit: 150 });
     expect(requests[0]!.url.searchParams.get("per_page")).toBe("100");
     expect(first.results).toHaveLength(100);
-    expect(first.nextCursor).toBe("100:100");
+    expect(first.nextCursor).toBe("100");
     const second = await provider.search({
       query: "widgets",
       limit: 150,
-      cursor: "100:100",
+      cursor: "100",
     });
     expect(second.results.map((result) => result.title)).toEqual([
       "acme/second — Description for acme/second",
     ]);
     expect(second.nextCursor).toBeUndefined();
     await expect(
-      provider.search({ query: "widgets", limit: 150, cursor: "1001:100" }),
+      provider.search({ query: "widgets", limit: 150, cursor: "1001" }),
     ).rejects.toThrow("Invalid GitHub search cursor");
     await expect(
       provider.search({ query: "widgets", limit: 150, cursor: "page" }),
     ).rejects.toThrow("Invalid GitHub search cursor");
   });
 
-  test("a changed page size resumes at the same absolute offset", async () => {
+  test("a changed reservation still resumes without losing results", async () => {
     const { provider, requests } = search((url) => {
       const page = Number(url.searchParams.get("page") ?? "1");
-      if (page === 1)
-        return json(
-          Array.from({ length: 13 }, (_, index) => repo(`acme/r${index}`)),
-        );
+      const perPage = Number(url.searchParams.get("per_page"));
       return json(
-        Array.from({ length: 12 }, (_, index) => repo(`acme/s${index}`)),
+        Array.from({ length: perPage }, (_, index) =>
+          repo(`acme/r${(page - 1) * perPage + index}`),
+        ),
       );
     });
     const first = await provider.search({ query: "widgets", limit: 13 });
+    expect(requests[0]!.url.searchParams.get("per_page")).toBe("100");
     expect(first.results).toHaveLength(13);
-    expect(first.nextCursor).toBe("13:13");
+    expect(first.nextCursor).toBe("13");
     const second = await provider.search({
       query: "widgets",
       limit: 12,
-      cursor: "13:13",
+      cursor: "13",
     });
-    // Offset 13 with a 12-result page resumes on API page 2, skipping one.
-    expect(requests[1]!.url.searchParams.get("page")).toBe("2");
-    expect(requests[1]!.url.searchParams.get("per_page")).toBe("12");
-    expect(second.results).toHaveLength(11);
-    expect(second.results[0]!.title).toContain("acme/s1");
+    // The same 100-row API page is sliced to the 12 reserved results.
+    expect(requests[1]!.url.searchParams.get("page")).toBe("1");
+    expect(requests[1]!.url.searchParams.get("per_page")).toBe("100");
+    expect(second.results).toHaveLength(12);
+    expect(second.results[0]!.title).toContain("acme/r13");
+    expect(second.nextCursor).toBe("25");
   });
 
   test("pagination is bounded by the 1000-result window, not a page count", async () => {
@@ -140,14 +141,15 @@ describe("GitHub repository search provider", () => {
     const page = await provider.search({
       query: "widgets",
       limit: 12,
-      cursor: "996:12",
+      cursor: "996",
     });
-    // Offset 996 with 12-result pages is API page 84, well past ten pages.
-    expect(requests[0]!.url.searchParams.get("page")).toBe("84");
+    // Offset 996 with 100-row pages is API page 10, past the old ten-page cap.
+    expect(requests[0]!.url.searchParams.get("page")).toBe("10");
+    expect(page.results).toHaveLength(4);
     expect(page.truncated).toBe(true);
     expect(page.nextCursor).toBeUndefined();
     await expect(
-      provider.search({ query: "widgets", limit: 12, cursor: "1000:12" }),
+      provider.search({ query: "widgets", limit: 12, cursor: "1000" }),
     ).rejects.toThrow("Invalid GitHub search cursor");
   });
 
@@ -547,9 +549,10 @@ describe("scheduled GitHub repository discovery", () => {
         { ...config.limits, maxQueriesPerRun: 2, maxResultsPerRun: 25 },
         ticking(start),
       );
-      // Reservations shrink from 13 to 12; the offset cursor still resumes.
+      // Reservations shrink from 13 to 12; the stable page size still yields
+      // the full 25-result budget across two pages.
       expect(outcome.pages).toBe(2);
-      expect(outcome.results).toBe(24);
+      expect(outcome.results).toBe(25);
       expect(outcome.status).toBe("budget_exhausted");
     } finally {
       store.close();

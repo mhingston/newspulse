@@ -798,16 +798,16 @@ export class GithubSearchProvider implements SearchProvider {
       throw new Error("Invalid GitHub search query");
     if (!Number.isInteger(input.limit) || input.limit < 1 || input.limit > 250)
       throw new Error("Invalid GitHub search result limit");
-    const perPage = Math.min(input.limit, 100);
-    // Cursors carry the absolute result offset, so a changed per-page
-    // reservation (the discovery budget can shrink between pages) still
-    // resumes at the right result instead of shifting the API page.
+    // GitHub's maximum API page size is stable across a run's pages; the
+    // caller's reservation only decides how many of those rows to return.
+    // Keeping per_page fixed means a shrinking reservation never shifts the
+    // API page boundary or wastes a result slot.
+    const perPage = 100;
     let offset = 0;
     if (input.cursor !== undefined) {
-      const match = /^(\d{1,4}):([1-9]\d{0,2})$/.exec(input.cursor);
-      if (!match || Number(match[2]) > 100)
+      if (!/^\d{1,4}$/.test(input.cursor))
         throw new Error("Invalid GitHub search cursor");
-      offset = Number(match[1]);
+      offset = Number(input.cursor);
       if (offset >= maxSearchResults)
         throw new Error("Invalid GitHub search cursor");
     }
@@ -862,20 +862,21 @@ export class GithubSearchProvider implements SearchProvider {
     const rows = (parsed as { items: unknown[] }).items;
     if (rows.length > perPage)
       throw new Error("GitHub search response exceeds result limit");
+    const end = Math.min(rows.length, skip + input.limit);
     const results: SearchResult[] = [];
-    for (const row of rows.slice(skip)) {
+    for (const row of rows.slice(skip, end)) {
       const result = this.parseRepository(row);
       if (result) results.push(result);
     }
-    const nextOffset = offset + Math.max(0, rows.length - skip);
+    const consumed = Math.max(0, end - skip);
+    const nextOffset = offset + consumed;
     const exhausted = nextOffset >= maxSearchResults;
+    // More results remain when this page was full or we stopped mid-page.
+    const hasMore = rows.length === perPage || end < rows.length;
     return {
       results,
-      truncated: rows.length === perPage,
-      nextCursor:
-        rows.length === perPage && !exhausted
-          ? `${nextOffset}:${perPage}`
-          : undefined,
+      truncated: hasMore,
+      nextCursor: hasMore && !exhausted ? String(nextOffset) : undefined,
     };
   }
 
