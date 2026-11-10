@@ -19,6 +19,7 @@ import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/
 import { Store } from "../src/db/store";
 import { createApp } from "../src/http";
 import { ProcessingWorker } from "../src/worker";
+import { scoreItem } from "../src/scoring";
 
 const day = 86400000;
 const start = Date.UTC(2026, 10, 1);
@@ -136,6 +137,74 @@ test("unrelated grouping changes do not invalidate an unchanged membership", () 
         )
         .get(id)?.status,
     ).toBe("done");
+  } finally {
+    store.close();
+  }
+});
+
+test("a relation-only evidence change requeues scores in both related groups", () => {
+  const store = new Store(":memory:");
+  try {
+    ingest(store, "https://feed-one.example/rss", [
+      candidate("rel-old", "Acme Atlas 2 robotics model launches", 0),
+    ]);
+    ingest(store, "https://feed-two.example/rss", [
+      candidate("rel-new", "Acme Atlas 2 robotics model recalled", 9),
+    ]);
+    store.stories.reconcile(start + 20 * day);
+    const groups = store.sqlite
+      .query<{ id: string }, []>(
+        "SELECT id FROM story_groups WHERE retired_at IS NULL ORDER BY id",
+      )
+      .all();
+    expect(groups).toHaveLength(2);
+    expect(
+      store.sqlite
+        .query("SELECT 1 FROM story_relations WHERE ended_at IS NULL")
+        .get(),
+    ).not.toBeNull();
+    const robotItems = store.search("robotics");
+    for (const [index, item] of robotItems.entries()) {
+      store.sqlite
+        .query(
+          "UPDATE processing_jobs SET status='done',outcome='extracted' WHERE item_id=? AND stage='extract'",
+        )
+        .run(item.id);
+      store.sqlite
+        .query(
+          "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,available_at,created_at) VALUES(?,?,'score',1,?,'scored',0,0)",
+        )
+        .run(`score-${item.id}`, item.id, index === 0 ? "pending" : "done");
+    }
+    const staleClaim = store.claimProcessing("score", start + 20 * day)!;
+    const staleSnapshot = store.scoringSnapshot(staleClaim, start + 20 * day)!;
+    store.sqlite
+      .query("UPDATE story_relations SET evidence='{}' WHERE ended_at IS NULL")
+      .run();
+    store.sqlite
+      .query("UPDATE story_grouping_state SET fingerprint='dirty' WHERE id=1")
+      .run();
+    store.stories.reconcile(start + 21 * day);
+    const states = store.sqlite
+      .query<{ status: string }, []>(
+        "SELECT status FROM processing_jobs WHERE stage='score' ORDER BY item_id",
+      )
+      .all();
+    expect(states.length).toBeGreaterThanOrEqual(2);
+    expect(states.every((row) => row.status === "pending")).toBe(true);
+    expect(
+      store.completeScore(
+        staleClaim,
+        {
+          inputHash: staleSnapshot.inputHash,
+          criteriaVersion: "deterministic-v2",
+          provenance: staleSnapshot.provenance,
+          result: scoreItem(staleSnapshot.input),
+          capturedAt: start + 20 * day,
+        },
+        start + 21 * day,
+      ),
+    ).toBe(false);
   } finally {
     store.close();
   }
@@ -353,6 +422,64 @@ test("populated pre-story schema upgrades without touching analysis, FTS, or bac
   } finally {
     store?.close();
     restored?.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("populated v39 story history gains indexed membership and digest lookups", () => {
+  const dir = mkdtempSync(join(tmpdir(), "newspulse-v39-indexes-"));
+  const path = join(dir, "prior.sqlite");
+  const priorMigrations = join(dir, "prior-migrations");
+  mkdirSync(join(priorMigrations, "meta"), { recursive: true });
+  const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
+  for (const file of readdirSync(migrations))
+    if (file.endsWith(".sql"))
+      copyFileSync(join(migrations, file), join(priorMigrations, file));
+  const journal = JSON.parse(
+    readFileSync(join(migrations, "meta", "_journal.json"), "utf8"),
+  ) as { entries: { idx: number }[] };
+  journal.entries = journal.entries.filter((entry) => entry.idx < 39);
+  writeFileSync(
+    join(priorMigrations, "meta", "_journal.json"),
+    JSON.stringify(journal),
+  );
+  const oldDb = new Database(path);
+  migrate(drizzle(oldDb), { migrationsFolder: priorMigrations });
+  oldDb.exec(
+    "INSERT INTO items(id,identity,title,ingested_at) VALUES('old','old','Prior story',1);" +
+      "INSERT INTO story_groups(id,first_seen) VALUES('group',1);" +
+      "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('group','old','{}','v1',1);",
+  );
+  oldDb.close();
+  let store: Store | undefined;
+  try {
+    store = new Store(path);
+    expect(
+      store.sqlite
+        .query("SELECT item_id FROM story_memberships WHERE group_id='group'")
+        .all(),
+    ).toEqual([{ item_id: "old" }]);
+    expect(
+      store.sqlite
+        .query(
+          "SELECT name FROM sqlite_master WHERE type='index' AND name IN ('story_members_by_item','digest_item_by_group','story_relation_by_newer') ORDER BY name",
+        )
+        .all(),
+    ).toEqual([
+      { name: "digest_item_by_group" },
+      { name: "story_members_by_item" },
+      { name: "story_relation_by_newer" },
+    ]);
+    const plan = store.sqlite
+      .query<{ detail: string }, []>(
+        "EXPLAIN QUERY PLAN SELECT item_id FROM story_memberships WHERE item_id='old'",
+      )
+      .all()
+      .map((row) => row.detail)
+      .join(" ");
+    expect(plan).toContain("story_members_by_item");
+  } finally {
+    store?.close();
     rmSync(dir, { recursive: true, force: true });
   }
 });

@@ -305,6 +305,7 @@ export const storyMemberships = sqliteTable(
     uniqueIndex("story_current_member")
       .on(t.itemId)
       .where(sql`ended_at IS NULL`),
+    index("story_members_by_item").on(t.itemId),
     index("story_members_group").on(t.groupId, t.endedAt),
   ],
 );
@@ -328,6 +329,7 @@ export const storyRelations = sqliteTable(
     uniqueIndex("story_current_relation")
       .on(t.olderGroupId, t.newerGroupId)
       .where(sql`ended_at IS NULL`),
+    index("story_relation_by_newer").on(t.newerGroupId, t.endedAt, t.id),
   ],
 );
 export const storyGroupingState = sqliteTable("story_grouping_state", {
@@ -367,6 +369,7 @@ export const digestItems = sqliteTable(
     uniqueIndex("digest_item_position").on(t.digestId, t.position),
     uniqueIndex("digest_item_identity").on(t.digestId, t.itemId),
     index("digest_item_by_item").on(t.itemId, t.digestId),
+    index("digest_item_by_group").on(t.groupId, t.digestId, t.position),
   ],
 );
 
