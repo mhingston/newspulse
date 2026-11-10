@@ -4,6 +4,7 @@ import { acquireDeliveryLock } from "./delivery-lock";
 import { DeliveryStore } from "./db/delivery-store";
 import { DeliveryWorker } from "./delivery";
 import { ResendDelivery } from "./adapters/resend-delivery";
+import { FeedbackLinkDelivery } from "./delivery-feedback";
 import { PublicationWorker } from "./publication-worker";
 import { acquireAnalysisLock } from "./analysis-lock";
 import { analysisConfig } from "./analysis-config";
@@ -68,6 +69,7 @@ const app = createApp(store, {
     inboundStore && inboundProvider
       ? inboundWebhook(inboundStore, inboundProvider)
       : undefined,
+  mcp: {},
 });
 const server = Bun.serve({
   hostname: cfg.HOST,
@@ -142,7 +144,14 @@ const scheduler = schedule(
         new DeliveryStore(store.sqlite),
         new DeliveryWorker(
           new DeliveryStore(store.sqlite),
-          new ResendDelivery(delivery.apiKey),
+          new FeedbackLinkDelivery(
+            store.sqlite,
+            new ResendDelivery(delivery.apiKey),
+            {
+              secret: delivery.feedbackSecret,
+              baseUrl: delivery.feedbackBaseUrl,
+            },
+          ),
         ),
         {
           from: delivery.sender,

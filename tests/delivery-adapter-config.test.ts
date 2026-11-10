@@ -132,6 +132,8 @@ describe("delivery configuration", () => {
       RESEND_API_KEY: "key",
       DELIVERY_FROM: "sender@example.com",
       DELIVERY_TO: "reader@example.com",
+      FEEDBACK_SECRET: "feedback-secret-at-least-32-characters",
+      FEEDBACK_BASE_URL: "https://feedback.example.com",
     };
     expect(deliveryConfig(env)).toMatchObject({
       timezone: "Europe/London",
@@ -150,5 +152,47 @@ describe("delivery configuration", () => {
     ).toThrow();
     expect(() => deliveryConfig({ ...env, DELIVERY_TIME: "24:00" })).toThrow();
     expect(() => deliveryConfig({ ...env, DELIVERY_TIME: "6:00" })).toThrow();
+  });
+
+  test("requires a dedicated feedback secret and an HTTPS base URL", () => {
+    const env = {
+      DELIVERY_ENABLED: "true",
+      RESEND_API_KEY: "key",
+      DELIVERY_FROM: "sender@example.com",
+      DELIVERY_TO: "reader@example.com",
+    };
+    // The bearer-less link secret is mandatory and long enough to resist
+    // guessing.
+    expect(() => deliveryConfig(env)).toThrow();
+    expect(() =>
+      deliveryConfig({ ...env, FEEDBACK_SECRET: "short" }),
+    ).toThrow();
+    // The base URL must be an HTTPS origin without credentials or query.
+    expect(() =>
+      deliveryConfig({
+        ...env,
+        FEEDBACK_SECRET: "feedback-secret-at-least-32-characters",
+      }),
+    ).toThrow();
+    for (const FEEDBACK_BASE_URL of [
+      "http://feedback.example.com",
+      "https://user:pass@feedback.example.com",
+      "https://feedback.example.com/?token=x",
+      "not a url",
+    ])
+      expect(() =>
+        deliveryConfig({
+          ...env,
+          FEEDBACK_SECRET: "feedback-secret-at-least-32-characters",
+          FEEDBACK_BASE_URL,
+        }),
+      ).toThrow();
+    expect(
+      deliveryConfig({
+        ...env,
+        FEEDBACK_SECRET: "feedback-secret-at-least-32-characters",
+        FEEDBACK_BASE_URL: "https://feedback.example.com/",
+      }),
+    ).toMatchObject({ feedbackBaseUrl: "https://feedback.example.com" });
   });
 });

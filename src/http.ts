@@ -1,12 +1,16 @@
 import { Hono } from "hono";
 import { timingSafeEqual } from "node:crypto";
 import type { Store } from "./db/store";
-import { handleMcp } from "./mcp";
+import { handleMcp, type McpOptions } from "./mcp";
+import { applyFeedbackLink } from "./email-feedback";
+import { ConfirmationError } from "./confirmations";
 export interface HttpConfig {
   token: string;
   allowedHosts: string[];
   allowedOrigins: string[];
   inboundWebhook?: (body: string, headers: Headers) => void;
+  /** Extra, non-MCP routes; the feedback link is the only public one. */
+  mcp?: McpOptions;
 }
 export function createApp(store: Store, config: HttpConfig) {
   const app = new Hono();
@@ -23,6 +27,13 @@ export function createApp(store: Store, config: HttpConfig) {
       new URL(c.req.url).pathname === "/webhooks/resend" &&
       config.inboundWebhook
     ) {
+      await next();
+      return;
+    }
+    // Digest feedback links are bearer-less by design: the narrowly scoped,
+    // signed token is the credential. They are the only non-webhook public
+    // routes and cannot read data or mutate sources/spend.
+    if (new URL(c.req.url).pathname.startsWith("/feedback/")) {
       await next();
       return;
     }
@@ -96,7 +107,53 @@ export function createApp(store: Store, config: HttpConfig) {
     return c.json({ ok: true });
   });
   app.get("/health", (c) => c.json({ ok: true, milestone: "M1" }));
-  app.all("/mcp", (c) => handleMcp(store, c.req.raw));
+  // GET never mutates: link scanners and prefetchers see only a confirmation
+  // page. The action is applied by the explicit POST the user submits.
+  app.get("/feedback/:token", (c) => {
+    const token = c.req.param("token");
+    if (!/^v1\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{20,128}$/.test(token))
+      return c.html(
+        feedbackPage("Invalid link", "This feedback link is not valid."),
+        400,
+      );
+    return c.html(feedbackForm(token, c.req.query("action")));
+  });
+  app.post("/feedback/:token", async (c) => {
+    const token = c.req.param("token");
+    if (!/^v1\.[A-Za-z0-9_-]{16,64}\.[A-Za-z0-9_-]{20,128}$/.test(token))
+      return c.html(
+        feedbackPage("Invalid link", "This feedback link is not valid."),
+        400,
+      );
+    let action: string;
+    try {
+      const body = await c.req.parseBody();
+      action = String(body.action ?? "");
+    } catch {
+      action = "";
+    }
+    if (action !== "useful" && action !== "not_useful")
+      return c.html(
+        feedbackPage("Invalid feedback", "Choose useful or not useful."),
+        400,
+      );
+    try {
+      applyFeedbackLink(store.sqlite, { token, action });
+    } catch (error) {
+      const message =
+        error instanceof ConfirmationError
+          ? error.message
+          : "Feedback could not be recorded.";
+      return c.html(feedbackPage("Feedback not recorded", message), 400);
+    }
+    return c.html(
+      feedbackPage(
+        "Thanks",
+        action === "useful" ? "Recorded: useful." : "Recorded: not useful.",
+      ),
+    );
+  });
+  app.all("/mcp", (c) => handleMcp(store, c.req.raw, config.mcp));
   app.onError((error, c) => {
     console.error(
       JSON.stringify({ event: "http_error", error: error.message }),
@@ -104,6 +161,31 @@ export function createApp(store: Store, config: HttpConfig) {
     return c.json({ error: "Internal server error" }, 500);
   });
   return app;
+}
+
+function escapeHtml(value: string): string {
+  return value.replace(
+    /[&<>"']/g,
+    (c) =>
+      ({
+        "&": "&amp;",
+        "<": "&lt;",
+        ">": "&gt;",
+        '"': "&quot;",
+        "'": "&#39;",
+      })[c]!,
+  );
+}
+
+/** Minimal, self-contained HTML with no external resources or scripts. */
+function feedbackPage(heading: string, message: string): string {
+  return `<!doctype html><html><head><meta charset="utf-8"><title>${escapeHtml(heading)}</title></head><body><h1>${escapeHtml(heading)}</h1><p>${escapeHtml(message)}</p></body></html>`;
+}
+
+function feedbackForm(token: string, action: string | undefined): string {
+  const chosen = action === "not_useful" ? "not_useful" : "useful";
+  const label = chosen === "useful" ? "Useful" : "Not useful";
+  return `<!doctype html><html><head><meta charset="utf-8"><title>Confirm feedback</title></head><body><h1>Confirm feedback</h1><p>Record &ldquo;${label}&rdquo; for this item? This link can only be used once.</p><form method="post" action="/feedback/${escapeHtml(token)}"><input type="hidden" name="action" value="${chosen}"><button type="submit">Record &ldquo;${label}&rdquo;</button></form></body></html>`;
 }
 
 /** Invalid signatures and payloads are distinct from storage failures. */

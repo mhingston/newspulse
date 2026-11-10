@@ -8,6 +8,18 @@ import { HackerNewsAdapter } from "./adapters/hackernews";
 import { planHnQueries } from "./hn-discovery";
 import { submissionFor, submitUrl } from "./manual";
 import {
+  confirmAddSource,
+  confirmRemoveSource,
+  confirmSubmitFeedback,
+  confirmTriggerDiscovery,
+  confirmUpdateInterest,
+  previewAddSource,
+  previewRemoveSource,
+  previewSubmitFeedback,
+  previewTriggerDiscovery,
+  previewUpdateInterest,
+} from "./mutations";
+import {
   markRestoredDiscovery,
   assertDiscoveryRestoreElapsed,
 } from "./discovery-restore-guard";
@@ -380,6 +392,119 @@ async function main() {
         console.log(JSON.stringify(submission, null, 2));
         break;
       }
+      case "add-source-preview": {
+        console.log(
+          JSON.stringify(
+            previewAddSource(store, {
+              url: required(0, "URL"),
+              title: args[1],
+              poll_seconds: args[2] ? Number(args[2]) : undefined,
+            }),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "add-source-confirm": {
+        console.log(
+          JSON.stringify(
+            confirmAddSource(store, required(0, "token")),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "remove-source-preview": {
+        console.log(
+          JSON.stringify(
+            previewRemoveSource(store, { source_id: required(0, "source ID") }),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "remove-source-confirm": {
+        console.log(
+          JSON.stringify(
+            confirmRemoveSource(store, required(0, "token")),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "interest-preview": {
+        console.log(
+          JSON.stringify(
+            previewUpdateInterest(
+              store,
+              JSON.parse(required(0, "interest JSON")),
+            ),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "interest-confirm": {
+        console.log(
+          JSON.stringify(
+            confirmUpdateInterest(store, required(0, "token")),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "feedback-preview": {
+        const action = required(1, "useful or not-useful");
+        if (action !== "useful" && action !== "not-useful")
+          throw new Error("Feedback must be useful or not-useful");
+        console.log(
+          JSON.stringify(
+            previewSubmitFeedback(store, {
+              item_id: required(0, "item ID"),
+              action: action === "useful" ? "useful" : "not_useful",
+              edition_date: args[2],
+            }),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "feedback-confirm": {
+        console.log(
+          JSON.stringify(
+            confirmSubmitFeedback(store, required(0, "token")),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "discovery-trigger-preview": {
+        console.log(
+          JSON.stringify(
+            previewTriggerDiscovery(store, { query: required(0, "query") }),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
+      case "discovery-trigger-confirm": {
+        const result = await confirmTriggerDiscovery(
+          store,
+          required(0, "token"),
+          new GdeltSearchProvider(),
+        );
+        console.log(JSON.stringify(result, null, 2));
+        break;
+      }
       case "discovery-runs":
         console.log(
           JSON.stringify(
@@ -657,7 +782,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

@@ -1081,6 +1081,10 @@ export class Store {
     this.sqlite
       .query("UPDATE manual_submissions SET item_id=? WHERE item_id=?")
       .run(winner, loser);
+    // Explicit feedback follows the surviving item so later scoring sees it.
+    this.sqlite
+      .query("UPDATE item_feedback SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
     this.sqlite
       .query("UPDATE item_url_aliases SET item_id=? WHERE item_id=?")
       .run(winner, loser);

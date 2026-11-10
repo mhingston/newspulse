@@ -168,10 +168,13 @@ export class DeliveryStore {
           subject: string;
           html: string;
           text: string;
+          digestId: string;
+          editionDate: string;
+          decisions: string;
         },
         [string, string]
       >(
-        "SELECT d.sender AS 'from',d.recipient AS 'to',g.subject,g.html,g.plain_text AS text FROM deliveries d JOIN digests g ON g.id=d.digest_id WHERE d.id=? AND d.lease_token=? AND d.status='sending' AND g.sealed=1",
+        "SELECT d.sender AS 'from',d.recipient AS 'to',g.subject,g.html,g.plain_text AS text,g.id AS digestId,g.edition_date AS editionDate,g.decisions FROM deliveries d JOIN digests g ON g.id=d.digest_id WHERE d.id=? AND d.lease_token=? AND d.status='sending' AND g.sealed=1",
       )
       .get(claim.id, claim.lease_token);
   }
