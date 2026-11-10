@@ -704,6 +704,47 @@ test("membership history lookup is indexed and bounded to 101 rows", () => {
   }
 });
 
+test("high fanout from a related group returns unknown before expanding beyond the work limit", () => {
+  const store = new Store(":memory:");
+  try {
+    store.sqlite.exec(
+      "INSERT INTO items(id,identity,title,ingested_at) VALUES('candidate','candidate','robotics',1),('older-anchor','older-anchor','robotics',1);" +
+        "INSERT INTO story_groups(id,first_seen) VALUES('newer',1),('older',1);" +
+        "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('newer','candidate','{}','v1',1),('older','older-anchor','{}','v1',1);" +
+        "INSERT INTO story_relations(older_group_id,newer_group_id,reason,evidence,rule_version,started_at) VALUES('older','newer','later_related_development','{}','v1',1);",
+    );
+    const addItem = store.sqlite.query(
+      "INSERT INTO items(id,identity,title,ingested_at) VALUES(?,?,?,1)",
+    );
+    const addMember = store.sqlite.query(
+      "INSERT INTO story_memberships(group_id,item_id,evidence,rule_version,started_at) VALUES('older',?,'{}','v1',1)",
+    );
+    store.sqlite.transaction(() => {
+      for (let index = 0; index < 1001; index++) {
+        const itemId = `older-${index}`;
+        addItem.run(itemId, itemId, "robotics");
+        addMember.run(itemId);
+      }
+    })();
+    expect(
+      relatedDeliveryHistory(
+        store.sqlite,
+        "candidate",
+        "newer",
+        "robotics update",
+        "robotics follow up",
+        2,
+        3,
+      )?.evidence,
+    ).toMatchObject({
+      state: "unknown",
+      reason: "related_member_limit",
+    });
+  } finally {
+    store.close();
+  }
+});
+
 test("grouping, scoring and curation retain cross-group history through restart and fence relation-only races", async () => {
   const directory = mkdtempSync(join(tmpdir(), "newspulse-related-e2e-"));
   const dbPath = join(directory, "state.sqlite");

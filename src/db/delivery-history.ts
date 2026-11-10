@@ -313,6 +313,145 @@ export function relatedDeliveryHistory(
         candidateItemId,
       },
     };
+  const memberExpansionCount =
+    db
+      .query<{ count: number }, [string]>(
+        `SELECT count(*) AS count FROM (
+          SELECT 1
+          FROM story_memberships candidate INDEXED BY story_members_by_item
+          JOIN story_relations relation INDEXED BY story_relation_by_newer
+            ON relation.newer_group_id=candidate.group_id
+          JOIN story_memberships older INDEXED BY story_members_group
+            ON older.group_id=relation.older_group_id AND older.ended_at IS NULL
+          WHERE candidate.item_id=? AND relation.reason='later_related_development'
+          LIMIT 1001
+        )`,
+      )
+      .get(candidateItemId)?.count ?? 0;
+  if (memberExpansionCount > 1000)
+    return {
+      input: null,
+      evidence: {
+        comparisonVersion: "related-delivery-v1",
+        state: "unknown" as const,
+        reason: "related_member_limit",
+        candidateItemId,
+      },
+    };
+  const redirectExpansionCount =
+    db
+      .query<{ count: number }, [string, string]>(
+        `SELECT count(*) AS count FROM (
+          SELECT 1
+          FROM story_memberships candidate INDEXED BY story_members_by_item
+          JOIN story_relations relation INDEXED BY story_relation_by_newer
+            ON relation.newer_group_id=candidate.group_id
+          JOIN story_memberships older INDEXED BY story_members_group
+            ON older.group_id=relation.older_group_id AND older.ended_at IS NULL
+          WHERE candidate.item_id=? AND relation.reason='later_related_development'
+          UNION ALL
+          SELECT 1
+          FROM story_memberships candidate INDEXED BY story_members_by_item
+          JOIN story_relations relation INDEXED BY story_relation_by_newer
+            ON relation.newer_group_id=candidate.group_id
+          JOIN story_memberships older INDEXED BY story_members_group
+            ON older.group_id=relation.older_group_id AND older.ended_at IS NULL
+          LEFT JOIN item_redirects own_redirect
+            ON own_redirect.old_id=older.item_id
+          JOIN item_redirects canonical_redirect INDEXED BY item_redirects_item
+            ON canonical_redirect.item_id=COALESCE(own_redirect.item_id,older.item_id)
+          WHERE candidate.item_id=? AND relation.reason='later_related_development'
+          LIMIT 1001
+        )`,
+      )
+      .get(candidateItemId, candidateItemId)?.count ?? 0;
+  if (redirectExpansionCount > 1000)
+    return {
+      input: null,
+      evidence: {
+        comparisonVersion: "related-delivery-v1",
+        state: "unknown" as const,
+        reason: "redirect_history_limit",
+        candidateItemId,
+      },
+    };
+  const snapshotExpansionCount =
+    db
+      .query<{ count: number }, [string, string]>(
+        `SELECT count(*) AS count FROM (
+          SELECT 1
+          FROM story_memberships candidate INDEXED BY story_members_by_item
+          JOIN story_relations relation INDEXED BY story_relation_by_newer
+            ON relation.newer_group_id=candidate.group_id
+          JOIN digest_items frozen INDEXED BY digest_item_by_group
+            ON frozen.group_id=relation.older_group_id
+          WHERE candidate.item_id=? AND relation.reason='later_related_development'
+          UNION ALL
+          SELECT 1
+          FROM story_memberships candidate INDEXED BY story_members_by_item
+          JOIN story_relations relation INDEXED BY story_relation_by_newer
+            ON relation.newer_group_id=candidate.group_id
+          JOIN story_memberships older INDEXED BY story_members_group
+            ON older.group_id=relation.older_group_id AND older.ended_at IS NULL
+          LEFT JOIN item_redirects own_redirect
+            ON own_redirect.old_id=older.item_id
+          JOIN digest_items frozen INDEXED BY digest_item_by_item
+            ON frozen.item_id=COALESCE(own_redirect.item_id,older.item_id)
+          WHERE candidate.item_id=? AND relation.reason='later_related_development'
+          LIMIT 1001
+        )`,
+      )
+      .get(candidateItemId, candidateItemId)?.count ?? 0;
+  if (snapshotExpansionCount > 1000)
+    return {
+      input: null,
+      evidence: {
+        comparisonVersion: "related-delivery-v1",
+        state: "unknown" as const,
+        reason: "frozen_snapshot_match_limit",
+        candidateItemId,
+      },
+    };
+  const deliveryExpansionCount =
+    db
+      .query<{ count: number }, [string, string]>(
+        `SELECT count(*) AS count FROM (
+          SELECT 1
+          FROM story_memberships candidate INDEXED BY story_members_by_item
+          JOIN story_relations relation INDEXED BY story_relation_by_newer
+            ON relation.newer_group_id=candidate.group_id
+          JOIN digest_items frozen INDEXED BY digest_item_by_group
+            ON frozen.group_id=relation.older_group_id
+          JOIN deliveries delivery ON delivery.digest_id=frozen.digest_id
+          WHERE candidate.item_id=? AND relation.reason='later_related_development'
+            AND (delivery.status IN ('sent','ambiguous') OR (delivery.status='sending' AND delivery.first_attempt_at IS NOT NULL))
+          UNION ALL
+          SELECT 1
+          FROM story_memberships candidate INDEXED BY story_members_by_item
+          JOIN story_relations relation INDEXED BY story_relation_by_newer
+            ON relation.newer_group_id=candidate.group_id
+          JOIN story_memberships older INDEXED BY story_members_group
+            ON older.group_id=relation.older_group_id AND older.ended_at IS NULL
+          LEFT JOIN item_redirects own_redirect ON own_redirect.old_id=older.item_id
+          JOIN digest_items frozen INDEXED BY digest_item_by_item
+            ON frozen.item_id=COALESCE(own_redirect.item_id,older.item_id)
+          JOIN deliveries delivery ON delivery.digest_id=frozen.digest_id
+          WHERE candidate.item_id=? AND relation.reason='later_related_development'
+            AND (delivery.status IN ('sent','ambiguous') OR (delivery.status='sending' AND delivery.first_attempt_at IS NOT NULL))
+          LIMIT 1001
+        )`,
+      )
+      .get(candidateItemId, candidateItemId)?.count ?? 0;
+  if (deliveryExpansionCount > 1000)
+    return {
+      input: null,
+      evidence: {
+        comparisonVersion: "related-delivery-v1",
+        state: "unknown" as const,
+        reason: "delivery_history_limit",
+        candidateItemId,
+      },
+    };
   const rows = db
     .query<
       {
