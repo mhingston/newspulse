@@ -9,6 +9,8 @@ import { acquireDiscoveryLock } from "./discovery-lock";
 import {
   previewDiscoveryReconciliation,
   confirmDiscoveryReconciliation,
+  previewInterruptedDiscoveryRun,
+  confirmInterruptedDiscoveryRun,
 } from "./discovery-reconcile";
 import {
   markRestoredDelivery,
@@ -137,12 +139,34 @@ async function main() {
     "discover",
     "discovery-reconcile-preview",
     "discovery-reconcile",
+    "discovery-run-reconcile-preview",
+    "discovery-run-reconcile",
   ].includes(command ?? "")
     ? acquireDiscoveryLock(path)
     : null;
   const store = new Store(path);
   try {
     switch (command) {
+      case "discovery-run-reconcile-preview":
+        console.log(
+          JSON.stringify(
+            previewInterruptedDiscoveryRun(store.sqlite, required(0, "run ID")),
+            null,
+            2,
+          ),
+        );
+        break;
+      case "discovery-run-reconcile":
+        confirmInterruptedDiscoveryRun(
+          store.sqlite,
+          required(0, "run ID"),
+          Number(required(1, "preview asOf")),
+          required(2, "preview hash"),
+        );
+        console.log(
+          "Discovery run marked interrupted; reservations remain charged",
+        );
+        break;
       case "discovery-reconcile-preview":
         console.log(
           JSON.stringify(
@@ -440,7 +464,7 @@ async function main() {
         break;
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
