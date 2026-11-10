@@ -21,9 +21,13 @@ import { createApp } from "./http";
 import { ResendInbound } from "./adapters/resend-inbound";
 import { InboundStore } from "./db/inbound";
 import { InboundWorker, inboundWebhook } from "./inbound-worker";
+import { scheduledDiscoveryConfig } from "./scheduled-discovery-config";
+import { acquireDiscoveryLock } from "./discovery-lock";
+import { createScheduledDiscoveryTick } from "./scheduled-discovery";
 const cfg = config();
 const analysis = analysisConfig();
 const delivery = deliveryConfig();
+const scheduledDiscovery = scheduledDiscoveryConfig();
 // The OS releases this lock only when the process exits, including after a crash.
 // Keep it for the process lifetime even if a timed-out provider ignores abort.
 if (analysis) acquireAnalysisLock(cfg.DB_PATH);
@@ -31,6 +35,9 @@ if (analysis) acquireAnalysisLock(cfg.DB_PATH);
 if (delivery) {
   acquireDeliveryLock(cfg.DB_PATH);
   assertDeliveryRestoreAcknowledged(cfg.DB_PATH);
+}
+if (scheduledDiscovery) {
+  acquireDiscoveryLock(cfg.DB_PATH);
 }
 const store = new Store(cfg.DB_PATH);
 const inboundStore =
@@ -120,6 +127,15 @@ const scheduler = schedule(
           minute: delivery.minute,
         },
       )
+    : undefined,
+  scheduledDiscovery
+    ? {
+        tick: createScheduledDiscoveryTick(
+          cfg.DB_PATH,
+          store,
+          scheduledDiscovery,
+        ),
+      }
     : undefined,
 );
 log("started", { host: cfg.HOST, port: cfg.PORT });

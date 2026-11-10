@@ -45,12 +45,33 @@ export class DiscoveryStore {
     provider: string;
     providerVersion: string;
     now: number;
+    queryKind?: "manual" | "interest" | "adjacent";
+    scheduleKey?: string;
+    interestLineage?: Array<{ id: string; version: number }>;
   }) {
     boundedText(input.id, 128);
     boundedText(input.query, 1000);
     boundedText(input.provider, 128);
     boundedText(input.providerVersion, 128);
     natural(input.now);
+    if (
+      input.queryKind !== undefined &&
+      !["manual", "interest", "adjacent"].includes(input.queryKind)
+    )
+      throw new Error("Invalid discovery query kind");
+    if (input.scheduleKey !== undefined) boundedText(input.scheduleKey, 500);
+    const lineage = input.interestLineage ?? [];
+    if (
+      lineage.length > 1000 ||
+      lineage.some(
+        (entry) =>
+          !/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,79}$/.test(entry.id) ||
+          !Number.isSafeInteger(entry.version) ||
+          entry.version < 1,
+      )
+    )
+      throw new Error("Invalid discovery interest lineage");
+    const lineageJson = json(lineage, 65536);
     this.db
       .transaction(() => {
         const sources = this.db
@@ -71,7 +92,7 @@ export class DiscoveryStore {
         );
         this.db
           .query(
-            "INSERT INTO discovery_runs(id,query,provider,provider_version,subscription_snapshot,status,started_at) VALUES(?,?,?,?,?,'running',?)",
+            "INSERT INTO discovery_runs(id,query,provider,provider_version,subscription_snapshot,status,started_at,query_kind,schedule_key,interest_lineage) VALUES(?,?,?,?,?,'running',?,?,?,?)",
           )
           .run(
             input.id,
@@ -80,6 +101,9 @@ export class DiscoveryStore {
             input.providerVersion,
             snapshot,
             input.now,
+            input.queryKind ?? "manual",
+            input.scheduleKey ?? null,
+            lineageJson,
           );
       })
       .immediate();
