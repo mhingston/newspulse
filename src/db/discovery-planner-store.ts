@@ -61,18 +61,29 @@ export class DiscoveryPlannerStore {
   ): Array<PlannedQuery & { nextDueAt: number; utility: number }> {
     return this.db
       .query(
-        `SELECT s.query_key,s.query,s.kind,s.interest_id,s.interest_version,s.priority,s.negative_terms,s.interest_lineage,s.next_due_at,
+        `WITH latest_item_feedback AS (
+        SELECT r.item_id, f.useful
+        FROM discovery_result_feedback f
+        JOIN discovery_results r ON r.id=f.result_id
+        WHERE f.id=(SELECT max(last.id) FROM discovery_result_feedback last JOIN discovery_results lr ON lr.id=last.result_id WHERE lr.item_id=r.item_id)
+      ), item_query_feedback AS (
+        SELECT DISTINCT run.schedule_key,r.item_id,latest.useful
+        FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id
+        JOIN discovery_results r ON r.page_id=p.id
+        JOIN latest_item_feedback latest ON latest.item_id=r.item_id
+      )
+      SELECT s.query_key,s.query,s.kind,s.interest_id,s.interest_version,s.priority,s.negative_terms,s.interest_lineage,s.next_due_at,
       coalesce(sum(CASE WHEN f.useful=1 THEN 1 ELSE 0 END),0) AS useful,
       coalesce(sum(CASE WHEN f.useful=0 THEN 1 ELSE 0 END),0) AS not_useful,
-      (SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback f ON f.result_id=r.id WHERE run.schedule_key=s.query_key AND f.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND f.useful=1) AS useful_items,
-      (SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback f ON f.result_id=r.id WHERE run.schedule_key=s.query_key AND f.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND f.useful=0) AS not_useful_items
+      (SELECT count(*) FROM item_query_feedback f WHERE f.schedule_key=s.query_key AND f.useful=1) AS useful_items,
+      (SELECT count(*) FROM item_query_feedback f WHERE f.schedule_key=s.query_key AND f.useful=0) AS not_useful_items
       FROM discovery_query_state s LEFT JOIN discovery_query_feedback f ON f.query_key=s.query_key
       WHERE s.enabled=1 AND s.next_due_at<=? GROUP BY s.query_key
       ORDER BY (s.priority
         +50*coalesce(sum(CASE WHEN f.useful=1 THEN 1 ELSE 0 END),0)
         -40*coalesce(sum(CASE WHEN f.useful=0 THEN 1 ELSE 0 END),0)
-        +50*(SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback rf ON rf.result_id=r.id WHERE run.schedule_key=s.query_key AND rf.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND rf.useful=1)
-        -40*(SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback rf ON rf.result_id=r.id WHERE run.schedule_key=s.query_key AND rf.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND rf.useful=0)) DESC,s.kind,s.query_key LIMIT ?`,
+        +50*(SELECT count(*) FROM item_query_feedback f WHERE f.schedule_key=s.query_key AND f.useful=1)
+        -40*(SELECT count(*) FROM item_query_feedback f WHERE f.schedule_key=s.query_key AND f.useful=0)) DESC,s.kind,s.query_key LIMIT ?`,
       )
       .all(now, limit)
       .map((r: any) => ({
@@ -194,11 +205,22 @@ export class DiscoveryPlannerStore {
   history(): unknown[] {
     return this.db
       .query(
-        `SELECT s.query_key,s.query,s.kind,s.interest_id,s.interest_version,s.interest_lineage,s.priority,s.enabled,s.next_due_at,s.last_run_at,s.last_run_id,
+        `WITH latest_item_feedback AS (
+        SELECT r.item_id, f.useful
+        FROM discovery_result_feedback f
+        JOIN discovery_results r ON r.id=f.result_id
+        WHERE f.id=(SELECT max(last.id) FROM discovery_result_feedback last JOIN discovery_results lr ON lr.id=last.result_id WHERE lr.item_id=r.item_id)
+      ), item_query_feedback AS (
+        SELECT DISTINCT run.schedule_key,r.item_id,latest.useful
+        FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id
+        JOIN discovery_results r ON r.page_id=p.id
+        JOIN latest_item_feedback latest ON latest.item_id=r.item_id
+      )
+      SELECT s.query_key,s.query,s.kind,s.interest_id,s.interest_version,s.interest_lineage,s.priority,s.enabled,s.next_due_at,s.last_run_at,s.last_run_id,
       coalesce(sum(CASE WHEN f.useful=1 THEN 1 ELSE 0 END),0) AS useful_feedback,
       coalesce(sum(CASE WHEN f.useful=0 THEN 1 ELSE 0 END),0) AS not_useful_feedback,
-      (SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback rf ON rf.result_id=r.id WHERE run.schedule_key=s.query_key AND rf.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND rf.useful=1) AS useful_discoveries,
-      (SELECT count(DISTINCT r.item_id) FROM discovery_runs run JOIN discovery_pages p ON p.run_id=run.id JOIN discovery_results r ON r.page_id=p.id JOIN discovery_result_feedback rf ON rf.result_id=r.id WHERE run.schedule_key=s.query_key AND rf.id=(SELECT max(last.id) FROM discovery_result_feedback last WHERE last.result_id=r.id) AND rf.useful=0) AS not_useful_discoveries,
+      (SELECT count(*) FROM item_query_feedback f WHERE f.schedule_key=s.query_key AND f.useful=1) AS useful_discoveries,
+      (SELECT count(*) FROM item_query_feedback f WHERE f.schedule_key=s.query_key AND f.useful=0) AS not_useful_discoveries,
       (SELECT count(*) FROM discovery_results r JOIN discovery_pages p ON p.id=r.page_id WHERE p.run_id=s.last_run_id) AS latest_result_count,
       (SELECT status FROM discovery_runs WHERE id=s.last_run_id) AS latest_run_status
       FROM discovery_query_state s LEFT JOIN discovery_query_feedback f ON f.query_key=s.query_key

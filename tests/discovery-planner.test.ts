@@ -201,6 +201,94 @@ describe("discovery planning", () => {
     }
   });
 
+  test("latest item feedback replaces older votes across repeated result rows and queries", async () => {
+    const store = new Store(":memory:");
+    try {
+      const planner = new DiscoveryPlannerStore(store.sqlite);
+      const queries = planDiscoveryQueries([
+        interest({ queries: ["robotics research", "robotics lab"] }),
+      ]);
+      planner.sync(queries, 1000, 86_400_000);
+      const provider: SearchProvider = {
+        name: "fixture",
+        version: "1",
+        async search() {
+          return {
+            results: [
+              { url: "https://repeated.example/item", title: "Repeated" },
+            ],
+            truncated: false,
+          };
+        },
+      };
+      const config = {
+        maxQueriesPerDay: 10,
+        maxQueriesPerRun: 1,
+        maxResultsPerDay: 10,
+        maxResultsPerRun: 1,
+        maxCostMicrosPerDay: 10,
+        maxCostMicrosPerRun: 1,
+        reservedCostMicrosPerQuery: 1,
+      };
+      for (const [index, query] of queries.entries()) {
+        await runDiscovery(
+          store,
+          provider,
+          query.query,
+          config,
+          () => 1001 + index,
+          {
+            queryKind: "interest",
+            scheduleKey: query.key,
+            interestLineage: query.interestLineage,
+          },
+        );
+      }
+      const item = store.sqlite
+        .query<{ item_id: string }, []>(
+          "SELECT item_id FROM discovery_results LIMIT 1",
+        )
+        .get()!.item_id;
+      planner.feedbackForLatestItemResult(item, true, 1004);
+      expect(
+        planner
+          .history()
+          .map((row: any) => [
+            row.query,
+            row.useful_discoveries,
+            row.not_useful_discoveries,
+          ]),
+      ).toEqual([
+        ["robotics lab", 1, 0],
+        ["robotics research", 1, 0],
+      ]);
+      planner.feedbackForLatestItemResult(item, false, 1005);
+      expect(
+        planner
+          .due(1006, 10)
+          .map((row) => [row.query, row.utility])
+          .sort(([a], [b]) => String(a).localeCompare(String(b))),
+      ).toEqual([
+        ["robotics lab", -40],
+        ["robotics research", -40],
+      ]);
+      expect(
+        planner
+          .history()
+          .map((row: any) => [
+            row.query,
+            row.useful_discoveries,
+            row.not_useful_discoveries,
+          ]),
+      ).toEqual([
+        ["robotics lab", 0, 1],
+        ["robotics research", 0, 1],
+      ]);
+    } finally {
+      store.close();
+    }
+  });
+
   test("schedule deadlines survive restart and catch up only when due", () => {
     const dir = mkdtempSync(join(tmpdir(), "newspulse-query-schedule-"));
     const path = join(dir, "db.sqlite");
