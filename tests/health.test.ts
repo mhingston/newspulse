@@ -85,6 +85,141 @@ describe("healthReport", () => {
     }
   });
 
+  test("disabled sources do not keep readiness false after failures", () => {
+    const store = new Store(":memory:");
+    try {
+      const source = store.addSource("https://example.com/old.xml", "Old feed");
+      store.sqlite
+        .query(
+          "UPDATE sources SET failures=3,last_error='HTTP 503',enabled=0 WHERE id=?",
+        )
+        .run(source.id);
+      const report = healthReport(store.sqlite, 1000);
+      expect(report.failing_sources).toEqual([]);
+      expect(report.warnings).not.toContain("failing_sources");
+      expect(report.ready).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("failing source titles never expose feed tokens", () => {
+    const store = new Store(":memory:");
+    try {
+      const secretUrl = "https://example.com/feed.xml?token=supersecret123";
+      const source = store.addSource(secretUrl);
+      store.sqlite
+        .query("UPDATE sources SET failures=3,last_error=? WHERE id=?")
+        .run(`fetch ${secretUrl} failed`, source.id);
+      const report = healthReport(store.sqlite, 1000);
+      const serialized = JSON.stringify(report.failing_sources);
+      expect(serialized).not.toContain("supersecret123");
+      expect(report.failing_sources[0]!.title).toBe(
+        "https://example.com/feed.xml",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  test("queue age uses queue entry time, not the retry deadline", () => {
+    const store = new Store(":memory:");
+    try {
+      store.sqlite
+        .query(
+          "INSERT INTO items(id,identity,title,ingested_at) VALUES('q1','qid1','t',1)",
+        )
+        .run();
+      const queuedAt = 0;
+      store.sqlite
+        .query(
+          "INSERT INTO processing_jobs(id,stage,item_id,generation,status,attempts,available_at,queued_at,created_at) VALUES('j1','extract','q1',1,'pending',3,?,?,0)",
+        )
+        .run(10 * 60 * 60_000 - 5_000, queuedAt);
+      const extract = healthReport(store.sqlite, 10 * 60 * 60_000).queue.find(
+        (q) => q.stage === "extract",
+      )!;
+      expect(extract.oldest_age_ms).toBe(10 * 60 * 60_000);
+      expect(healthReport(store.sqlite, 10 * 60 * 60_000).warnings).toContain(
+        "queue_age",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  test("an idle analysis queue is not a readiness warning when analysis is disabled", () => {
+    const store = new Store(":memory:");
+    try {
+      store.sqlite
+        .query(
+          "INSERT INTO items(id,identity,title,ingested_at) VALUES('a1','aid1','t',1)",
+        )
+        .run();
+      store.sqlite
+        .query(
+          "INSERT INTO processing_jobs(id,stage,item_id,generation,status,attempts,available_at,queued_at,created_at) VALUES('ja','analyse','a1',1,'pending',0,0,0,0)",
+        )
+        .run();
+      const hour = 60 * 60_000 + 1;
+      expect(
+        healthReport(store.sqlite, hour, {
+          enabledStages: ["extract", "score", "group"],
+        }).warnings,
+      ).not.toContain("queue_age");
+      const enabled = healthReport(store.sqlite, hour, {
+        enabledStages: ["analyse"],
+      });
+      expect(enabled.warnings).toContain("queue_age");
+      // Idle stages stay visible in the queue counts.
+      expect(
+        healthReport(store.sqlite, hour, {
+          enabledStages: ["extract"],
+        }).queue.map((q) => q.stage),
+      ).toContain("analyse");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("reused analysis rows do not double count known cost", () => {
+    const store = new Store(":memory:");
+    try {
+      store.sqlite
+        .query(
+          "INSERT INTO items(id,identity,title,ingested_at) VALUES('r1','rid1','t',1)",
+        )
+        .run();
+      const insert = (id: string, generation: number, createdAt: number) =>
+        store.sqlite
+          .query(
+            "INSERT INTO analyses(id,item_id,generation,input_hash,provider,model,prompt_version,profiles,result,usage,cost,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+          )
+          .run(
+            id,
+            "r1",
+            generation,
+            "same",
+            "p",
+            "m",
+            "v",
+            "{}",
+            "{}",
+            null,
+            70,
+            createdAt,
+          );
+      insert("c1", 1, 1);
+      // Identical reanalysis in a new generation copies the earlier billed cost without another request.
+      insert("c2", 2, 2);
+      const cost = healthReport(store.sqlite, 1000).analysis_cost;
+      expect(cost.analyses).toBe(2);
+      expect(cost.known_cost_micros).toBe(70);
+    } finally {
+      store.close();
+    }
+  });
+
   test("counts ambiguous deliveries as a warning", () => {
     const store = new Store(":memory:");
     try {

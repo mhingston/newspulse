@@ -1,4 +1,5 @@
 import { discoveryConfig } from "./discovery-config";
+import { enabledProcessingStages } from "./analysis-config";
 import { runDiscovery } from "./discovery-service";
 import { GdeltSearchProvider } from "./adapters/gdelt";
 import { GithubSearchProvider } from "./adapters/github";
@@ -776,7 +777,13 @@ async function main() {
         );
         break;
       case "status":
-        console.log(JSON.stringify(store.status(), null, 2));
+        console.log(
+          JSON.stringify(
+            store.status({ enabledStages: enabledProcessingStages() }),
+            null,
+            2,
+          ),
+        );
         break;
       case "backup":
         store.backup(required(0, "destination (must not exist)"));

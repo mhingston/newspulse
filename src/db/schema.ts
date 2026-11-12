@@ -176,6 +176,9 @@ export const processingJobs = sqliteTable(
     status: text().notNull().default("pending"),
     attempts: integer().notNull().default(0),
     availableAt: integer("available_at").notNull(),
+    // When the job entered its current queue position. Retry backoff moves
+    // available_at only, so queue age is not reset by failures.
+    queuedAt: integer("queued_at"),
     leaseUntil: integer("lease_until"),
     leaseToken: text("lease_token"),
     lastError: text("last_error"),
