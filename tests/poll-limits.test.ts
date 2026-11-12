@@ -135,8 +135,11 @@ describe("poll concurrency and per-host fairness", () => {
       store.addSource("https://busy.example/running.xml", "running", 60);
       for (let i = 0; i < 600; i++)
         store.addSource(`https://busy.example/feed${i}.xml`, `busy${i}`, 60);
+      // Busy backlog is enqueued first with earlier timestamps, so it sits
+      // ahead of the healthy feed in claim order.
+      store.enqueueDue(1, true);
       store.addSource("https://healthy.example/feed.xml", "healthy", 60);
-      store.enqueueDue(0, true);
+      store.enqueueDue(2, true);
       // Earliest due jobs all belong to the busy host, which is at its ceiling.
       const running = store.claim(1000, { hostLimit: 1, hostOf: hostOfSource });
       expect(new URL(store.source(running!.source_id)!.url).hostname).toBe(
