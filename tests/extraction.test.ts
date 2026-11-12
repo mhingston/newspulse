@@ -246,13 +246,40 @@ test("a timed-out resolver cannot accumulate further DNS work", async () => {
   const first = extractor.extract("https://first.example", controller.signal);
   controller.abort();
   await first;
-  const second = await extractor.extract("https://first.example");
-  expect(second.retryable).toBe(true);
+  // A caller arriving while the lookup is still pending shares it rather than
+  // starting new DNS work; once it settles the host resolves normally.
+  const second = extractor.extract("https://first.example");
+  release(["93.184.216.34"]);
+  expect((await second).text).toBe("healthy");
   expect((await extractor.extract("https://second.example")).text).toBe(
     "healthy",
   );
   expect(calls).toBe(2);
+});
+
+test("concurrent extractions for one host share a single DNS lookup", async () => {
+  let calls = 0;
+  let release!: (addresses: string[]) => void;
+  const pending = new Promise<string[]>((resolve) => {
+    release = resolve;
+  });
+  const extractor = new HttpContentExtractor(
+    () => {
+      calls++;
+      return pending;
+    },
+    async () => ({
+      status: 200,
+      headers: { "content-type": "text/plain" },
+      body: "shared",
+    }),
+  );
+  const first = extractor.extract("https://same.example/a");
+  const second = extractor.extract("https://same.example/b");
   release(["93.184.216.34"]);
+  expect((await first).text).toBe("shared");
+  expect((await second).text).toBe("shared");
+  expect(calls).toBe(1);
 });
 
 test("transport connects to the validated address while retaining the original host", async () => {

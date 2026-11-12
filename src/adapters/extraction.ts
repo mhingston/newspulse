@@ -149,7 +149,9 @@ function decodeBody(
 }
 class RetryableExtractionError extends Error {}
 export class HttpContentExtractor implements ContentExtractor {
-  private resolving = new Set<string>();
+  // One in-flight lookup per hostname, shared by concurrent callers. A second
+  // caller for the same host awaits the same result instead of failing.
+  private resolving = new Map<string, Promise<string[]>>();
   constructor(
     private resolver: Resolver = resolve,
     private transport: Transport = pinnedTransport,
@@ -169,18 +171,21 @@ export class HttpContentExtractor implements ContentExtractor {
         let addresses: string[];
         if (isIP(host)) addresses = [host];
         else {
-          if (this.resolving.size >= 4 || this.resolving.has(host))
-            throw new RetryableExtractionError("DNS resolver busy");
-          this.resolving.add(host);
-          const pending = Promise.resolve().then(() => this.resolver(host));
-          void pending.then(
-            () => {
-              this.resolving.delete(host);
-            },
-            () => {
-              this.resolving.delete(host);
-            },
-          );
+          let pending = this.resolving.get(host);
+          if (!pending) {
+            if (this.resolving.size >= 4)
+              throw new RetryableExtractionError("DNS resolver busy");
+            pending = Promise.resolve().then(() => this.resolver(host));
+            this.resolving.set(host, pending);
+            void pending.then(
+              () => {
+                this.resolving.delete(host);
+              },
+              () => {
+                this.resolving.delete(host);
+              },
+            );
+          }
           try {
             addresses = await abortable(pending, deadline);
           } catch (error) {

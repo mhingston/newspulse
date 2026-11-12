@@ -284,10 +284,15 @@ export class ProcessingWorker {
         if (!job) break;
         count++;
         this.running.set(stage, slots() + 1);
-        const handlerDone = this.invoke(handler, job).finally(() => {
+        const controller = new AbortController();
+        const handlerDone = this.invoke(
+          handler,
+          job,
+          controller.signal,
+        ).finally(() => {
           this.running.set(stage, slots() - 1);
         });
-        const jobDone = this.finish(job, handlerDone);
+        const jobDone = this.finish(job, handlerDone, controller);
         jobs.add(jobDone);
         void jobDone.finally(() => jobs.delete(jobDone));
       }
@@ -302,29 +307,28 @@ export class ProcessingWorker {
   private invoke(
     handler: ProcessingHandler,
     job: import("./db/store").ProcessingJob,
+    signal: AbortSignal,
   ): Promise<HandlerResult> {
-    const controller = new AbortController();
-    this.aborters.set(job.id, controller);
     return Promise.resolve()
-      .then(() => handler(job, controller.signal))
+      .then(() => handler(job, signal))
       .then(
         (output): HandlerResult => ({ ok: true, output }),
         (error: unknown): HandlerResult => ({
           ok: false,
           error: error instanceof Error ? error.message : String(error),
         }),
-      )
-      .finally(() => this.aborters.delete(job.id));
+      );
   }
   /** Completes or fails the job exactly once; a timeout fails it without releasing the slot. */
   private async finish(
     job: import("./db/store").ProcessingJob,
     handlerDone: Promise<HandlerResult>,
+    controller: AbortController,
   ): Promise<void> {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const timedOut = new Promise<HandlerResult>((resolve) => {
       timer = setTimeout(() => {
-        this.aborters.get(job.id)?.abort();
+        controller.abort();
         resolve({ ok: false, error: "Stage timed out" });
       }, this.timeoutMs);
     });
@@ -354,5 +358,4 @@ export class ProcessingWorker {
       );
     }
   }
-  private aborters = new Map<string, AbortController>();
 }

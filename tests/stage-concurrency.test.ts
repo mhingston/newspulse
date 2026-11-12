@@ -134,6 +134,40 @@ describe("processing stage concurrency", () => {
     }
   });
 
+  test("a retry in a spare slot does not replace the stuck handler's abort signal", async () => {
+    const store = new Store(":memory:");
+    try {
+      seedItems(store, 2);
+      const signals: AbortSignal[] = [];
+      const hold = gate();
+      const worker = new ProcessingWorker(
+        store,
+        {
+          extract: async (_job, signal) => {
+            signals.push(signal);
+            // First invocation ignores abort and stays stuck; the second
+            // completes, so the stuck handler is the only one still running.
+            if (signals.length === 1) await hold.promise;
+            return { status: "extracted" };
+          },
+        },
+        20,
+        { extract: 2 },
+      );
+      const draining = worker.drain("extract", 2);
+      await new Promise((r) => setTimeout(r, 80));
+      // The stuck invocation timed out and was aborted; its own signal must
+      // be the one aborted, not a replacement from a later attempt.
+      expect(signals[0]!.aborted).toBe(true);
+      expect(signals.length).toBeGreaterThanOrEqual(2);
+      expect(signals[1]!.aborted).toBe(false);
+      hold.open();
+      await draining;
+    } finally {
+      store.close();
+    }
+  });
+
   test("rejects invalid stage concurrency", () => {
     const store = new Store(":memory:");
     try {
