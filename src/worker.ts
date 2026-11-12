@@ -1,4 +1,5 @@
 import type { PollResult, PollState, SourceAdapter } from "./domain";
+import type { Job } from "./db/store";
 import { HttpError } from "./adapters/rss";
 import { Store } from "./db/store";
 import { normalizeNewsletter } from "./adapters/newsletter";
@@ -8,53 +9,98 @@ export function log(event: string, details: Record<string, unknown> = {}) {
     JSON.stringify({ at: new Date().toISOString(), event, ...details }),
   );
 }
+export interface PollLimits {
+  /** Polls running at once across all sources. */
+  concurrency: number;
+  /** Polls running at once against one host, so a slow host cannot take every slot. */
+  perHost: number;
+}
+
+export function hostOfSource(url: string): string {
+  try {
+    return new URL(url).hostname.toLowerCase();
+  } catch {
+    return url;
+  }
+}
+
 export class Worker {
   constructor(
     private store: Store,
     private adapter: SourceAdapter,
-  ) {}
+    private limits: PollLimits = { concurrency: 1, perHost: 1 },
+  ) {
+    if (
+      !Number.isSafeInteger(limits.concurrency) ||
+      limits.concurrency < 1 ||
+      !Number.isSafeInteger(limits.perHost) ||
+      limits.perHost < 1
+    )
+      throw new Error("Invalid poll limits");
+  }
   async drain(
     limit = 20,
     shouldStop: () => boolean = () => false,
   ): Promise<number> {
     let processed = 0;
-    while (processed < limit && !shouldStop()) {
-      const job = this.store.claim();
-      if (!job) break;
-      processed++;
-      try {
-        const source = this.store.source(job.source_id);
-        if (!source) throw new Error("Source no longer exists");
-        const start = Date.now();
-        const result = await this.adapter.poll(
-          source.url,
-          this.store.state(source.id),
-          { maxEntries: source.max_entries, maxBytes: source.max_bytes },
-        );
-        const committed = this.store.complete(job, result);
-        log("poll_completed", {
-          source_id: source.id,
-          items: result.items.length,
-          committed,
-          duration_ms: Date.now() - start,
-        });
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        this.store.fail(
-          job,
-          message,
-          error instanceof HttpError ? error.retryAfterMs : 0,
-        );
-        log("poll_failed", {
-          source_id: job.source_id,
-          error: message,
-          attempt: job.attempts,
-        });
+    const active = new Set<Promise<void>>();
+    const claimNext = () =>
+      this.store.claim(Date.now(), {
+        hostLimit: this.limits.perHost,
+        hostOf: hostOfSource,
+      });
+    // Claims are serialized by the store transaction; polls themselves overlap.
+    while (!shouldStop()) {
+      while (
+        active.size < this.limits.concurrency &&
+        processed < limit &&
+        !shouldStop()
+      ) {
+        const job = claimNext();
+        if (!job) break;
+        processed++;
+        const run = this.runJob(job).finally(() => active.delete(run));
+        active.add(run);
       }
+      if (active.size === 0) break;
+      await Promise.race(active);
     }
+    await Promise.all(active);
     return processed;
   }
+  private async runJob(job: Job): Promise<void> {
+    try {
+      const source = this.store.source(job.source_id);
+      if (!source) throw new Error("Source no longer exists");
+      const start = Date.now();
+      const result = await this.adapter.poll(
+        source.url,
+        this.store.state(source.id),
+        { maxEntries: source.max_entries, maxBytes: source.max_bytes },
+      );
+      const committed = this.store.complete(job, result);
+      log("poll_completed", {
+        source_id: source.id,
+        items: result.items.length,
+        committed,
+        duration_ms: Date.now() - start,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.store.fail(
+        job,
+        message,
+        error instanceof HttpError ? error.retryAfterMs : 0,
+      );
+      log("poll_failed", {
+        source_id: job.source_id,
+        error: message,
+        attempt: job.attempts,
+      });
+    }
+  }
 }
+
 export interface SourceRoute {
   matches: (url: string) => boolean;
   adapter: SourceAdapter;

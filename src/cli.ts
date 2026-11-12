@@ -1,4 +1,5 @@
 import { discoveryConfig } from "./discovery-config";
+import { pollConfig } from "./poll-config";
 import { enabledProcessingStages } from "./analysis-config";
 import { runDiscovery } from "./discovery-service";
 import { GdeltSearchProvider } from "./adapters/gdelt";
@@ -746,6 +747,7 @@ async function main() {
         );
         break;
       case "poll": {
+        const pollLimits = pollConfig();
         store.enqueueDue(Date.now(), args.includes("--force"));
         console.log(
           JSON.stringify({
@@ -766,6 +768,10 @@ async function main() {
                 ],
                 new RssAdapter(),
               ),
+              {
+                concurrency: pollLimits.concurrency,
+                perHost: pollLimits.perHost,
+              },
             ).drain(100),
           }),
         );
