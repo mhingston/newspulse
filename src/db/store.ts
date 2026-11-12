@@ -228,13 +228,19 @@ export class Store {
     }
     return "rss";
   }
-  sources(): Source[] {
+  sources(page?: { limit: number; offset: number }): Source[] {
+    // Manual intake bookkeeping is not a polled subscription.
+    if (!page)
+      return this.sqlite
+        .query<Source, []>(
+          "SELECT * FROM sources WHERE removed=0 AND kind<>'manual' ORDER BY title,id",
+        )
+        .all();
     return this.sqlite
-      .query<Source, []>(
-        // Manual intake bookkeeping is not a polled subscription.
-        "SELECT * FROM sources WHERE removed=0 AND kind<>'manual' ORDER BY title,id",
+      .query<Source, [number, number]>(
+        "SELECT * FROM sources WHERE removed=0 AND kind<>'manual' ORDER BY title,id LIMIT ? OFFSET ?",
       )
-      .all();
+      .all(page.limit, page.offset);
   }
   updateSource(
     id: string,
@@ -1558,6 +1564,11 @@ export class Store {
     sourceId?: string,
     since?: number,
     offset = 0,
+    filters: {
+      until?: number;
+      contentKind?: string;
+      analysisStatus?: string;
+    } = {},
   ): Item[] {
     const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
     if (!terms.length) return [];
@@ -1574,6 +1585,12 @@ export class Store {
           string | null,
           number | null,
           number | null,
+          number | null,
+          number | null,
+          string | null,
+          string | null,
+          string | null,
+          string | null,
           number,
           number,
         ]
@@ -1583,7 +1600,11 @@ export class Store {
       coalesce((SELECT CASE WHEN j.status='done' AND j.outcome='unavailable' THEN 'unavailable' WHEN j.status='done' THEN 'analysed' WHEN j.status='pending' AND j.attempts>0 THEN 'retryable' ELSE j.status END FROM processing_jobs j WHERE j.item_id=i.id AND j.stage='analyse' AND j.generation=(SELECT max(p.generation) FROM processing_jobs p WHERE p.item_id=i.id AND p.stage='extract')), 'pending') AS analysis_status
       FROM items_fts JOIN items i ON i.rowid=items_fts.rowid WHERE items_fts MATCH ?
       AND (? IS NULL OR EXISTS(SELECT 1 FROM item_sources r WHERE r.item_id=i.id AND r.source_id=?))
-      AND (? IS NULL OR i.ingested_at>=?) ORDER BY bm25(items_fts),i.id LIMIT ? OFFSET ?`,
+      AND (? IS NULL OR i.ingested_at>=?)
+      AND (? IS NULL OR i.ingested_at<?)
+      AND (? IS NULL OR EXISTS(SELECT 1 FROM item_sources r JOIN sources s ON s.id=r.source_id WHERE r.item_id=i.id AND s.kind=?))
+      AND (? IS NULL OR coalesce((SELECT CASE WHEN j.status='done' AND j.outcome='unavailable' THEN 'unavailable' WHEN j.status='done' THEN 'analysed' WHEN j.status='pending' AND j.attempts>0 THEN 'retryable' ELSE j.status END FROM processing_jobs j WHERE j.item_id=i.id AND j.stage='analyse' AND j.generation=(SELECT max(p.generation) FROM processing_jobs p WHERE p.item_id=i.id AND p.stage='extract')), 'pending')=?)
+      ORDER BY bm25(items_fts),i.id LIMIT ? OFFSET ?`,
       )
       .all(
         match,
@@ -1591,6 +1612,12 @@ export class Store {
         sourceId ?? null,
         since ?? null,
         since ?? null,
+        filters.until ?? null,
+        filters.until ?? null,
+        filters.contentKind ?? null,
+        filters.contentKind ?? null,
+        filters.analysisStatus ?? null,
+        filters.analysisStatus ?? null,
         Math.max(1, Math.min(100, limit)),
         offset,
       );
@@ -1634,8 +1661,10 @@ export class Store {
           usage: analysisRow.usage ? JSON.parse(analysisRow.usage) : null,
         }
       : null;
+    const latestScore = this.scoreHistory(id, 1)[0] ?? null;
     return {
       ...item,
+      latest_score: latestScore,
       references: this.scoreReferences(id)!,
       content_versions: this.sqlite
         .query<

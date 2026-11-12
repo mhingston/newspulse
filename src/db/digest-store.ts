@@ -110,6 +110,27 @@ export class DigestStore {
       })
       .immediate();
   }
+  /**
+   * Metadata for frozen editions in an inclusive date window, newest first.
+   * Reads only the sealed rows and never rebuilds an edition from current
+   * scores, so a historical listing cannot drift after profile or score edits.
+   */
+  listFrozen(input: { from: string; to: string; limit: number }) {
+    return this.db
+      .query<
+        {
+          edition_date: string;
+          timezone: string;
+          subject: string;
+          fingerprint: string;
+          frozen_at: number;
+        },
+        [string, string, number]
+      >(
+        "SELECT edition_date,timezone,subject,fingerprint,frozen_at FROM digests WHERE sealed=1 AND edition_date>=? AND edition_date<=? ORDER BY edition_date DESC LIMIT ?",
+      )
+      .all(input.from, input.to, input.limit);
+  }
   get(date: string) {
     const row = this.db
       .query<
