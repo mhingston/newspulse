@@ -7,6 +7,7 @@ import {
   type ObservedVersion,
 } from "../observed-update";
 import { ProfileStore } from "../profiles";
+import { healthReport } from "../health";
 import { advanceScoreInvalidation, invalidateScores } from "./score-queue";
 import { SCORING_CRITERIA_VERSION, type ScoringInput } from "../scoring";
 import { drizzle } from "drizzle-orm/bun-sqlite";
@@ -1783,7 +1784,7 @@ export class Store {
           "SELECT origin,count(*) AS count FROM manual_submissions GROUP BY origin ORDER BY origin",
         )
         .all(),
-      milestone: "M2-in-progress",
+      health: healthReport(this.sqlite),
       grouping: this.stories.status(),
       ai: "optional",
       analyses: this.sqlite
