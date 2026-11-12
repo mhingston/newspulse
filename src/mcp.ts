@@ -26,6 +26,7 @@ import { ConfirmationError } from "./confirmations";
 import { latestFeedback } from "./feedback";
 import { listDiscoveries } from "./discovery-reads";
 import { ProfileStore } from "./profiles";
+import { enabledProcessingStages } from "./analysis-config";
 
 export interface McpOptions {
   /** Providers are injected so tests use fakes and never spend money. */
@@ -248,7 +249,8 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
   server.registerTool(
     "get_status",
     { description: "Report ingestion and durable queue health.", annotations },
-    async () => response(store.status()),
+    async () =>
+      response(store.status({ enabledStages: enabledProcessingStages(env) })),
   );
   server.registerTool(
     "get_submission",

@@ -22,15 +22,15 @@ export function invalidateScores(
     "INSERT INTO score_validity_events(item_id,score_id,kind,event_at) VALUES(?,NULL,'item_invalidation',?)",
   ).run(itemId, now);
   db.query(
-    `UPDATE processing_jobs SET status='pending', attempts=0, available_at=?, lease_token=NULL, lease_until=NULL, last_error=NULL
+    `UPDATE processing_jobs SET status='pending', attempts=0, available_at=?, queued_at=?, lease_token=NULL, lease_until=NULL, last_error=NULL
     WHERE stage='score' AND item_id=? AND generation=(SELECT max(e.generation) FROM processing_jobs e WHERE e.item_id=processing_jobs.item_id AND e.stage='extract')`,
-  ).run(now, itemId);
+  ).run(now, now, itemId);
   db.query(
-    `INSERT OR IGNORE INTO processing_jobs(id,stage,item_id,generation,available_at,created_at)
-    SELECT lower(hex(randomblob(16))), 'score', e.item_id, e.generation, ?, ? FROM processing_jobs e
+    `INSERT OR IGNORE INTO processing_jobs(id,stage,item_id,generation,available_at,queued_at,created_at)
+    SELECT lower(hex(randomblob(16))), 'score', e.item_id, e.generation, ?, ?, ? FROM processing_jobs e
     WHERE e.stage='extract' AND e.status='done' AND e.item_id=?
       AND e.generation=(SELECT max(x.generation) FROM processing_jobs x WHERE x.item_id=e.item_id AND x.stage='extract')`,
-  ).run(now, now, itemId);
+  ).run(now, now, now, itemId);
 }
 
 /** Advance global invalidation by at most 32 indexed score jobs per claim. */

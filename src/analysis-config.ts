@@ -41,3 +41,11 @@ export function analysisConfig(
     reserveMicros: parsed.ANALYSIS_CALL_MICROS,
   };
 }
+
+/** Processing stages that run in this configuration; idle stages are not warned about. */
+export function enabledProcessingStages(
+  env: Record<string, string | undefined> = process.env,
+): string[] {
+  const analysisOn = !!analysisConfig(env);
+  return ["extract", "score", "group", ...(analysisOn ? ["analyse"] : [])];
+}

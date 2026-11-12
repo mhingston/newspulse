@@ -456,12 +456,13 @@ export class Store {
     return (
       this.sqlite
         .query(
-          "INSERT OR IGNORE INTO processing_jobs(id,stage,item_id,available_at,created_at,generation,origin_source_id,origin_url) VALUES(?,?,?,?,?,?,?,?)",
+          "INSERT OR IGNORE INTO processing_jobs(id,stage,item_id,available_at,queued_at,created_at,generation,origin_source_id,origin_url) VALUES(?,?,?,?,?,?,?,?,?)",
         )
         .run(
           crypto.randomUUID(),
           stage,
           itemId,
+          now,
           now,
           now,
           generation,
@@ -493,9 +494,9 @@ export class Store {
               .run(refresh.job_id);
             this.sqlite
               .query(
-                "UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL WHERE id=? AND status='done' AND outcome='scored'",
+                "UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,queued_at=?,last_error=NULL WHERE id=? AND status='done' AND outcome='scored'",
               )
-              .run(now, refresh.job_id);
+              .run(now, now, refresh.job_id);
           }
         }
         this.sqlite
@@ -612,10 +613,10 @@ export class Store {
     return (
       this.sqlite
         .query(
-          `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,last_error=NULL
+          `UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,queued_at=?,last_error=NULL
       WHERE item_id=? AND stage='analyse' AND status='failed' AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=? AND stage='extract')`,
         )
-        .run(now, itemId, itemId).changes === 1
+        .run(now, now, itemId, itemId).changes === 1
     );
   }
   requestReanalysis(itemId: string, now = Date.now()): boolean {
@@ -645,13 +646,14 @@ export class Store {
         const generation = previous.generation + 1;
         this.sqlite
           .query(
-            "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,attempts,available_at,created_at,result) VALUES(?,?,'extract',?,'done',?,0,?,?,?)",
+            "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,attempts,available_at,queued_at,created_at,result) VALUES(?,?,'extract',?,'done',?,0,?,?,?,?)",
           )
           .run(
             crypto.randomUUID(),
             itemId,
             generation,
             previous.outcome,
+            now,
             now,
             now,
             previous.result,
@@ -896,9 +898,9 @@ export class Store {
           }
           this.sqlite
             .query(
-              "UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=? AND lease_until>?",
+              "UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,queued_at=?,lease_token=NULL,lease_until=NULL WHERE id=? AND status='running' AND lease_token=? AND lease_until>?",
             )
-            .run(now, job.id, job.lease_token, now);
+            .run(now, now, job.id, job.lease_token, now);
           return false;
         }
         if (
@@ -1743,7 +1745,7 @@ export class Store {
       })),
     };
   }
-  status() {
+  status(options: { enabledStages?: readonly string[] } = {}) {
     return {
       sources: this.sources().map((source) => ({
         ...source,
@@ -1784,7 +1786,7 @@ export class Store {
           "SELECT origin,count(*) AS count FROM manual_submissions GROUP BY origin ORDER BY origin",
         )
         .all(),
-      health: healthReport(this.sqlite),
+      health: healthReport(this.sqlite, Date.now(), options),
       grouping: this.stories.status(),
       ai: "optional",
       analyses: this.sqlite

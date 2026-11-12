@@ -36,7 +36,34 @@ export interface HealthReport {
   warnings: string[];
 }
 
-export function healthReport(db: Database, now = Date.now()): HealthReport {
+export interface HealthOptions {
+  /** Stages whose queues are intentionally idle (e.g. analysis disabled). */
+  enabledStages?: readonly string[];
+}
+
+/**
+ * Credential-free source label. Feed titles default to the feed URL, which can
+ * carry tokens in its query string, so anything URL-shaped is redacted.
+ */
+export function safeLabel(value: string): string {
+  return value.replace(/https?:\/\/\S+/gi, (match) => {
+    try {
+      const url = new URL(match);
+      return `${url.origin}${url.pathname}`;
+    } catch {
+      return "[redacted-url]";
+    }
+  });
+}
+
+export function healthReport(
+  db: Database,
+  now = Date.now(),
+  options: HealthOptions = {},
+): HealthReport {
+  const enabled = options.enabledStages
+    ? new Set(options.enabledStages)
+    : undefined;
   const stuck = db
     .query<
       { stage: string; status: string; count: number; oldest: number | null },
@@ -62,9 +89,14 @@ export function healthReport(db: Database, now = Date.now()): HealthReport {
       },
       [number]
     >(
-      "SELECT id AS source_id,title,failures,last_error FROM sources WHERE removed=0 AND failures>=? ORDER BY failures DESC,title,id LIMIT 50",
+      "SELECT id AS source_id,title,failures,last_error FROM sources WHERE removed=0 AND enabled=1 AND failures>=? ORDER BY failures DESC,title,id LIMIT 50",
     )
-    .all(HEALTH_THRESHOLDS.failingSourceFailures);
+    .all(HEALTH_THRESHOLDS.failingSourceFailures)
+    .map((row) => ({
+      ...row,
+      title: safeLabel(row.title),
+      last_error: row.last_error == null ? null : safeLabel(row.last_error),
+    }));
 
   const ambiguous = db
     .query<{ count: number }, []>(
@@ -74,7 +106,7 @@ export function healthReport(db: Database, now = Date.now()): HealthReport {
 
   const queue = db
     .query<{ stage: string; pending: number; oldest: number | null }, []>(
-      "SELECT stage,count(*) AS pending,min(available_at) AS oldest FROM processing_jobs WHERE status='pending' GROUP BY stage ORDER BY stage",
+      "SELECT stage,count(*) AS pending,min(coalesce(queued_at,available_at)) AS oldest FROM processing_jobs WHERE status='pending' GROUP BY stage ORDER BY stage",
     )
     .all()
     .map((row) => ({
@@ -83,9 +115,20 @@ export function healthReport(db: Database, now = Date.now()): HealthReport {
       oldest_age_ms: row.oldest == null ? null : Math.max(0, now - row.oldest),
     }));
 
+  // A reused analysis is a copy of an earlier billed call, so cost is counted
+  // once per provider request identity (the earliest row), not once per row.
   const cost = db
     .query<{ analyses: number; known: number; unknown: number }, []>(
-      "SELECT count(*) AS analyses,coalesce(sum(cost),0) AS known,coalesce(sum(CASE WHEN cost IS NULL THEN 1 ELSE 0 END),0) AS unknown FROM analyses",
+      `SELECT count(*) AS analyses,
+        coalesce(sum(CASE WHEN first_row=1 THEN cost ELSE 0 END),0) AS known,
+        coalesce(sum(CASE WHEN first_row=1 AND cost IS NULL THEN 1 ELSE 0 END),0) AS unknown
+       FROM (
+         SELECT cost, row_number() OVER (
+           PARTITION BY item_id,input_hash,provider,model,prompt_version,profiles
+           ORDER BY created_at, id
+         ) AS first_row
+         FROM analyses
+       )`,
     )
     .get()!;
 
@@ -103,6 +146,7 @@ export function healthReport(db: Database, now = Date.now()): HealthReport {
   if (
     queue.some(
       (q) =>
+        (!enabled || enabled.has(q.stage)) &&
         q.oldest_age_ms != null &&
         q.oldest_age_ms > HEALTH_THRESHOLDS.queueAgeWarnMs,
     )
