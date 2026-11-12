@@ -14,7 +14,7 @@ import { analysisHandler } from "./analysis-service";
 import { scoringHandler } from "./scoring-service";
 import { stopServices } from "./lifecycle";
 import { config } from "./config";
-import { pollConfig } from "./poll-config";
+import { pollConfig, stageConcurrencyConfig } from "./poll-config";
 import { Store } from "./db/store";
 import { RssAdapter } from "./adapters/rss";
 import { Worker, ProcessingWorker, schedule, log } from "./worker";
@@ -98,46 +98,52 @@ const scheduler = schedule(
     ),
     pollConfig(),
   ),
-  new ProcessingWorker(store, {
-    score: scoringHandler(store),
-    group: async () => {
-      const result = store.stories.reconcile();
-      if (result.stale) throw new Error("Story inputs changed during grouping");
-      return { status: "grouped", result: JSON.stringify(result) };
+  new ProcessingWorker(
+    store,
+    {
+      score: scoringHandler(store),
+      group: async () => {
+        const result = store.stories.reconcile();
+        if (result.stale)
+          throw new Error("Story inputs changed during grouping");
+        return { status: "grouped", result: JSON.stringify(result) };
+      },
+      analyse: analysis
+        ? analysisHandler(
+            store,
+            new OpenAICompatibleAnalysis({
+              endpoint: analysis.endpoint,
+              model: analysis.model,
+              apiKey: analysis.apiKey,
+              maxInputChars: 16000,
+              maxOutputTokens: 1000,
+              timeoutMs: 45000,
+            }),
+            new AnalysisBudget(store.sqlite, {
+              maxTokens: analysis.maxTokens,
+              maxMicros: analysis.maxMicros,
+              maxConcurrent: 1,
+            }),
+            {
+              provider: analysis.endpoint,
+              model: analysis.model,
+              promptVersion: "1",
+              reserveTokens: analysis.reserveTokens,
+              reserveMicros: analysis.reserveMicros,
+            },
+          )
+        : undefined,
+      extract: extractionHandler(
+        store,
+        new HttpContentExtractor(),
+        cfg.TRUSTED_PRIVATE_FEEDS.split(",")
+          .map((s) => s.trim())
+          .filter(Boolean),
+      ),
     },
-    analyse: analysis
-      ? analysisHandler(
-          store,
-          new OpenAICompatibleAnalysis({
-            endpoint: analysis.endpoint,
-            model: analysis.model,
-            apiKey: analysis.apiKey,
-            maxInputChars: 16000,
-            maxOutputTokens: 1000,
-            timeoutMs: 45000,
-          }),
-          new AnalysisBudget(store.sqlite, {
-            maxTokens: analysis.maxTokens,
-            maxMicros: analysis.maxMicros,
-            maxConcurrent: 1,
-          }),
-          {
-            provider: analysis.endpoint,
-            model: analysis.model,
-            promptVersion: "1",
-            reserveTokens: analysis.reserveTokens,
-            reserveMicros: analysis.reserveMicros,
-          },
-        )
-      : undefined,
-    extract: extractionHandler(
-      store,
-      new HttpContentExtractor(),
-      cfg.TRUSTED_PRIVATE_FEEDS.split(",")
-        .map((s) => s.trim())
-        .filter(Boolean),
-    ),
-  }),
+    undefined,
+    stageConcurrencyConfig(),
+  ),
   inboundStore && inboundProvider
     ? new InboundWorker(inboundStore, inboundProvider)
     : undefined,

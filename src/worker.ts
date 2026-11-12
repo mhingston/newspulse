@@ -235,17 +235,38 @@ export type ProcessingHandler = (
   analysisRecord?: import("./db/store").AnalysisRecord;
   scoreRecord?: import("./db/store").ScoreRecord;
 }>;
+export type StageConcurrency = Partial<
+  Record<import("./db/store").ProcessingStage, number>
+>;
+
+/**
+ * Runs each processing stage with its own bounded concurrency. A slot is held
+ * until its handler actually settles: a job can be failed on timeout while a
+ * non-cooperative handler keeps running, and that handler must keep counting
+ * against the stage ceiling rather than being oversubscribed.
+ */
+type HandlerResult =
+  | { ok: true; output: Awaited<ReturnType<ProcessingHandler>> }
+  | { ok: false; error: string };
+
 export class ProcessingWorker {
-  private inFlight = new Set<string>();
+  private running = new Map<string, number>();
   constructor(
     private store: Store,
     private handlers: Partial<
       Record<import("./db/store").ProcessingStage, ProcessingHandler>
     >,
     private timeoutMs = 50_000,
+    private concurrency: StageConcurrency = {},
   ) {
     if (timeoutMs <= 0 || timeoutMs >= 60_000)
       throw new Error("Invalid processing timeout");
+    for (const value of Object.values(concurrency))
+      if (!Number.isSafeInteger(value) || value < 1)
+        throw new Error("Invalid stage concurrency");
+  }
+  private limitFor(stage: import("./db/store").ProcessingStage): number {
+    return this.concurrency[stage] ?? 1;
   }
   async drain(
     stage: import("./db/store").ProcessingStage,
@@ -253,53 +274,88 @@ export class ProcessingWorker {
     shouldStop: () => boolean = () => false,
   ): Promise<number> {
     const handler = this.handlers[stage];
-    if (!handler || this.inFlight.has(stage)) return 0;
+    if (!handler) return 0;
     let count = 0;
-    while (count < limit && !shouldStop()) {
-      const job = this.store.claimProcessing(stage);
-      if (!job) break;
-      count++;
-      const controller = new AbortController();
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      this.inFlight.add(stage);
-      const running = Promise.resolve().then(() =>
-        handler(job, controller.signal),
-      );
-      void running.then(
-        () => this.inFlight.delete(stage),
-        () => this.inFlight.delete(stage),
-      );
-      try {
-        const output = await Promise.race([
-          running,
-          new Promise<never>((_, reject) => {
-            timer = setTimeout(() => {
-              controller.abort();
-              reject(new Error("Stage timed out"));
-            }, this.timeoutMs);
-          }),
-        ]);
-        if (output.analysisRecord)
-          this.store.completeAnalysis(job, output.analysisRecord);
-        else if (output.scoreRecord)
-          this.store.completeScore(job, output.scoreRecord);
-        else
-          this.store.completeProcessing(
-            job,
-            output.status,
-            Date.now(),
-            output.result ?? null,
-          );
-      } catch (error) {
-        this.store.failProcessing(
+    const jobs = new Set<Promise<void>>();
+    const slots = () => this.running.get(stage) ?? 0;
+    while (!shouldStop()) {
+      while (slots() < this.limitFor(stage) && count < limit && !shouldStop()) {
+        const job = this.store.claimProcessing(stage);
+        if (!job) break;
+        count++;
+        this.running.set(stage, slots() + 1);
+        const controller = new AbortController();
+        const handlerDone = this.invoke(
+          handler,
           job,
-          error instanceof Error ? error.message : String(error),
-        );
-      } finally {
-        if (timer) clearTimeout(timer);
+          controller.signal,
+        ).finally(() => {
+          this.running.set(stage, slots() - 1);
+        });
+        const jobDone = this.finish(job, handlerDone, controller);
+        jobs.add(jobDone);
+        void jobDone.finally(() => jobs.delete(jobDone));
       }
-      if (this.inFlight.has(stage)) break;
+      if (jobs.size === 0) break;
+      await Promise.race(jobs);
+      if (count >= limit && jobs.size === 0) break;
     }
+    await Promise.all(jobs);
     return count;
+  }
+  /** Settles when the handler returns or throws, whether or not the job was failed. */
+  private invoke(
+    handler: ProcessingHandler,
+    job: import("./db/store").ProcessingJob,
+    signal: AbortSignal,
+  ): Promise<HandlerResult> {
+    return Promise.resolve()
+      .then(() => handler(job, signal))
+      .then(
+        (output): HandlerResult => ({ ok: true, output }),
+        (error: unknown): HandlerResult => ({
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        }),
+      );
+  }
+  /** Completes or fails the job exactly once; a timeout fails it without releasing the slot. */
+  private async finish(
+    job: import("./db/store").ProcessingJob,
+    handlerDone: Promise<HandlerResult>,
+    controller: AbortController,
+  ): Promise<void> {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const timedOut = new Promise<HandlerResult>((resolve) => {
+      timer = setTimeout(() => {
+        controller.abort();
+        resolve({ ok: false, error: "Stage timed out" });
+      }, this.timeoutMs);
+    });
+    const result = await Promise.race([handlerDone, timedOut]);
+    if (timer) clearTimeout(timer);
+    try {
+      if (!result.ok) {
+        this.store.failProcessing(job, result.error);
+        return;
+      }
+      const output = result.output;
+      if (output.analysisRecord)
+        this.store.completeAnalysis(job, output.analysisRecord);
+      else if (output.scoreRecord)
+        this.store.completeScore(job, output.scoreRecord);
+      else
+        this.store.completeProcessing(
+          job,
+          output.status,
+          Date.now(),
+          output.result ?? null,
+        );
+    } catch (error) {
+      this.store.failProcessing(
+        job,
+        error instanceof Error ? error.message : String(error),
+      );
+    }
   }
 }
