@@ -1,4 +1,7 @@
-import { discoveryConfig } from "./discovery-config";
+import {
+  discoveryConfig,
+  discoveryLimitsOrUndefined,
+} from "./discovery-config";
 import { pollConfig } from "./poll-config";
 import { enabledProcessingStages } from "./analysis-config";
 import { runDiscovery } from "./discovery-service";
@@ -785,7 +788,10 @@ async function main() {
       case "status":
         console.log(
           JSON.stringify(
-            store.status({ enabledStages: enabledProcessingStages() }),
+            store.status({
+              enabledStages: enabledProcessingStages(),
+              discoveryLimits: discoveryLimitsOrUndefined(),
+            }),
             null,
             2,
           ),

@@ -44,6 +44,19 @@ const schema = z
     "Discovery run limits must fit daily limits and each query must fit the run budget",
   );
 
+/** Status-only: a malformed discovery setting must not make health unreadable. */
+export function discoveryLimitsOrUndefined(
+  env: Record<string, string | undefined> = process.env,
+) {
+  try {
+    const { maxQueriesPerDay, maxResultsPerDay, maxCostMicrosPerDay } =
+      discoveryConfig(env);
+    return { maxQueriesPerDay, maxResultsPerDay, maxCostMicrosPerDay };
+  } catch {
+    return undefined;
+  }
+}
+
 export function discoveryConfig(
   env: Record<string, string | undefined> = process.env,
 ) {

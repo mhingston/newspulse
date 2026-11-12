@@ -27,6 +27,7 @@ import { latestFeedback } from "./feedback";
 import { listDiscoveries } from "./discovery-reads";
 import { ProfileStore } from "./profiles";
 import { enabledProcessingStages } from "./analysis-config";
+import { discoveryLimitsOrUndefined } from "./discovery-config";
 
 export interface McpOptions {
   /** Providers are injected so tests use fakes and never spend money. */
@@ -250,7 +251,12 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
     "get_status",
     { description: "Report ingestion and durable queue health.", annotations },
     async () =>
-      response(store.status({ enabledStages: enabledProcessingStages(env) })),
+      response(
+        store.status({
+          enabledStages: enabledProcessingStages(env),
+          discoveryLimits: discoveryLimitsOrUndefined(env),
+        }),
+      ),
   );
   server.registerTool(
     "get_submission",
