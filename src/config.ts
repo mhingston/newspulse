@@ -8,6 +8,8 @@ const schema = z
     ALLOWED_HOSTS: z.string().default("localhost,127.0.0.1"),
     TRUSTED_PRIVATE_FEEDS: z.string().default(""),
     ALLOWED_ORIGINS: z.string().default(""),
+    POLL_CONCURRENCY: z.coerce.number().int().min(1).max(16).default(2),
+    POLL_PER_HOST_CONCURRENCY: z.coerce.number().int().min(1).max(8).default(1),
     GITHUB_TOKEN: z
       .string()
       .trim()

@@ -95,6 +95,10 @@ const scheduler = schedule(
       ],
       new RssAdapter(),
     ),
+    {
+      concurrency: cfg.POLL_CONCURRENCY,
+      perHost: cfg.POLL_PER_HOST_CONCURRENCY,
+    },
   ),
   new ProcessingWorker(store, {
     score: scoringHandler(store),

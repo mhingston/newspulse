@@ -400,7 +400,19 @@ export class Store {
       })
       .immediate();
   }
-  claim(now = Date.now()): Job | null {
+  /**
+   * Claims the next due poll. `excludeHosts` lists hosts already at their
+   * concurrency ceiling; the query skips their jobs so one slow or failing host
+   * cannot take every worker slot. Running leases are the only in-flight state,
+   * so reclaimed or restarted jobs are not double counted.
+   */
+  claim(
+    now = Date.now(),
+    options: {
+      hostLimit?: number;
+      hostOf?: (sourceUrl: string) => string;
+    } = {},
+  ): Job | null {
     return this.sqlite
       .transaction(() => {
         this.sqlite
@@ -408,13 +420,41 @@ export class Store {
             "UPDATE jobs SET status=CASE WHEN attempts>=5 THEN 'failed' ELSE 'pending' END, lease_token=NULL, lease_until=NULL, last_error='Expired lease recovered' WHERE status='running' AND lease_until<=?",
           )
           .run(now);
-        return this.sqlite
-          .query<Job, [string, number, number]>(
-            `UPDATE jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=?
+        const hostLimit = options.hostLimit;
+        if (hostLimit === undefined || !options.hostOf) {
+          return this.sqlite
+            .query<Job, [string, number, number]>(
+              `UPDATE jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=?
         WHERE id=(SELECT j.id FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind IN ('rss','github','hackernews') AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 1)
         RETURNING id,source_id,attempts,lease_token`,
+            )
+            .get(crypto.randomUUID(), now + 60_000, now);
+        }
+        const hostOf = options.hostOf;
+        const running = new Map<string, number>();
+        for (const row of this.sqlite
+          .query<{ url: string }, []>(
+            "SELECT s.url FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='running'",
           )
-          .get(crypto.randomUUID(), now + 60_000, now);
+          .all()) {
+          const host = hostOf(row.url);
+          running.set(host, (running.get(host) ?? 0) + 1);
+        }
+        const due = this.sqlite
+          .query<{ id: string; url: string }, [number]>(
+            "SELECT j.id,s.url FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind IN ('rss','github','hackernews') AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 500",
+          )
+          .all(now);
+        const pick = due.find(
+          (job) => (running.get(hostOf(job.url)) ?? 0) < hostLimit,
+        );
+        if (!pick) return null;
+        return this.sqlite
+          .query<Job, [string, number, string]>(
+            `UPDATE jobs SET status='running',attempts=attempts+1,lease_token=?,lease_until=? WHERE id=? AND status='pending'
+        RETURNING id,source_id,attempts,lease_token`,
+          )
+          .get(crypto.randomUUID(), now + 60_000, pick.id);
       })
       .immediate();
   }

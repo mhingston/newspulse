@@ -1,4 +1,5 @@
 import { discoveryConfig } from "./discovery-config";
+import { config } from "./config";
 import { enabledProcessingStages } from "./analysis-config";
 import { runDiscovery } from "./discovery-service";
 import { GdeltSearchProvider } from "./adapters/gdelt";
@@ -746,6 +747,11 @@ async function main() {
         );
         break;
       case "poll": {
+        const pollEnv = config();
+        const pollLimits = {
+          concurrency: pollEnv.POLL_CONCURRENCY,
+          perHost: pollEnv.POLL_PER_HOST_CONCURRENCY,
+        };
         store.enqueueDue(Date.now(), args.includes("--force"));
         console.log(
           JSON.stringify({
@@ -766,6 +772,10 @@ async function main() {
                 ],
                 new RssAdapter(),
               ),
+              {
+                concurrency: pollLimits.concurrency,
+                perHost: pollLimits.perHost,
+              },
             ).drain(100),
           }),
         );
