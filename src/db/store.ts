@@ -1810,7 +1810,17 @@ export class Store {
       })),
     };
   }
-  status(options: { enabledStages?: readonly string[] } = {}) {
+  status(
+    options: {
+      enabledStages?: readonly string[];
+      discoveryLimits?: {
+        maxQueriesPerDay: number;
+        maxCostMicrosPerDay: number;
+        maxResultsPerDay: number;
+      };
+      now?: number;
+    } = {},
+  ) {
     return {
       sources: this.sources().map((source) => ({
         ...source,
@@ -1862,6 +1872,56 @@ export class Store {
           "SELECT 1 FROM analysis_control WHERE id=1 AND envelope_breach=1",
         )
         .get(),
+      budgets: this.budgetStatus(
+        options.now ?? Date.now(),
+        options.discoveryLimits,
+      ),
+    };
+  }
+  /**
+   * Read-only usage against configured ceilings. Discovery uses the same
+   * rolling-day window as the reserver, so status and reservations agree.
+   */
+  private budgetStatus(
+    now: number,
+    limits?: {
+      maxQueriesPerDay: number;
+      maxCostMicrosPerDay: number;
+      maxResultsPerDay: number;
+    },
+  ) {
+    const day = Math.floor(now / 86_400_000);
+    const discovery = this.sqlite
+      .query<
+        { queries: number; results: number; micros: number },
+        [number, number]
+      >(
+        "SELECT count(*) AS queries,coalesce(sum(reserved_results),0) AS results,coalesce(sum(reserved_cost_micros),0) AS micros FROM discovery_pages WHERE budget_day>=? OR status='reserved' OR finished_at>=?",
+      )
+      .get(day, day * 86_400_000)!;
+    const analysis = this.sqlite
+      .query<{ tokens: number; micros: number; reservations: number }, []>(
+        "SELECT coalesce(sum(tokens),0) AS tokens,coalesce(sum(micros),0) AS micros,count(*) AS reservations FROM analysis_reservations",
+      )
+      .get()!;
+    return {
+      discovery: {
+        day,
+        queries: discovery.queries,
+        results: discovery.results,
+        cost_micros: discovery.micros,
+        limits: limits ?? null,
+      },
+      analysis: {
+        tokens: analysis.tokens,
+        cost_micros: analysis.micros,
+        reservations: analysis.reservations,
+        envelope_breach: !!this.sqlite
+          .query(
+            "SELECT 1 FROM analysis_control WHERE id=1 AND envelope_breach=1",
+          )
+          .get(),
+      },
     };
   }
   backup(path: string): void {
