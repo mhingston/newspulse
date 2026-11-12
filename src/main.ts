@@ -14,6 +14,7 @@ import { analysisHandler } from "./analysis-service";
 import { scoringHandler } from "./scoring-service";
 import { stopServices } from "./lifecycle";
 import { config } from "./config";
+import { pollConfig } from "./poll-config";
 import { Store } from "./db/store";
 import { RssAdapter } from "./adapters/rss";
 import { Worker, ProcessingWorker, schedule, log } from "./worker";
@@ -95,10 +96,7 @@ const scheduler = schedule(
       ],
       new RssAdapter(),
     ),
-    {
-      concurrency: cfg.POLL_CONCURRENCY,
-      perHost: cfg.POLL_PER_HOST_CONCURRENCY,
-    },
+    pollConfig(),
   ),
   new ProcessingWorker(store, {
     score: scoringHandler(store),

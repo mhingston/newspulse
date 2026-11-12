@@ -129,6 +129,29 @@ describe("poll concurrency and per-host fairness", () => {
     }
   });
 
+  test("a healthy feed behind more than 500 blocked jobs is still claimed", () => {
+    const store = new Store(":memory:");
+    try {
+      store.addSource("https://busy.example/running.xml", "running", 60);
+      for (let i = 0; i < 600; i++)
+        store.addSource(`https://busy.example/feed${i}.xml`, `busy${i}`, 60);
+      store.addSource("https://healthy.example/feed.xml", "healthy", 60);
+      store.enqueueDue(0, true);
+      // Earliest due jobs all belong to the busy host, which is at its ceiling.
+      const running = store.claim(1000, { hostLimit: 1, hostOf: hostOfSource });
+      expect(new URL(store.source(running!.source_id)!.url).hostname).toBe(
+        "busy.example",
+      );
+      const next = store.claim(1000, { hostLimit: 1, hostOf: hostOfSource });
+      expect(next).not.toBeNull();
+      expect(new URL(store.source(next!.source_id)!.url).hostname).toBe(
+        "healthy.example",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
   test("rejects invalid limits", () => {
     const store = new Store(":memory:");
     try {

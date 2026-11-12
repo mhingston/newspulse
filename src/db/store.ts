@@ -440,14 +440,39 @@ export class Store {
           const host = hostOf(row.url);
           running.set(host, (running.get(host) ?? 0) + 1);
         }
-        const due = this.sqlite
-          .query<{ id: string; url: string }, [number]>(
-            "SELECT j.id,s.url FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind IN ('rss','github','hackernews') AND s.enabled=1 AND s.removed=0 ORDER BY j.available_at,j.created_at LIMIT 500",
-          )
-          .all(now);
-        const pick = due.find(
-          (job) => (running.get(hostOf(job.url)) ?? 0) < hostLimit,
-        );
+        // Page through due jobs until one belongs to a host with capacity, so a
+        // long backlog for a saturated host cannot hide a healthy feed.
+        let pick: { id: string } | undefined;
+        let cursor:
+          { available: number; created: number; id: string } | undefined;
+        for (;;) {
+          const page = this.sqlite
+            .query<
+              { id: string; url: string; available: number; created: number },
+              [number, number, number, number, number, string]
+            >(
+              "SELECT j.id,s.url,j.available_at AS available,j.created_at AS created FROM jobs j JOIN sources s ON s.id=j.source_id WHERE j.status='pending' AND j.available_at<=? AND s.kind IN ('rss','github','hackernews') AND s.enabled=1 AND s.removed=0 AND (j.available_at>? OR (j.available_at=? AND (j.created_at>? OR (j.created_at=? AND j.id>?)))) ORDER BY j.available_at,j.created_at,j.id LIMIT 200",
+            )
+            .all(
+              now,
+              cursor?.available ?? -1,
+              cursor?.available ?? -1,
+              cursor?.created ?? -1,
+              cursor?.created ?? -1,
+              cursor?.id ?? "",
+            );
+          if (page.length === 0) break;
+          pick = page.find(
+            (job) => (running.get(hostOf(job.url)) ?? 0) < hostLimit,
+          );
+          if (pick) break;
+          const last = page[page.length - 1]!;
+          cursor = {
+            available: last.available,
+            created: last.created,
+            id: last.id,
+          };
+        }
         if (!pick) return null;
         return this.sqlite
           .query<Job, [string, number, string]>(
