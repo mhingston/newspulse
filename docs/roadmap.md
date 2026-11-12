@@ -122,7 +122,7 @@ The handoff proposes entities, not a mandate to prebuild every empty table. Add 
 
 ## MCP surface ownership
 
-`search_items`, `get_item`, `get_sources`, and `get_status` exist in M1. The #7 slice adds an initial `explain_ranking` history read; #9 adds developing and frozen `get_digest` reads. Completing those plus `get_digest`, `get_discoveries`, and `get_interests` belongs to #19, with early additive read slices during M2/M3. The six mutations (`add_source`, `remove_source`, `update_interest`, `submit_feedback`, `ingest_url`, `trigger_discovery`) and the `get_feedback` read land in #18; manual ingestion service/data comes from #17. Optional stdio is #30. No connecting client is required to delegate conversational reasoning back into this service.
+`search_items`, `get_item`, `get_sources`, and `get_status` exist in M1. The #7 slice adds an initial `explain_ranking` history read; #9 adds developing and frozen `get_digest` reads. Issue #19 completes those reads: `search_items` gains `until`, `source_kind` and `analysis_status` filters; `get_item` returns `latest_score`; `explain_ranking` returns `exclusions`; `get_digest` gains a frozen-edition `list` view; `get_sources` is paged; and `get_interests` and `get_discoveries` are added, with early additive read slices during M2/M3. The six mutations (`add_source`, `remove_source`, `update_interest`, `submit_feedback`, `ingest_url`, `trigger_discovery`) and the `get_feedback` read land in #18; manual ingestion service/data comes from #17. Optional stdio is #30. No connecting client is required to delegate conversational reasoning back into this service.
 
 ## Closure discipline
 

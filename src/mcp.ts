@@ -65,12 +65,46 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
         offset: z.number().int().min(0).max(100000).default(0),
         source_id: z.string().optional(),
         since: z.number().int().nonnegative().optional(),
+        until: z.number().int().nonnegative().optional(),
+        source_kind: z
+          .enum([
+            "rss",
+            "github",
+            "hackernews",
+            "inbound",
+            "manual",
+            "discovery",
+          ])
+          .optional(),
+        analysis_status: z
+          .enum([
+            "pending",
+            "running",
+            "retryable",
+            "analysed",
+            "unavailable",
+            "failed",
+          ])
+          .optional(),
       },
       annotations,
     },
-    async ({ query, limit, source_id, since, offset }) =>
+    async ({
+      query,
+      limit,
+      source_id,
+      since,
+      until,
+      source_kind,
+      analysis_status,
+      offset,
+    }) =>
       response({
-        items: store.search(query, limit, source_id, since, offset),
+        items: store.search(query, limit, source_id, since, offset, {
+          until,
+          contentKind: source_kind,
+          analysisStatus: analysis_status,
+        }),
         content_kind: "untrusted_source_and_generated_content",
       }),
   );
@@ -110,6 +144,19 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
             item_id: id,
             references,
             scores,
+            exclusions: scores.map((score) => {
+              const result = score.result as {
+                eligible?: boolean;
+                reasons?: string[];
+              };
+              return {
+                score_id: score.id,
+                criteria_version: score.criteria_version,
+                excluded: result.eligible === false,
+                reasons:
+                  result.eligible === false ? (result.reasons ?? []) : [],
+              };
+            }),
             next_before:
               page.length > limit ? scores[scores.length - 1]!.cursor : null,
           })
@@ -138,12 +185,35 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
         "Read a developing digest or a frozen edition. A frozen edition is not evidence of delivery.",
       inputSchema: {
         date: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-        view: z.enum(["draft", "frozen"]).default("draft"),
+        view: z.enum(["draft", "frozen", "list"]).default("draft"),
+        to: z
+          .string()
+          .regex(/^\d{4}-\d{2}-\d{2}$/)
+          .optional(),
+        limit: z.number().int().min(1).max(100).default(30),
       },
       annotations,
     },
-    async ({ date, view }) => {
+    async ({ date, view, to, limit }) => {
       try {
+        if (view === "list") {
+          const end = to ?? date;
+          if (end < date)
+            return {
+              ...response({ error: "to must not be before date" }),
+              isError: true,
+            };
+          return response({
+            from: date,
+            to: end,
+            editions: new DigestStore(store.sqlite).listFrozen({
+              from: date,
+              to: end,
+              limit,
+            }),
+            note: "Frozen editions are immutable; they are not rebuilt from current scores.",
+          });
+        }
         if (view === "draft")
           return response(draftDigest(store, digestDefaults(date)));
         const edition = new DigestStore(store.sqlite).get(date);
@@ -163,8 +233,17 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
   );
   server.registerTool(
     "get_sources",
-    { description: "List RSS subscriptions and polling health.", annotations },
-    async () => response(store.sources()),
+    {
+      description:
+        "List polled subscriptions and polling health, ordered by title. Page with limit and offset.",
+      inputSchema: {
+        limit: z.number().int().min(1).max(100).default(50),
+        offset: z.number().int().min(0).max(100000).default(0),
+      },
+      annotations,
+    },
+    async ({ limit, offset }) =>
+      response({ sources: store.sources({ limit, offset }), limit, offset }),
   );
   server.registerTool(
     "get_status",
