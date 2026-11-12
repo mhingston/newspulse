@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { Store } from "./db/store";
 import { handleMcp, type McpOptions } from "./mcp";
 import { applyFeedbackLink } from "./email-feedback";
+import { enabledProcessingStages } from "./analysis-config";
 import { ConfirmationError } from "./confirmations";
 export interface HttpConfig {
   token: string;
@@ -96,7 +97,9 @@ export function createApp(store: Store, config: HttpConfig) {
   // reflects the same durable health warnings `get_status` reports, so a
   // process that is up but backed up or failing is visible to supervisors.
   app.get("/health", (c) => {
-    const health = store.status().health;
+    const health = store.status({
+      enabledStages: enabledProcessingStages(config.mcp?.env ?? process.env),
+    }).health;
     return c.json({
       ok: true,
       ready: health.ready,

@@ -132,6 +132,38 @@ describe("overload evidence", () => {
     }
   });
 
+  test("/health ignores disabled analysis queues, matching get_status", async () => {
+    const store = new Store(":memory:");
+    try {
+      seed(store, 1);
+      // Analysis is disabled, so its queued job is intentionally idle.
+      store.sqlite
+        .query(
+          "INSERT INTO processing_jobs(id,item_id,stage,generation,status,attempts,available_at,queued_at,created_at) SELECT 'idle-analyse',id,'analyse',1,'pending',0,0,0,0 FROM items LIMIT 1",
+        )
+        .run();
+      const env = {};
+      const app = createApp(store, {
+        token,
+        allowedHosts: ["localhost"],
+        allowedOrigins: [],
+        mcp: { env },
+      });
+      const body = (await (
+        await app.request("http://localhost/health", {
+          headers: { authorization: `Bearer ${token}` },
+        })
+      ).json()) as { ready: boolean; warnings: string[] };
+      const status = store.status({
+        enabledStages: ["extract", "score", "group"],
+      });
+      expect(body.warnings).not.toContain("queue_age");
+      expect(body.ready).toBe(status.health.ready);
+    } finally {
+      store.close();
+    }
+  });
+
   test("/health reports readiness behind the bearer token", async () => {
     const store = new Store(":memory:");
     try {
