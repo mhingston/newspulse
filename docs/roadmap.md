@@ -118,7 +118,7 @@ The handoff proposes entities, not a mandate to prebuild every empty table. Add 
 | digests, digest_items and frozen decision snapshots           | [#9](https://github.com/mhingston/newspulse/issues/9)                                                                                                                                      |
 | durable delivery/outbox state                                 | [#12](https://github.com/mhingston/newspulse/issues/12)                                                                                                                                    |
 | discovery_runs, query lineage and costs                       | [#13](https://github.com/mhingston/newspulse/issues/13), [#14](https://github.com/mhingston/newspulse/issues/14)                                                                           |
-| raw/content retention metadata and history-preserving cleanup | [#21](https://github.com/mhingston/newspulse/issues/21)                                                                                                                                    |
+| raw/content retention metadata and history-preserving cleanup | [#21](https://github.com/mhingston/newspulse/issues/21) (opt-in purge of extraction/analysis payloads with audit table; feed text and inbound bodies remain)                               |
 
 ## MCP surface ownership
 

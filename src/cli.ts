@@ -60,7 +60,15 @@ import { GitHubSourceAdapter } from "./adapters/github";
 import { isGithubSourceUrl, isHackerNewsSourceUrl } from "./domain";
 import { SourceRouter, Worker } from "./worker";
 import { Database } from "bun:sqlite";
-import { constants, copyFileSync, existsSync, mkdirSync } from "node:fs";
+import {
+  constants,
+  copyFileSync,
+  existsSync,
+  mkdirSync,
+  rmSync,
+} from "node:fs";
+import { verifyDatabase } from "./recovery";
+import { retentionPolicy } from "./retention";
 import { dirname, resolve } from "node:path";
 import {
   compareEvaluations,
@@ -112,6 +120,12 @@ async function main() {
       );
     return;
   }
+  if (command === "verify-backup") {
+    const report = verifyDatabase(required(0, "backup path"));
+    console.log(JSON.stringify(report, null, 2));
+    if (!report.ok) process.exitCode = 1;
+    return;
+  }
   if (command === "restore") {
     const backup = required(0, "backup path");
     if (existsSync(path))
@@ -120,20 +134,11 @@ async function main() {
       );
     if (resolve(backup) === resolve(path))
       throw new Error("Restore path equals backup");
-    const check = new Database(backup, { readonly: true });
-    try {
-      const result = check
-        .query<{ integrity_check: string }, []>("PRAGMA integrity_check")
-        .get();
-      if (result?.integrity_check !== "ok")
-        throw new Error("Backup integrity check failed");
-      if (
-        !check.query("SELECT name FROM sqlite_master WHERE name='items'").get()
-      )
-        throw new Error("Not a Newspulse backup");
-    } finally {
-      check.close();
-    }
+    const report = verifyDatabase(backup);
+    if (!report.ok)
+      throw new Error(
+        `Backup verification failed: ${report.problems.join("; ")}`,
+      );
     mkdirSync(dirname(path), { recursive: true });
     const restoreLock =
       process.platform === "linux" ? acquireDeliveryLock(path) : null;
@@ -147,7 +152,18 @@ async function main() {
       discoveryRestoreLock?.close();
       restoreLock?.close();
     }
-    console.log(`Restored to ${path}`);
+    const restored = verifyDatabase(path);
+    if (!restored.ok) {
+      rmSync(path, { force: true });
+      rmSync(`${path}-wal`, { force: true });
+      rmSync(`${path}-shm`, { force: true });
+      throw new Error(
+        `Restored copy failed verification and was removed: ${restored.problems.join("; ")}`,
+      );
+    }
+    console.log(
+      `Restored to ${path}; verified ${restored.migrations} migrations, ${restored.counts.items ?? 0} items, ${restored.counts.retention_purges ?? 0} retention purges`,
+    );
     return;
   }
   const analysisLock =
@@ -818,13 +834,37 @@ async function main() {
           ),
         );
         break;
-      case "backup":
-        store.backup(required(0, "destination (must not exist)"));
-        console.log("Backup created");
+      case "backup": {
+        const destination = required(0, "destination (must not exist)");
+        store.backup(destination);
+        const report = verifyDatabase(destination);
+        if (!report.ok) {
+          rmSync(destination, { force: true });
+          throw new Error(
+            `Backup verification failed and was removed: ${report.problems.join("; ")}`,
+          );
+        }
+        console.log(
+          `Backup created and verified (${report.migrations} migrations, ${report.counts.items ?? 0} items)`,
+        );
         break;
+      }
+      case "retention-preview":
+      case "retention-apply": {
+        const dryRun = command === "retention-preview";
+        const limit = Number(process.env.RETENTION_BATCH ?? 500);
+        console.log(
+          JSON.stringify(
+            store.retention(retentionPolicy(), { dryRun, limit }),
+            null,
+            2,
+          ),
+        );
+        break;
+      }
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|retention-preview|retention-apply|verify-backup|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
