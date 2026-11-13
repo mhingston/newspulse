@@ -3,6 +3,7 @@ import { Store } from "../src/db/store";
 import { InboundStore } from "../src/db/inbound";
 import type { InboundEmailMetadata, ReceivedEmail } from "../src/inbound";
 import { DAY_MS, PURGED_INBOUND_BODY, retentionPolicy } from "../src/retention";
+import { normalizeNewsletter } from "../src/adapters/newsletter";
 
 const DAY0 = Date.UTC(2026, 10, 1);
 
@@ -46,6 +47,14 @@ function bodyOf(db: Store, providerId: string) {
       "SELECT body FROM inbound_messages WHERE provider_id=?",
     )
     .get(providerId)!.body;
+}
+
+function bodyItemId(db: Store, providerId: string) {
+  return db.sqlite
+    .query<{ item_id: string }, [string]>(
+      "SELECT item_id FROM inbound_messages WHERE provider_id=?",
+    )
+    .get(providerId)!.item_id;
 }
 
 function linkItem(db: Store, providerId: string, itemId: string) {
@@ -110,31 +119,113 @@ test("only indexed, complete, unleased bodies expire; the body tombstone is idem
   }
 });
 
-test("a purged body writes one audit row per item and leaves the search index consistent", () => {
+test("a purged newsletter stays searchable through normalized text and writes one audit row", () => {
   const db = new Store(":memory:");
   const inbox = new InboundStore(db.sqlite);
   try {
-    insertItem(db, "item-audit");
-    completedMessage(inbox, "audit", DAY0);
-    linkItem(db, "audit", "item-audit");
+    const message = {
+      metadata: {
+        providerId: "audit",
+        receivedAt: DAY0,
+        from: "Digest <digest@example.test>",
+        to: ["inbox@example.test"],
+        receivedFor: [],
+        subject: "Digest audit",
+        messageId: null,
+      },
+      text: null,
+      html: "<p>Retained normalized narrative marker</p>",
+    } satisfies ReceivedEmail;
+    inbox.recordEvent(
+      "resend",
+      { eventId: "evt-audit", metadata: message.metadata },
+      DAY0,
+    );
+    expect(
+      inbox.completeMessage(inbox.claimMessage(DAY0, 60_000)!, message, DAY0),
+    ).toBe(true);
+    expect(db.indexNextNewsletter(normalizeNewsletter, DAY0)).toBe(true);
+    const itemId = bodyItemId(db, "audit");
+    expect(db.search("Retained normalized narrative")).toHaveLength(1);
+    const before = db.sqlite
+      .query<{ text: string }, [string]>(
+        "SELECT text FROM items_fts JOIN items i ON i.rowid=items_fts.rowid WHERE i.id=?",
+      )
+      .get(itemId)!.text;
+    expect(before).toContain("Retained normalized narrative marker");
+
     const policy = retentionPolicy({ RETENTION_INBOUND_BODY_DAYS: "1" });
-    const now = DAY0 + 2 * DAY_MS;
-    const applied = db.retention(policy, { dryRun: false, now });
+    const applied = db.retention(policy, {
+      dryRun: false,
+      now: DAY0 + 2 * DAY_MS,
+    });
     expect(applied.inboundBodies.purged).toBe(1);
+    expect(bodyOf(db, "audit")).toBe(PURGED_INBOUND_BODY);
+
+    const after = db.sqlite
+      .query<{ text: string }, [string]>(
+        "SELECT text FROM items_fts JOIN items i ON i.rowid=items_fts.rowid WHERE i.id=?",
+      )
+      .get(itemId)!.text;
+    expect(after).toBe(before);
+    expect(db.search("Retained normalized narrative")).toHaveLength(1);
+
     const audits = db.sqlite
       .query<{ item_id: string; class: string; generation: number }, []>(
         "SELECT item_id,class,generation FROM retention_purges WHERE class='inbound_body'",
       )
       .all();
     expect(audits).toEqual([
-      { item_id: "item-audit", class: "inbound_body", generation: 0 },
+      { item_id: itemId, class: "inbound_body", generation: 0 },
     ]);
-    const fts = db.sqlite
-      .query<{ text: string }, []>(
-        "SELECT text FROM items_fts JOIN items i ON i.rowid=items_fts.rowid WHERE i.id='item-audit'",
-      )
-      .get();
-    expect(fts?.text ?? "").not.toContain("body of audit");
+  } finally {
+    db.close();
+  }
+});
+
+test("newsletter sender survives raw-body expiry in reference scoring", () => {
+  const db = new Store(":memory:");
+  const inbox = new InboundStore(db.sqlite);
+  try {
+    const message = {
+      metadata: {
+        providerId: "sender",
+        receivedAt: DAY0,
+        from: "Digest <digest@example.test>",
+        to: ["inbox@example.test"],
+        receivedFor: [],
+        subject: "Digest sender",
+        messageId: null,
+      },
+      text: null,
+      html: '<p>Sender retention narrative</p><a href="https://example.test/article">A linked article</a>',
+    } satisfies ReceivedEmail;
+    inbox.recordEvent(
+      "resend",
+      { eventId: "evt-sender", metadata: message.metadata },
+      DAY0,
+    );
+    expect(
+      inbox.completeMessage(inbox.claimMessage(DAY0, 60_000)!, message, DAY0),
+    ).toBe(true);
+    expect(db.indexNextNewsletter(normalizeNewsletter, DAY0)).toBe(true);
+    const child = db.search("linked article")[0]!;
+    expect(child).toBeDefined();
+    const senderOf = () =>
+      db
+        .scoreReferences(child.id)!
+        .map(
+          (row) =>
+            (row as { newsletter_sender: string | null }).newsletter_sender,
+        );
+    expect(senderOf()).toEqual(["Digest <digest@example.test>"]);
+
+    db.retention(retentionPolicy({ RETENTION_INBOUND_BODY_DAYS: "1" }), {
+      dryRun: false,
+      now: DAY0 + 2 * DAY_MS,
+    });
+    expect(bodyOf(db, "sender")).toBe(PURGED_INBOUND_BODY);
+    expect(senderOf()).toEqual(["Digest <digest@example.test>"]);
   } finally {
     db.close();
   }

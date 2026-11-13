@@ -1043,7 +1043,10 @@ export class Store {
     return this.sqlite
       .query(
         `SELECT r.*,s.title AS source_title,s.url AS feed_url,
-          json_extract(m.body,'$.metadata.from') AS newsletter_sender,
+          coalesce(
+            json_extract(m.body,'$.metadata.from'),
+            json_extract(m.metadata,'$.from')
+          ) AS newsletter_sender,
           m.received_at AS newsletter_received_at,
           m.provider AS newsletter_provider,
           m.provider_id AS newsletter_message_id,
