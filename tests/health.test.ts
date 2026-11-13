@@ -43,6 +43,65 @@ async function withMcp(
 }
 
 describe("healthReport", () => {
+  test("reports delivery outcomes and lifetime search spend", () => {
+    const store = new Store(":memory:");
+    try {
+      const fresh = healthReport(store.sqlite, 1000);
+      expect(fresh.delivery_outcomes).toEqual([]);
+      expect(fresh.search_spend).toEqual({
+        queries: 0,
+        reserved_cost_micros: 0,
+      });
+
+      for (const id of ["dg1", "dg2", "dg3"]) {
+        store.sqlite
+          .query(
+            "INSERT INTO digests(id,edition_date,timezone,subject,html,plain_text,decisions,fingerprint,frozen_at,sealed) VALUES(?,?,'Europe/London','s','h','t','{}','f',1,1)",
+          )
+          .run(id, `2026-01-0${id.slice(-1)}`);
+      }
+      const insertDelivery = store.sqlite.query(
+        "INSERT INTO deliveries(id,digest_id,edition_date,recipient,sender,idempotency_key,status,attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,1,0,1,1)",
+      );
+      insertDelivery.run("d1", "dg1", "2026-01-01", "a", "s", "k1", "sent");
+      insertDelivery.run(
+        "d2",
+        "dg2",
+        "2026-01-02",
+        "a",
+        "s",
+        "k2",
+        "ambiguous",
+      );
+      insertDelivery.run("d3", "dg3", "2026-01-03", "a", "s", "k3", "sent");
+      store.sqlite
+        .query(
+          `INSERT INTO discovery_runs(id,query,provider,provider_version,subscription_snapshot,status,started_at,schedule_key)
+           VALUES('run','q','fixture','1','{}','completed',0,'k')`,
+        )
+        .run();
+      store.sqlite
+        .query(
+          `INSERT INTO discovery_pages(id,run_id,budget_day,reserved_results,reserved_cost_micros,status,started_at,finished_at)
+           VALUES('p1','run',0,1,40,'complete',0,0),('p2','run',0,1,60,'complete',0,0)`,
+        )
+        .run();
+
+      const report = healthReport(store.sqlite, 1000);
+      expect(report.delivery_outcomes).toEqual([
+        { status: "ambiguous", count: 1 },
+        { status: "sent", count: 2 },
+      ]);
+      expect(report.ambiguous_deliveries.count).toBe(1);
+      expect(report.search_spend).toEqual({
+        queries: 2,
+        reserved_cost_micros: 100,
+      });
+    } finally {
+      store.close();
+    }
+  });
+
   test("a fresh store is ready with no warnings", () => {
     const store = new Store(":memory:");
     try {

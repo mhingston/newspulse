@@ -26,6 +26,10 @@ export interface HealthReport {
     last_error: string | null;
   }[];
   ambiguous_deliveries: { count: number };
+  /** Lifetime delivery counts by status; ambiguous sends are never resent automatically. */
+  delivery_outcomes: { status: string; count: number }[];
+  /** Lifetime discovery (search) queries and reserved cost; unknown cost is never zero. */
+  search_spend: { queries: number; reserved_cost_micros: number };
   queue: { stage: string; pending: number; oldest_age_ms: number | null }[];
   analysis_cost: {
     analyses: number;
@@ -104,6 +108,18 @@ export function healthReport(
     )
     .get()!.count;
 
+  const delivery_outcomes = db
+    .query<{ status: string; count: number }, []>(
+      "SELECT status, count(*) AS count FROM deliveries GROUP BY status ORDER BY status",
+    )
+    .all();
+
+  const search = db
+    .query<{ queries: number; micros: number }, []>(
+      "SELECT count(*) AS queries, coalesce(sum(reserved_cost_micros),0) AS micros FROM discovery_pages",
+    )
+    .get()!;
+
   const queue = db
     .query<{ stage: string; pending: number; oldest: number | null }, []>(
       "SELECT stage,count(*) AS pending,min(coalesce(queued_at,available_at)) AS oldest FROM processing_jobs WHERE status='pending' GROUP BY stage ORDER BY stage",
@@ -159,6 +175,11 @@ export function healthReport(
     stuck_stages: stuck,
     failing_sources: failing,
     ambiguous_deliveries: { count: ambiguous },
+    delivery_outcomes,
+    search_spend: {
+      queries: search.queries,
+      reserved_cost_micros: search.micros,
+    },
     queue,
     analysis_cost: {
       analyses: cost.analyses,
