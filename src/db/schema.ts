@@ -742,6 +742,31 @@ export const retentionPurges = sqliteTable(
   ],
 );
 
+/**
+ * Operator-recorded provider acceptance for an edition/recipient that was
+ * already sent before a restore. Records are append-only; the outbox row
+ * carries the accepted provider ID, never an inbox-delivery claim.
+ */
+export const deliverySuppressions = sqliteTable(
+  "delivery_suppressions",
+  {
+    id: text().primaryKey(),
+    deliveryId: text("delivery_id").notNull(),
+    editionDate: text("edition_date").notNull(),
+    recipient: text().notNull(),
+    digestId: text("digest_id").notNull(),
+    providerId: text("provider_id").notNull(),
+    priorStatus: text("prior_status"),
+    outcome: text().notNull(),
+    payloadHash: text("payload_hash").notNull(),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("delivery_suppression_identity").on(t.editionDate, t.recipient),
+    index("delivery_suppression_time").on(t.createdAt),
+  ],
+);
+
 export const itemFeedback = sqliteTable(
   "item_feedback",
   {

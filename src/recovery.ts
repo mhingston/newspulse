@@ -28,6 +28,7 @@ const TABLES = [
 /** Tables introduced by a migration; required only once that migration is applied. */
 const TABLES_BY_MIGRATION: { tag: string; tables: readonly string[] }[] = [
   { tag: "0047_retention_purges", tables: ["retention_purges"] },
+  { tag: "0048_delivery_suppressions", tables: ["delivery_suppressions"] },
 ];
 
 /** Migrations in bundle order, read from the checked-in Drizzle journal. */
