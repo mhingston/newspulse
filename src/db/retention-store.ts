@@ -2,6 +2,7 @@ import type { Database } from "bun:sqlite";
 import {
   PURGED_ANALYSIS,
   PURGED_EXTRACTION,
+  PURGED_INBOUND_BODY,
   retentionCutoff,
   type RetentionClass,
   type RetentionPolicy,
@@ -13,11 +14,19 @@ export interface RetentionCandidate {
   class: RetentionClass;
 }
 
+/** Inbound bodies are retained per message; they have no extraction generation. */
+export interface InboundBodyCandidate {
+  messageId: string;
+  itemId: string;
+}
+
 export interface RetentionReport {
   dryRun: boolean;
   policy: RetentionPolicy;
   eligible: Record<RetentionClass, number>;
   purged: Record<RetentionClass, number>;
+  /** Indexed inbound bodies selected for, or purged by, this pass. */
+  inboundBodies: { eligible: number; purged: number };
   /** Items skipped because processing, grouping, scoring or analysis was not settled. */
   deferred: number;
   /** True when an analysis reservation is in flight, which blocks summary purges. */
@@ -129,6 +138,31 @@ function countDeferred(
   return extracted + summaries;
 }
 
+/**
+ * Inbound bodies that have been indexed (`item_id` set) and whose message is
+ * complete with no lease. Unindexed, failed, pending, running or retrying
+ * messages keep their body because the index step still reads it, and an
+ * ambiguous or in-flight retrieval must never lose its evidence.
+ */
+function inboundBodyCandidates(
+  db: Database,
+  cutoff: number,
+  limit: number,
+): InboundBodyCandidate[] {
+  return db
+    .query<{ id: string; item_id: string }, [string, number, number]>(
+      `SELECT m.id, m.item_id FROM inbound_messages m
+        WHERE m.status='complete' AND m.item_id IS NOT NULL AND m.body IS NOT NULL
+          AND m.lease_until IS NULL
+          AND m.body<>?
+          AND m.received_at<=?
+        ORDER BY m.id
+        LIMIT ?`,
+    )
+    .all(PURGED_INBOUND_BODY, cutoff, limit)
+    .map((row) => ({ messageId: row.id, itemId: row.item_id }));
+}
+
 function activeAnalysisReservation(db: Database): boolean {
   return !!db
     .query(
@@ -209,12 +243,14 @@ export function runRetention(
     throw new Error("Retention limit must be a positive integer");
   const extractCutoff = retentionCutoff(policy, "extracted_payload", now);
   const summaryCutoff = retentionCutoff(policy, "analysis_summary", now);
+  const bodyCutoff = retentionCutoff(policy, "inbound_body", now);
   const reservationsActive = activeAnalysisReservation(db);
   const report: RetentionReport = {
     dryRun: options.dryRun,
     policy,
     eligible: { extracted_payload: 0, analysis_summary: 0 },
     purged: { extracted_payload: 0, analysis_summary: 0 },
+    inboundBodies: { eligible: 0, purged: 0 },
     deferred: 0,
     analysisReservationsActive: reservationsActive,
     scanned: 0,
@@ -229,8 +265,35 @@ export function runRetention(
       summaryCutoff === null || reservationsActive
         ? []
         : analysisCandidates(db, summaryCutoff, options.limit);
-    const candidates = [...extracted, ...summaries];
+    const bodies =
+      bodyCutoff === null
+        ? []
+        : inboundBodyCandidates(db, bodyCutoff, options.limit);
     const items = new Set<string>();
+    for (const body of bodies) {
+      items.add(body.itemId);
+      report.inboundBodies.eligible += 1;
+      if (options.dryRun) continue;
+      // Re-checked in the write statement: a message leased or changed since selection is skipped.
+      const changed = db
+        .query(
+          "UPDATE inbound_messages SET body=?,updated_at=? WHERE id=? AND status='complete' AND lease_until IS NULL AND body IS NOT NULL AND body<>? AND item_id IS NOT NULL",
+        )
+        .run(
+          PURGED_INBOUND_BODY,
+          now,
+          body.messageId,
+          PURGED_INBOUND_BODY,
+        ).changes;
+      report.inboundBodies.purged += changed;
+      if (changed > 0) {
+        db.query(
+          "INSERT OR IGNORE INTO retention_purges(item_id,generation,class,purged_at,reason) VALUES(?,0,'inbound_body',?,'retention')",
+        ).run(body.itemId, now);
+        rebuildItemSearch(db, body.itemId);
+      }
+    }
+    const candidates = [...extracted, ...summaries];
     for (const candidate of candidates) {
       items.add(candidate.itemId);
       report.eligible[candidate.class] += 1;
@@ -250,7 +313,9 @@ export function runRetention(
     }
     report.scanned = items.size;
     report.complete =
-      extracted.length < options.limit && summaries.length < options.limit;
+      extracted.length < options.limit &&
+      summaries.length < options.limit &&
+      bodies.length < options.limit;
   });
   work.immediate();
   // Counting history is unbounded, so it runs after the writer lock is released.

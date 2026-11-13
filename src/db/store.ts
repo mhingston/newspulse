@@ -9,7 +9,7 @@ import {
 import { ProfileStore } from "../profiles";
 import { healthReport } from "../health";
 import { runRetention, type RetentionReport } from "./retention-store";
-import type { RetentionPolicy } from "../retention";
+import { PURGED_INBOUND_BODY, type RetentionPolicy } from "../retention";
 import { advanceScoreInvalidation, invalidateScores } from "./score-queue";
 import { SCORING_CRITERIA_VERSION, type ScoringInput } from "../scoring";
 import { drizzle } from "drizzle-orm/bun-sqlite";
@@ -1511,11 +1511,11 @@ export class Store {
     const row = this.sqlite
       .query<
         { id: string; provider: string; provider_id: string; body: string },
-        []
+        [string]
       >(
-        "SELECT id,provider,provider_id,body FROM inbound_messages WHERE status='complete' AND item_id IS NULL AND index_diagnostics IS NULL AND body IS NOT NULL ORDER BY id LIMIT 1",
+        "SELECT id,provider,provider_id,body FROM inbound_messages WHERE status='complete' AND item_id IS NULL AND index_diagnostics IS NULL AND body IS NOT NULL AND body<>? ORDER BY id LIMIT 1",
       )
-      .get();
+      .get(PURGED_INBOUND_BODY);
     if (!row) return false;
     let normalized: ReturnType<typeof normalize>;
     try {
