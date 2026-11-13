@@ -152,11 +152,12 @@ export function previewRemoveSource(
       source: current,
     },
     apply: () => {
-      store.removeSource(sourceId);
+      const cancelled_polls = store.removeSource(sourceId);
       return {
         source_id: sourceId,
         removed: true,
         history_retained: true,
+        cancelled_polls,
       };
     },
   });
@@ -175,11 +176,12 @@ export function confirmRemoveSource(store: Store, token: string) {
     token,
     payload: { source_id: source.source_id },
     apply: () => {
-      store.removeSource(source.source_id);
+      const cancelled_polls = store.removeSource(source.source_id);
       return {
         source_id: source.source_id,
         removed: true,
         history_retained: true,
+        cancelled_polls,
       };
     },
   });
