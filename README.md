@@ -105,16 +105,19 @@ Backup destinations must not already exist. `backup` verifies its own output (in
 
 Restoring an older snapshot can rewind provider-side state the local database no longer remembers. Before re-enabling delivery or discovery after a restore, audit provider activity since the snapshot as described in the delivery and discovery sections. A snapshot taken before a send requires provider reconciliation before delivery is re-enabled, even though the restore reports success.
 
+Restore rehearsal (run before relying on a backup): take a snapshot with `backup`, `verify-backup` it, `restore` it into a new unused `DB_PATH` while the service is stopped, then run `verify-backup` and `status` against the restored copy. Confirm the integrity, foreign-key and search checks pass and that item counts match the snapshot. Before starting the service on the restored copy, confirm the delivery and discovery restore guards (`delivery-restore-preview`, `discovery-restore` steps in the delivery and discovery sections) and reconcile provider state for any send recorded after the snapshot. Restarting the service on the restored copy must not re-ingest or re-publish items already present. The automated rehearsal is `tests/restore-rehearsal.test.ts`, which builds a pre-0049 populated database, restores it through the CLI and asserts integrity, foreign keys, FTS, idempotent re-polling and the delivery restore guard.
+
 Rollback after an upgrade: stop the service, restore the pre-upgrade snapshot into a new, unused DB_PATH, run `verify-backup` or `status` against it, and only then switch configuration. Do not run an older binary against an upgraded database in place.
 
 ### Derived content retention
 
 Retention is disabled by default; all data is kept until an operator sets a window. Two classes of disposable derived content can be expired:
 
-| Variable                           | Removes                                                                                                      |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `RETENTION_EXTRACTED_PAYLOAD_DAYS` | Extracted article text stored in the current extraction job result, once its generation is at least this old |
-| `RETENTION_ANALYSIS_SUMMARY_DAYS`  | Model-generated analysis payloads for the current generation                                                 |
+| Variable                           | Removes                                                                                                                              |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| `RETENTION_EXTRACTED_PAYLOAD_DAYS` | Extracted article text stored in the current extraction job result, once its generation is at least this old                         |
+| `RETENTION_ANALYSIS_SUMMARY_DAYS`  | Model-generated analysis payloads for the current generation                                                                         |
+| `RETENTION_FEED_TEXT_DAYS`         | Feed/extracted text (`content`, `content_versions`) for items whose latest observation is at least this old, once settled and scored |
 
 Preview then apply, using the same window configuration:
 
@@ -123,6 +126,8 @@ RETENTION_EXTRACTED_PAYLOAD_DAYS=90 bun run cli retention-preview   # dry run; r
 RETENTION_INBOUND_BODY_DAYS=30 bun run cli retention-apply          # indexed, complete, unleased inbound email bodies only
 RETENTION_EXTRACTED_PAYLOAD_DAYS=90 bun run cli retention-apply     # bounded batch (RETENTION_BATCH, default 500)
 ```
+
+Feed text (`RETENTION_FEED_TEXT_DAYS`) is cleared and each row is marked with `purged_at`. Identity, source references, observation timestamps, story history, feedback and frozen digest bytes are kept. Purged text is reported as unavailable, is never treated as a blank body, does not trigger re-extraction, and is excluded from observed-update and delivery-history comparisons. Items with a pending extract, group, analyse or score job are skipped.
 
 Each pass runs one short SQLite write transaction with no network or model calls and is safe to repeat; the unbounded diagnostic counts run after the writer lock is released. Indexed inbound email bodies (`RETENTION_INBOUND_BODY_DAYS`) are replaced by the same kind of tombstone (`{"status":"purged","reason":"retention"}`) only after the message is complete, linked to an item and unleased; unindexed, leased, pending or retrying messages keep their body, and the indexer skips tombstones instead of reporting a normalization failure. Each item with a purged body gets one `inbound_body` audit row. A purged payload is replaced by an explicit tombstone (`{"status":"purged","reason":"retention"}` or `{"purged":true}`), so `get_item` reports content as removed rather than presenting empty text. A purged summary is removed from every copy: the analysis row, the completed analyse job result and the settled budget reservation result. Accounting (tokens, micros, status) is kept, and the reservation key is renamed so a later `analysis-reanalyse` performs a fresh, budgeted regeneration instead of reusing the tombstone. Scoring treats a purged summary as unavailable. Every purge is recorded in the durable `retention_purges` audit table, which cleanup never deletes. The search index for the item is rebuilt in the same transaction, so removed text is no longer searchable.
 

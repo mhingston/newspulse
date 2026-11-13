@@ -7,6 +7,7 @@
 export const RETENTION_CLASSES = [
   "extracted_payload",
   "analysis_summary",
+  "feed_text",
 ] as const;
 export type RetentionClass = (typeof RETENTION_CLASSES)[number];
 
@@ -14,6 +15,7 @@ export interface RetentionPolicy {
   extractedPayloadDays?: number;
   analysisSummaryDays?: number;
   inboundBodyDays?: number;
+  feedTextDays?: number;
 }
 
 export const DAY_MS = 86_400_000;
@@ -45,6 +47,10 @@ export function retentionPolicy(
       "RETENTION_INBOUND_BODY_DAYS",
       env.RETENTION_INBOUND_BODY_DAYS,
     ),
+    feedTextDays: days(
+      "RETENTION_FEED_TEXT_DAYS",
+      env.RETENTION_FEED_TEXT_DAYS,
+    ),
   };
 }
 
@@ -58,7 +64,9 @@ export function retentionCutoff(
       ? policy.extractedPayloadDays
       : cls === "analysis_summary"
         ? policy.analysisSummaryDays
-        : policy.inboundBodyDays;
+        : cls === "feed_text"
+          ? policy.feedTextDays
+          : policy.inboundBodyDays;
   if (window === undefined) return null;
   return now - window * DAY_MS;
 }
@@ -68,6 +76,14 @@ export const PURGED_EXTRACTION = JSON.stringify({
   status: "purged",
   reason: "retention",
 });
+
+/**
+ * Feed text is not replaced by a sentinel string: a non-blank tombstone would
+ * be diffed as real content by observed-update and delivery-history, and a
+ * blank one would trigger re-extraction. The explicit `purged_at` marker on
+ * `content` and `content_versions` is the only signal, and every comparison
+ * reader excludes marked rows. The stored text is cleared.
+ */
 
 /** Tombstone for a removed analysis summary; never reusable as a cached analysis. */
 export const PURGED_ANALYSIS = '{"purged":true}';

@@ -20,6 +20,12 @@ export interface InboundBodyCandidate {
   itemId: string;
 }
 
+/** A feed-text row (`content` and `content_versions`) selected by age; never by generation. */
+export interface FeedTextCandidate {
+  itemId: string;
+  observedAt: number;
+}
+
 export interface RetentionReport {
   dryRun: boolean;
   policy: RetentionPolicy;
@@ -221,6 +227,52 @@ function purgeAnalysisCopies(
   }
 }
 
+/**
+ * Feed text whose content is settled (no unsettled processing job, including
+ * grouping, and a completed score) and whose versions are all older than the
+ * cutoff. Rows are identified by item, so each item is selected at most once
+ * per pass and an already-purged item is never selected again.
+ */
+function feedTextCandidates(
+  db: Database,
+  cutoff: number,
+  limit: number,
+): FeedTextCandidate[] {
+  return db
+    .query<{ item_id: string; observed_at: number }, [number, number]>(
+      `SELECT c.item_id AS item_id, max(v.observed_at) AS observed_at
+         FROM content c
+         JOIN items i ON i.id=c.item_id
+         JOIN content_versions v ON v.item_id=c.item_id
+        WHERE c.purged_at IS NULL AND c.text<>''
+          AND ${SETTLED_ITEM_SQL}
+          AND EXISTS (SELECT 1 FROM processing_jobs s WHERE s.item_id=c.item_id AND s.stage='score' AND s.status='done')
+        GROUP BY c.item_id
+        HAVING max(v.observed_at)<=?
+        ORDER BY c.item_id
+        LIMIT ?`,
+    )
+    .all(cutoff, limit)
+    .map((row) => ({ itemId: row.item_id, observedAt: row.observed_at }));
+}
+
+/**
+ * Clears the content and every version's text and marks each row purged. Rows
+ * stay so identity, observation timestamps, source references and the
+ * observed-update history remain; comparison readers exclude purged rows.
+ */
+function purgeFeedText(db: Database, itemId: string, now: number) {
+  db.query(
+    "UPDATE content SET text='',purged_at=? WHERE item_id=? AND purged_at IS NULL",
+  ).run(now, itemId);
+  db.query(
+    "UPDATE content_versions SET text='',purged_at=? WHERE item_id=? AND purged_at IS NULL",
+  ).run(now, itemId);
+  db.query(
+    "INSERT OR IGNORE INTO retention_purges(item_id,generation,class,purged_at,reason) VALUES(?,0,'feed_text',?,'retention')",
+  ).run(itemId, now);
+}
+
 /** Rebuilds one item's FTS row with the same composition as the search triggers. */
 function rebuildItemSearch(db: Database, itemId: string) {
   db.query(
@@ -244,12 +296,13 @@ export function runRetention(
   const extractCutoff = retentionCutoff(policy, "extracted_payload", now);
   const summaryCutoff = retentionCutoff(policy, "analysis_summary", now);
   const bodyCutoff = retentionCutoff(policy, "inbound_body", now);
+  const feedTextCutoff = retentionCutoff(policy, "feed_text", now);
   const reservationsActive = activeAnalysisReservation(db);
   const report: RetentionReport = {
     dryRun: options.dryRun,
     policy,
-    eligible: { extracted_payload: 0, analysis_summary: 0 },
-    purged: { extracted_payload: 0, analysis_summary: 0 },
+    eligible: { extracted_payload: 0, analysis_summary: 0, feed_text: 0 },
+    purged: { extracted_payload: 0, analysis_summary: 0, feed_text: 0 },
     inboundBodies: { eligible: 0, purged: 0 },
     deferred: 0,
     analysisReservationsActive: reservationsActive,
@@ -293,6 +346,19 @@ export function runRetention(
         rebuildItemSearch(db, body.itemId);
       }
     }
+    const feedText =
+      feedTextCutoff === null
+        ? []
+        : feedTextCandidates(db, feedTextCutoff, options.limit);
+    report.eligible.feed_text = feedText.length;
+    if (!options.dryRun)
+      for (const row of feedText) {
+        purgeFeedText(db, row.itemId, now);
+        items.add(row.itemId);
+        report.purged.feed_text += 1;
+        rebuildItemSearch(db, row.itemId);
+      }
+    for (const row of feedText) items.add(row.itemId);
     const candidates = [...extracted, ...summaries];
     for (const candidate of candidates) {
       items.add(candidate.itemId);
@@ -315,7 +381,8 @@ export function runRetention(
     report.complete =
       extracted.length < options.limit &&
       summaries.length < options.limit &&
-      bodies.length < options.limit;
+      bodies.length < options.limit &&
+      feedText.length < options.limit;
   });
   work.immediate();
   // Counting history is unbounded, so it runs after the writer lock is released.

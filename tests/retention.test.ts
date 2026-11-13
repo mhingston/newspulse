@@ -132,6 +132,7 @@ describe("content retention", () => {
       expect(report.eligible).toEqual({
         extracted_payload: 0,
         analysis_summary: 0,
+        feed_text: 0,
       });
       expect(store.search("alphaword")).toHaveLength(1);
     } finally {
@@ -167,6 +168,7 @@ describe("content retention", () => {
       expect(early.eligible).toEqual({
         extracted_payload: 0,
         analysis_summary: 0,
+        feed_text: 0,
       });
 
       const dry = store.retention(policy, {
@@ -176,8 +178,13 @@ describe("content retention", () => {
       expect(dry.eligible).toEqual({
         extracted_payload: 1,
         analysis_summary: 1,
+        feed_text: 0,
       });
-      expect(dry.purged).toEqual({ extracted_payload: 0, analysis_summary: 0 });
+      expect(dry.purged).toEqual({
+        extracted_payload: 0,
+        analysis_summary: 0,
+        feed_text: 0,
+      });
       expect(store.search("alphaword")).toHaveLength(1);
 
       const applied = store.retention(policy, {
@@ -187,6 +194,7 @@ describe("content retention", () => {
       expect(applied.purged).toEqual({
         extracted_payload: 1,
         analysis_summary: 1,
+        feed_text: 0,
       });
 
       const item = store.getItem(itemId)!;
@@ -239,6 +247,7 @@ describe("content retention", () => {
       expect(first.purged).toEqual({
         extracted_payload: 2,
         analysis_summary: 2,
+        feed_text: 0,
       });
       const second = store.retention(policy, {
         dryRun: false,
@@ -247,10 +256,12 @@ describe("content retention", () => {
       expect(second.eligible).toEqual({
         extracted_payload: 0,
         analysis_summary: 0,
+        feed_text: 0,
       });
       expect(second.purged).toEqual({
         extracted_payload: 0,
         analysis_summary: 0,
+        feed_text: 0,
       });
       const audit = store.sqlite
         .query<{ n: number }, []>("SELECT count(*) n FROM retention_purges")
@@ -284,6 +295,7 @@ describe("content retention", () => {
       expect(report.purged).toEqual({
         extracted_payload: 0,
         analysis_summary: 0,
+        feed_text: 0,
       });
       expect(report.deferred).toBeGreaterThanOrEqual(1);
       expect(
@@ -420,6 +432,7 @@ describe("content retention", () => {
       if (
         file.endsWith(".sql") &&
         !file.startsWith("0047_") &&
+        !file.startsWith("0049_") &&
         !file.startsWith("0048_")
       )
         copyFileSync(join(migrations, file), join(old, file));
@@ -429,7 +442,9 @@ describe("content retention", () => {
     );
     journal.entries = journal.entries.filter(
       (entry: { tag: string }) =>
-        !entry.tag.startsWith("0047_") && !entry.tag.startsWith("0048_"),
+        !entry.tag.startsWith("0047_") &&
+        !entry.tag.startsWith("0048_") &&
+        !entry.tag.startsWith("0049_"),
     );
     mkdirSync(join(old, "meta"), { recursive: true });
     writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
@@ -437,7 +452,8 @@ describe("content retention", () => {
       if (
         file.endsWith("_snapshot.json") &&
         !file.startsWith("0047") &&
-        !file.startsWith("0048")
+        !file.startsWith("0048") &&
+        !file.startsWith("0049")
       )
         copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
     }
@@ -893,6 +909,7 @@ describe("retention review hardening", () => {
       if (
         file.endsWith(".sql") &&
         !file.startsWith("0047_") &&
+        !file.startsWith("0049_") &&
         !file.startsWith("0048_")
       )
         copyFileSync(join(migrations, file), join(old, file));
@@ -902,14 +919,17 @@ describe("retention review hardening", () => {
     );
     journal.entries = journal.entries.filter(
       (entry: { tag: string }) =>
-        !entry.tag.startsWith("0047_") && !entry.tag.startsWith("0048_"),
+        !entry.tag.startsWith("0047_") &&
+        !entry.tag.startsWith("0048_") &&
+        !entry.tag.startsWith("0049_"),
     );
     writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
     for (const file of readdirSync(join(migrations, "meta"))) {
       if (
         file.endsWith("_snapshot.json") &&
         !file.startsWith("0047") &&
-        !file.startsWith("0048")
+        !file.startsWith("0048") &&
+        !file.startsWith("0049")
       )
         copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
     }

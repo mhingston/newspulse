@@ -792,11 +792,11 @@ export class Store {
     const editorial = profiles.latestEditorial();
     const versions = this.sqlite
       .query<ObservedVersion & { observed_at: number }, [string, number]>(
-        `WITH recent AS (SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM content_versions WHERE item_id=? AND observed_at>=?),
+        `WITH recent AS (SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM content_versions WHERE item_id=? AND observed_at>=? AND purged_at IS NULL),
         anchors AS (SELECT DISTINCT (SELECT max(p.id) FROM content_versions p WHERE p.source_id=r.source_id AND p.native_id=r.native_id AND p.id<r.id) AS id FROM recent r
           WHERE r.id=(SELECT min(q.id) FROM recent q WHERE q.source_id=r.source_id AND q.native_id=r.native_id))
         SELECT id,source_id,native_id,title,text,backfilled,observed_at FROM recent
-        UNION ALL SELECT v.id,v.source_id,v.native_id,v.title,v.text,v.backfilled,v.observed_at FROM content_versions v JOIN anchors a ON a.id=v.id ORDER BY id`,
+        UNION ALL SELECT v.id,v.source_id,v.native_id,v.title,v.text,v.backfilled,v.observed_at FROM content_versions v JOIN anchors a ON a.id=v.id AND v.purged_at IS NULL ORDER BY id`,
       )
       .all(job.item_id, now - 7 * 86_400_000);
     const update = currentObservedUpdate(versions);
@@ -1222,7 +1222,7 @@ export class Store {
     if (body)
       this.sqlite
         .query(
-          "INSERT INTO content(item_id,text,format) VALUES(?,?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text,format=excluded.format WHERE content.text=''",
+          "INSERT INTO content(item_id,text,format) VALUES(?,?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text,format=excluded.format WHERE content.text='' AND content.purged_at IS NULL",
         )
         .run(winner, body.text, body.format);
     this.sqlite.query("DELETE FROM content WHERE item_id=?").run(loser);
@@ -1327,7 +1327,7 @@ export class Store {
       const originalUrl = candidate.sourceUrl ?? candidate.url ?? prior.url;
       const lastBody = this.sqlite
         .query<{ text: string }, [string, string]>(
-          "SELECT text FROM content_versions WHERE source_id=? AND native_id=? AND text<>'' ORDER BY id DESC LIMIT 1",
+          "SELECT text FROM content_versions WHERE source_id=? AND native_id=? AND text<>'' AND purged_at IS NULL ORDER BY id DESC LIMIT 1",
         )
         .get(sourceId, candidate.nativeId)?.text;
       const changed =
@@ -1442,22 +1442,25 @@ export class Store {
       this.sqlite
         .query(
           `UPDATE items SET title=? WHERE id=? AND EXISTS
-        (SELECT 1 FROM content WHERE item_id=? AND text='')`,
+        (SELECT 1 FROM content WHERE item_id=? AND text='' AND purged_at IS NULL)`,
         )
         .run(candidate.title, item.id, item.id);
     }
     const existing = this.sqlite
-      .query<{ text: string }, [string]>(
-        "SELECT text FROM content WHERE item_id=?",
+      .query<{ text: string; purged_at: number | null }, [string]>(
+        "SELECT text,purged_at FROM content WHERE item_id=?",
       )
       .get(item.id);
     this.sqlite
       .query(
-        "INSERT INTO content(item_id,text) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text WHERE content.text=''",
+        "INSERT INTO content(item_id,text) VALUES(?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text WHERE content.text='' AND content.purged_at IS NULL",
       )
       .run(item.id, candidate.text);
     const generation =
-      existing && !existing.text && candidate.text
+      existing &&
+      !existing.text &&
+      existing.purged_at === null &&
+      candidate.text
         ? this.sqlite
             .query<{ n: number }, [string]>(
               "SELECT coalesce(max(generation),0)+1 AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",

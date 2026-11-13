@@ -48,6 +48,7 @@ export const contentVersions = sqliteTable(
     text: text().notNull(),
     observedAt: integer("observed_at").notNull(),
     backfilled: integer().notNull().default(0),
+    purgedAt: integer("purged_at"),
   },
   (t) => [
     index("content_versions_source_native").on(t.sourceId, t.nativeId, t.id),
@@ -138,6 +139,7 @@ export const content = sqliteTable("content", {
     .references(() => items.id),
   text: text().notNull(),
   format: text().notNull().default("feed-text"),
+  purgedAt: integer("purged_at"),
 });
 export const jobs = sqliteTable(
   "jobs",
