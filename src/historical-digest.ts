@@ -321,7 +321,7 @@ export function historicalDigestDraft(
           [string, number, number]
         >(
           `SELECT v.source_id,v.native_id,v.url,length(CAST(v.source_id AS BLOB))+length(CAST(v.native_id AS BLOB))+coalesce(length(CAST(v.url AS BLOB)),0) AS bytes
-         FROM content_versions v WHERE v.item_id=? AND v.observed_at<=? AND v.purged_at IS NULL
+         FROM content_versions v WHERE v.item_id=? AND v.observed_at<=?
          AND v.id=(SELECT max(x.id) FROM content_versions x WHERE x.item_id=v.item_id AND x.source_id=v.source_id AND x.native_id=v.native_id AND x.observed_at<=?)
          ORDER BY v.source_id,v.native_id LIMIT 21`,
         )

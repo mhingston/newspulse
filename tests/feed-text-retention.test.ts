@@ -200,6 +200,95 @@ describe("feed-text retention", () => {
     }
   });
 
+  test("preview counts feed text protected by pending processing as deferred", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.sqlite
+        .query(
+          "UPDATE processing_jobs SET status='pending' WHERE item_id=? AND stage='score'",
+        )
+        .run(itemId);
+      const preview = store.retention(
+        retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }),
+        { dryRun: true, now: DAY0 + 5 * DAY_MS },
+      );
+      expect(preview.purged.feed_text).toBe(0);
+      expect(preview.deferred).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("merging a purged loser keeps the transferred body tombstoned", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // The winner has an unpurged empty placeholder, so a plain copy would
+      // leave it blank and eligible for ingestion to refill.
+      store.sqlite.exec(`INSERT INTO items(id,identity,title,ingested_at) VALUES
+        ('winner','winner-identity','Winner',${DAY0});
+        INSERT INTO content(item_id,text,format) VALUES('winner','','feed-text');`);
+      (
+        store as unknown as { mergeItems(w: string, l: string): void }
+      ).mergeItems("winner", itemId);
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get("winner"),
+      ).toEqual({ text: "", purged_at: DAY0 + 5 * DAY_MS });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("an unchanged re-poll after purge neither restores text nor queues extraction", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      store.enqueueDue(DAY0 + 6 * DAY_MS);
+      const poll = store.claim(DAY0 + 6 * DAY_MS)!;
+      store.complete(
+        poll,
+        { items: parseFeed(feed("Alpha", "feedtextword body"), source.url) },
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string }, [string]>(
+            "SELECT text FROM content WHERE item_id=?",
+          )
+          .get(itemId)!.text,
+      ).toBe("");
+      expect(store.search("feedtextword")).toHaveLength(0);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      ).toBe(1);
+      const second = store.retention(
+        retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }),
+        { dryRun: false, now: DAY0 + 7 * DAY_MS },
+      );
+      expect(second.purged.feed_text).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
   test("observed-update comparison never reads purged text", () => {
     const store = new Store(join(temp(), "db.sqlite"));
     try {

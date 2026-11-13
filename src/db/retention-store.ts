@@ -118,6 +118,7 @@ function countDeferred(
   db: Database,
   extractCutoff: number | null,
   summaryCutoff: number | null,
+  feedTextCutoff: number | null,
 ): number {
   const extracted =
     extractCutoff === null
@@ -141,7 +142,22 @@ function countDeferred(
             AND ${UNSETTLED_ITEM_SQL}`,
           )
           .get(summaryCutoff)?.n ?? 0);
-  return extracted + summaries;
+  const feedText =
+    feedTextCutoff === null
+      ? 0
+      : (db
+          .query<{ n: number }, [number]>(
+            `SELECT count(*) n FROM (
+              SELECT c.item_id FROM content c
+                JOIN items i ON i.id=c.item_id
+                JOIN content_versions v ON v.item_id=c.item_id
+               WHERE c.purged_at IS NULL AND c.text<>''
+                 AND ${UNSETTLED_ITEM_SQL}
+               GROUP BY c.item_id
+               HAVING max(v.observed_at)<=?)`,
+          )
+          .get(feedTextCutoff)?.n ?? 0);
+  return extracted + summaries + feedText;
 }
 
 /**
@@ -386,6 +402,11 @@ export function runRetention(
   });
   work.immediate();
   // Counting history is unbounded, so it runs after the writer lock is released.
-  report.deferred = countDeferred(db, extractCutoff, summaryCutoff);
+  report.deferred = countDeferred(
+    db,
+    extractCutoff,
+    summaryCutoff,
+    feedTextCutoff,
+  );
   return report;
 }

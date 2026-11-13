@@ -1215,16 +1215,17 @@ export class Store {
       .query("UPDATE digest_activity_events SET item_id=? WHERE item_id=?")
       .run(winner, loser);
     const body = this.sqlite
-      .query<{ text: string; format: string }, [string]>(
-        "SELECT text,format FROM content WHERE item_id=?",
-      )
+      .query<
+        { text: string; format: string; purged_at: number | null },
+        [string]
+      >("SELECT text,format,purged_at FROM content WHERE item_id=?")
       .get(loser);
     if (body)
       this.sqlite
         .query(
-          "INSERT INTO content(item_id,text,format) VALUES(?,?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text,format=excluded.format WHERE content.text='' AND content.purged_at IS NULL",
+          "INSERT INTO content(item_id,text,format,purged_at) VALUES(?,?,?,?) ON CONFLICT(item_id) DO UPDATE SET text=excluded.text,format=excluded.format,purged_at=excluded.purged_at WHERE content.text='' AND content.purged_at IS NULL",
         )
-        .run(winner, body.text, body.format);
+        .run(winner, body.text, body.format, body.purged_at);
     this.sqlite.query("DELETE FROM content WHERE item_id=?").run(loser);
     this.sqlite
       .query(
@@ -1330,48 +1331,65 @@ export class Store {
           "SELECT text FROM content_versions WHERE source_id=? AND native_id=? AND text<>'' AND purged_at IS NULL ORDER BY id DESC LIMIT 1",
         )
         .get(sourceId, candidate.nativeId)?.text;
-      const changed =
-        !previous ||
-        previous.title !== candidate.title ||
-        (candidate.text !== "" && lastBody !== candidate.text) ||
-        previous.url !== originalUrl;
+      const purged =
+        this.sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT count(*) n FROM content WHERE item_id=? AND purged_at IS NOT NULL",
+          )
+          .get(prior.item_id)!.n > 0;
+      // A purged body cannot be compared, so an unchanged title and URL keep it
+      // tombstoned: no text is restored and no extraction is queued.
+      const changed = purged
+        ? !previous ||
+          previous.title !== candidate.title ||
+          previous.url !== originalUrl
+        : !previous ||
+          previous.title !== candidate.title ||
+          (candidate.text !== "" && lastBody !== candidate.text) ||
+          previous.url !== originalUrl;
       if (changed || previous?.backfilled) {
         this.sqlite
           .query(
-            "INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at) VALUES(?,?,?,?,?,?,?)",
+            "INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at,purged_at) VALUES(?,?,?,?,?,?,?,?)",
           )
           .run(
             prior.item_id,
             sourceId,
             candidate.nativeId,
             candidate.title,
-            candidate.text,
+            purged ? "" : candidate.text,
             originalUrl,
             now,
+            purged ? now : null,
           );
       }
       if (changed) {
-        if (candidate.text)
-          this.sqlite
-            .query("UPDATE content SET text=? WHERE item_id=?")
-            .run(candidate.text, prior.item_id);
         this.sqlite
           .query(
             "UPDATE item_sources SET url=? WHERE source_id=? AND native_id=?",
           )
           .run(originalUrl, sourceId, candidate.nativeId);
+        this.sqlite
+          .query("UPDATE items SET title=? WHERE id=?")
+          .run(candidate.title, prior.item_id);
+        if (candidate.url)
+          this.sqlite
+            .query("UPDATE items SET url=coalesce(url,?) WHERE id=?")
+            .run(canonicalItemUrl(candidate.url), prior.item_id);
+      }
+      if (changed && !purged) {
+        if (candidate.text)
+          this.sqlite
+            .query("UPDATE content SET text=? WHERE item_id=?")
+            .run(candidate.text, prior.item_id);
         const generation = this.sqlite
           .query<{ n: number }, [string]>(
             "SELECT coalesce(max(generation),0)+1 AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
           )
           .get(prior.item_id)!.n;
         this.sqlite
-          .query("UPDATE items SET status='ingested',title=? WHERE id=?")
-          .run(candidate.title, prior.item_id);
-        if (candidate.url)
-          this.sqlite
-            .query("UPDATE items SET url=coalesce(url,?) WHERE id=?")
-            .run(canonicalItemUrl(candidate.url), prior.item_id);
+          .query("UPDATE items SET status='ingested' WHERE id=?")
+          .run(prior.item_id);
         this.enqueueProcessing(
           "extract",
           prior.item_id,
@@ -1380,7 +1398,7 @@ export class Store {
           sourceId,
           inbound ? (candidate.url ?? null) : originalUrl,
         );
-      } else this.enqueueProcessing("extract", prior.item_id, now);
+      } else if (!purged) this.enqueueProcessing("extract", prior.item_id, now);
       this.insertChildren(candidate, sourceId, now, prior.item_id);
       if (changed || (owner && owner !== previousRef?.item_id))
         this.markGroupingDirty(prior.item_id, now);
