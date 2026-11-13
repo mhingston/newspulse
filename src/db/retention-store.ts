@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import {
+  PURGED_ANALYSIS,
   PURGED_EXTRACTION,
   retentionCutoff,
   type RetentionClass,
@@ -27,13 +28,14 @@ export interface RetentionReport {
 }
 
 /**
- * Any queued or running extract, analyse or score stage may still read the
- * payload, so it blocks removal. Grouping reads only current item text and is
- * excluded; a disabled analysis stage that never ran therefore keeps payloads
- * until an operator decides, which is the conservative outcome.
+ * Any queued or running extract, analyse, group or score stage may still read
+ * the payload, so it blocks removal. Grouping reads extraction text to detect
+ * syndicated coverage, so it is included. A disabled analysis stage that never
+ * ran therefore keeps payloads until an operator decides, which is the
+ * conservative outcome.
  */
 const UNSETTLED_ITEM_SQL = `EXISTS (
-  SELECT 1 FROM processing_jobs p WHERE p.item_id=i.id AND p.stage<>'group' AND p.status IN ('pending','running'))`;
+  SELECT 1 FROM processing_jobs p WHERE p.item_id=i.id AND p.status IN ('pending','running'))`;
 const SETTLED_ITEM_SQL = `NOT ${UNSETTLED_ITEM_SQL}`;
 
 /**
@@ -135,6 +137,56 @@ function activeAnalysisReservation(db: Database): boolean {
     .get();
 }
 
+/**
+ * Removes the summary from every copy of the analysis: the analysis row, the
+ * completed analyse job and the settled budget reservation. Accounting
+ * (tokens, micros, status) is kept. The reservation key is renamed so the
+ * original deterministic key is free for a budgeted regeneration and purged
+ * results are never returned from the cache.
+ */
+function purgeAnalysisCopies(
+  db: Database,
+  itemId: string,
+  generation: number,
+  now: number,
+) {
+  const rows = db
+    .query<
+      {
+        id: string;
+        input_hash: string;
+        provider: string;
+        model: string;
+        prompt_version: string;
+        profiles: string;
+        created_at: number;
+      },
+      [string, number]
+    >(
+      "SELECT id,input_hash,provider,model,prompt_version,profiles,created_at FROM analyses WHERE item_id=? AND generation=?",
+    )
+    .all(itemId, generation);
+  db.query("UPDATE analyses SET result=? WHERE item_id=? AND generation=?").run(
+    PURGED_ANALYSIS,
+    itemId,
+    generation,
+  );
+  db.query(
+    "UPDATE processing_jobs SET result=? WHERE item_id=? AND stage='analyse' AND generation=? AND status='done' AND result IS NOT NULL",
+  ).run(PURGED_ANALYSIS, itemId, generation);
+  for (const row of rows) {
+    const settled = db
+      .query<{ key: string }, [string, string, string, string]>(
+        "SELECT key FROM analysis_reservations WHERE status='settled' AND json_valid(result) AND json_extract(result,'$.inputHash')=? AND json_extract(result,'$.provider')=? AND json_extract(result,'$.model')=? AND json_extract(result,'$.promptVersion')=?",
+      )
+      .all(row.input_hash, row.provider, row.model, row.prompt_version);
+    for (const { key } of settled)
+      db.query(
+        "UPDATE analysis_reservations SET key=?,result=? WHERE key=?",
+      ).run(`purged:${key}:${row.id}`, PURGED_ANALYSIS, key);
+  }
+}
+
 /** Rebuilds one item's FTS row with the same composition as the search triggers. */
 function rebuildItemSearch(db: Database, itemId: string) {
   db.query(
@@ -188,9 +240,7 @@ export function runRetention(
           "UPDATE processing_jobs SET result=? WHERE item_id=? AND stage='extract' AND generation=? AND status='done' AND outcome='extracted'",
         ).run(PURGED_EXTRACTION, candidate.itemId, candidate.generation);
       } else {
-        db.query(
-          "UPDATE analyses SET result='{\"purged\":true}' WHERE item_id=? AND generation=?",
-        ).run(candidate.itemId, candidate.generation);
+        purgeAnalysisCopies(db, candidate.itemId, candidate.generation, now);
       }
       db.query(
         "INSERT INTO retention_purges(item_id,generation,class,purged_at,reason) VALUES(?,?,?,?,'retention')",
@@ -201,8 +251,9 @@ export function runRetention(
     report.scanned = items.size;
     report.complete =
       extracted.length < options.limit && summaries.length < options.limit;
-    report.deferred = countDeferred(db, extractCutoff, summaryCutoff);
   });
   work.immediate();
+  // Counting history is unbounded, so it runs after the writer lock is released.
+  report.deferred = countDeferred(db, extractCutoff, summaryCutoff);
   return report;
 }

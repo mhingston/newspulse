@@ -832,13 +832,18 @@ export class Store {
         "SELECT id,result,profiles,provider,model,prompt_version,input_hash FROM analyses WHERE item_id=? AND generation=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
       )
       .get(job.item_id, job.generation);
-    const analysis = analysisRow
-      ? {
-          ...analysisRow,
-          result: JSON.parse(analysisRow.result) as ScoringInput["analysis"],
-          profiles: JSON.parse(analysisRow.profiles) as unknown,
-        }
-      : null;
+    // A purged summary is unavailable to scoring, not an empty analysis.
+    const analysisPurged = analysisRow
+      ? (JSON.parse(analysisRow.result) as { purged?: boolean }).purged === true
+      : false;
+    const analysis =
+      analysisRow && !analysisPurged
+        ? {
+            ...analysisRow,
+            result: JSON.parse(analysisRow.result) as ScoringInput["analysis"],
+            profiles: JSON.parse(analysisRow.profiles) as unknown,
+          }
+        : null;
     const story = this.sqlite
       .query<
         {
@@ -1150,6 +1155,12 @@ export class Store {
     this.sqlite
       .query(
         "UPDATE item_scores SET item_id=?,generation=generation+? WHERE item_id=?",
+      )
+      .run(winner, offset, loser);
+    // Purge audits describe the moved generations; repoint them with the rows.
+    this.sqlite
+      .query(
+        "UPDATE retention_purges SET item_id=?,generation=generation+? WHERE item_id=?",
       )
       .run(winner, offset, loser);
     this.sqlite

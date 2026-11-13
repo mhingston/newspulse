@@ -6,6 +6,7 @@ import {
   type OpenAICompatibleAnalysis,
 } from "./adapters/analysis";
 import type { Store, ProcessingJob } from "./db/store";
+import { PURGED_ANALYSIS } from "./retention";
 
 export interface AnalysisOptions {
   provider: string;
@@ -56,9 +57,9 @@ export function analysisHandler(
     const prior = store.sqlite
       .query<
         { result: string; usage: string | null; cost: number | null },
-        [string, string, string, string, string, string]
+        [string, string, string, string, string, string, string]
       >(
-        "SELECT result,usage,cost FROM analyses WHERE item_id=? AND input_hash=? AND provider=? AND model=? AND prompt_version=? AND profiles=? ORDER BY created_at DESC LIMIT 1",
+        "SELECT result,usage,cost FROM analyses WHERE item_id=? AND input_hash=? AND provider=? AND model=? AND prompt_version=? AND profiles=? AND result<>? ORDER BY created_at DESC LIMIT 1",
       )
       .get(
         job.item_id,
@@ -67,6 +68,7 @@ export function analysisHandler(
         options.model,
         options.promptVersion,
         JSON.stringify(profiles),
+        PURGED_ANALYSIS,
       );
     if (prior)
       return {

@@ -1,4 +1,6 @@
 import type { Database } from "bun:sqlite";
+import { PURGED_ANALYSIS } from "./retention";
+
 export class AnalysisBudget {
   constructor(
     private db: Database,
@@ -52,14 +54,15 @@ export class AnalysisBudget {
       })
       .immediate();
   }
+  /** A purged (retention-removed) result is not a cache entry and is never returned. */
   result(key: string): string | null {
-    return (
+    const result =
       this.db
         .query<{ result: string | null }, [string]>(
           "SELECT result FROM analysis_reservations WHERE key=? AND status='settled'",
         )
-        .get(key)?.result ?? null
-    );
+        .get(key)?.result ?? null;
+    return result === null || result === PURGED_ANALYSIS ? null : result;
   }
   finish(key: string, result: string, tokens: number | null): boolean {
     if (tokens !== null && (!Number.isSafeInteger(tokens) || tokens < 0))

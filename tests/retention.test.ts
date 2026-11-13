@@ -20,6 +20,11 @@ import { DAY_MS, retentionPolicy } from "../src/retention";
 import { verifyDatabase } from "../src/recovery";
 import { parseFeed } from "../src/adapters/rss";
 import { DigestStore } from "../src/db/digest-store";
+import { OpenAICompatibleAnalysis } from "../src/adapters/analysis";
+import { AnalysisBudget } from "../src/analysis-budget";
+import { analysisHandler } from "../src/analysis-service";
+import { ProcessingWorker } from "../src/worker";
+import { scoreItem } from "../src/scoring";
 
 const dirs: string[] = [];
 function temp() {
@@ -66,6 +71,9 @@ function populatedItem(
       text: `payload ${summaryWord} body`,
     }),
   );
+  // Grouping reads extraction text, so the real pipeline settles it before purge.
+  const group = store.claimProcessing("group", now)!;
+  store.completeProcessing(group, "grouped", now);
   store.enqueueProcessing("analyse", item.id, now, extract.generation);
   const analyse = store.claimProcessing("analyse", now)!;
   store.completeAnalysis(
@@ -311,6 +319,28 @@ describe("content retention", () => {
         now: DAY0 + 10 * DAY_MS,
       });
       expect(resumed.purged.analysis_summary).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("bounded passes keep the deferred diagnostic outside the write lock", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const itemId = populatedItem(store, "Alpha", "alphaword", DAY0);
+      store.sqlite
+        .query(
+          "INSERT INTO processing_jobs(id,stage,item_id,generation,status,attempts,available_at,queued_at,created_at) VALUES('pending-ext-2','extract',?,2,'pending',0,?,?,?)",
+        )
+        .run(itemId, DAY0, DAY0, DAY0);
+      const report = store.retention(
+        retentionPolicy({ RETENTION_EXTRACTED_PAYLOAD_DAYS: "1" }),
+        { dryRun: false, limit: 1, now: DAY0 + 10 * DAY_MS },
+      );
+      expect(report.purged.extracted_payload).toBe(0);
+      expect(report.deferred).toBeGreaterThanOrEqual(1);
+      expect(report.complete).toBe(true);
     } finally {
       store.close();
     }
@@ -622,4 +652,320 @@ test("restored upgraded database keeps identity: re-polling and reprocessing do 
   } finally {
     reopened.close();
   }
+});
+
+describe("retention review hardening", () => {
+  const analysisSettings = {
+    endpoint: "https://api.example.test/v1/chat/completions",
+    model: "fake",
+    apiKey: "secret-key",
+    maxInputChars: 1000,
+    maxOutputTokens: 200,
+    timeoutMs: 1000,
+  };
+  const analysisReply = () =>
+    Response.json({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: JSON.stringify({
+              summary: "fresh regenerated summary",
+              classification: "paper",
+              claims: [],
+              uncertainty: [],
+            }),
+          },
+        },
+      ],
+      usage: { prompt_tokens: 1, completion_tokens: 1 },
+    });
+  const summaryOnly = retentionPolicy({ RETENTION_ANALYSIS_SUMMARY_DAYS: "1" });
+
+  test("pending or running grouping blocks payload purge until it settles", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const itemId = populatedItem(store, "Alpha", "alphaword", DAY0);
+      store.sqlite
+        .query(
+          "INSERT INTO processing_jobs(id,stage,item_id,generation,status,attempts,available_at,queued_at,created_at) VALUES('pending-group','group',?,2,'pending',0,?,?,?)",
+        )
+        .run(itemId, DAY0, DAY0, DAY0);
+      const deferred = store.retention(
+        retentionPolicy({ RETENTION_EXTRACTED_PAYLOAD_DAYS: "1" }),
+        { dryRun: false, now: DAY0 + 10 * DAY_MS },
+      );
+      expect(deferred.purged.extracted_payload).toBe(0);
+      expect(deferred.deferred).toBeGreaterThanOrEqual(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a purged summary is unavailable to a real rescore instead of throwing", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const itemId = populatedItem(store, "Alpha", "alphaword", DAY0);
+      store.retention(summaryOnly, { dryRun: false, now: DAY0 + 10 * DAY_MS });
+      // Simulate a profile/feedback-driven rescore of the same generation.
+      store.sqlite
+        .query(
+          "UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,queued_at=?,lease_token=NULL,lease_until=NULL WHERE item_id=? AND stage='score'",
+        )
+        .run(DAY0 + 11 * DAY_MS, DAY0 + 11 * DAY_MS, itemId);
+      const job = store.claimProcessing("score", DAY0 + 11 * DAY_MS)!;
+      const snapshot = store.scoringSnapshot(job, DAY0 + 11 * DAY_MS)!;
+      expect(snapshot.input.analysis).toBeNull();
+      expect(() => scoreItem(snapshot.input)).not.toThrow();
+      expect(scoreItem(snapshot.input).uncertainty).toContain(
+        "analysis_unavailable",
+      );
+    } finally {
+      store.close();
+    }
+  });
+
+  test("reanalysis after summary purge regenerates a summary instead of reusing the tombstone", async () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const itemId = populatedItem(store, "Alpha", "alphaword", DAY0);
+      // Drop the fixture's analysis so the real handler produces the summary,
+      // whose input hash then matches what reanalysis computes.
+      store.sqlite.query("DELETE FROM analyses").run();
+      store.sqlite.query("DELETE FROM analysis_reservations").run();
+      store.sqlite
+        .query(
+          "UPDATE processing_jobs SET status='pending',attempts=0,available_at=?,queued_at=?,lease_token=NULL,lease_until=NULL,result=NULL,outcome=NULL WHERE item_id=? AND stage='analyse'",
+        )
+        .run(DAY0, DAY0, itemId);
+      let calls = 0;
+      const client = new OpenAICompatibleAnalysis(
+        analysisSettings,
+        async () => {
+          calls += 1;
+          return analysisReply();
+        },
+      );
+      const budget = new AnalysisBudget(store.sqlite, {
+        maxTokens: 1000,
+        maxMicros: 1000,
+        maxConcurrent: 1,
+      });
+      const worker = new ProcessingWorker(store, {
+        analyse: analysisHandler(store, client, budget, {
+          provider: "fake",
+          model: "fake",
+          promptVersion: "v1",
+          reserveTokens: 100,
+          reserveMicros: 100,
+        }),
+      });
+      expect(await worker.drain("analyse")).toBe(1);
+      expect(calls).toBe(1);
+      expect(store.getItem(itemId)?.summary).toBe("fresh regenerated summary");
+
+      // The handler stamps wall-clock time, so the retention clock is advanced from it.
+      // The new analysis invalidated the score; settle it as the pipeline would.
+      const score = store.claimProcessing("score")!;
+      store.completeProcessing(score, "scored", Date.now());
+      const later = Date.now() + 10 * DAY_MS;
+      const purged = store.retention(summaryOnly, {
+        dryRun: false,
+        now: later,
+      });
+      expect(purged.purged.analysis_summary).toBe(1);
+      expect(store.getItem(itemId)?.summary).toBeNull();
+      expect(store.requestReanalysis(itemId)).toBe(true);
+      expect(await worker.drain("analyse")).toBe(1);
+      expect(calls).toBe(2);
+      expect(store.getItem(itemId)?.summary).toBe("fresh regenerated summary");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("no summary payload remains in analyse results or settled reservations after purge", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const itemId = populatedItem(store, "Alpha", "alphaword", DAY0);
+      store.sqlite
+        .query(
+          "INSERT INTO analysis_reservations(key,tokens,micros,status,result) VALUES('k-alpha',1,1,'settled',?)",
+        )
+        .run(
+          JSON.stringify({
+            inputHash: "hash-Alpha",
+            provider: "fake",
+            model: "fake",
+            promptVersion: "v1",
+            analysis: { summary: "summary alphaword" },
+          }),
+        );
+      store.sqlite
+        .query(
+          "UPDATE processing_jobs SET result=? WHERE item_id=? AND stage='analyse'",
+        )
+        .run(
+          JSON.stringify({
+            inputHash: "hash-Alpha",
+            analysis: { summary: "summary alphaword" },
+          }),
+          itemId,
+        );
+      store.retention(summaryOnly, { dryRun: false, now: DAY0 + 10 * DAY_MS });
+      const dump = JSON.stringify([
+        store.sqlite
+          .query("SELECT result FROM processing_jobs WHERE item_id=?")
+          .all(itemId),
+        store.sqlite.query("SELECT result FROM analysis_reservations").all(),
+        store.sqlite.query("SELECT result FROM analyses").all(),
+      ]);
+      expect(dump).not.toContain("summary alphaword");
+      expect(dump).not.toContain("inputHash");
+      expect(
+        store.sqlite
+          .query<{ status: string; tokens: number }, []>(
+            "SELECT status,tokens FROM analysis_reservations",
+          )
+          .get(),
+      ).toEqual({ status: "settled", tokens: 1 });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("merging items moves purge audits to the surviving item", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const loserId = populatedItem(store, "Alpha", "alphaword", DAY0);
+      const winnerId = populatedItem(store, "Beta", "betaword", DAY0);
+      store.retention(summaryOnly, { dryRun: false, now: DAY0 + 10 * DAY_MS });
+      const loserAudits = store.getItem(loserId)!.retention.length;
+      const winnerAudits = store.getItem(winnerId)!.retention.length;
+      expect(loserAudits).toBeGreaterThan(0);
+      (
+        store as unknown as { mergeItems(w: string, l: string): void }
+      ).mergeItems(winnerId, loserId);
+      const merged = store.getItem(winnerId)!;
+      expect(merged.retention.map((row) => row.class)).toContain(
+        "analysis_summary",
+      );
+      expect(merged.retention.length).toBe(loserAudits + winnerAudits);
+      expect(
+        store.sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT count(*) n FROM retention_purges WHERE item_id=?",
+          )
+          .get(loserId)!.n,
+      ).toBe(0);
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM (SELECT item_id,generation,class FROM retention_purges GROUP BY 1,2,3 HAVING count(*)>1)",
+          )
+          .get()!.n,
+      ).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("verification accepts an unmigrated prior-version (0046) backup without modifying it", () => {
+    const dir = temp();
+    const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
+    const old = join(dir, "prior-migrations");
+    mkdirSync(join(old, "meta"), { recursive: true });
+    for (const file of readdirSync(migrations)) {
+      if (file.endsWith(".sql") && file !== "0047_retention_purges.sql")
+        copyFileSync(join(migrations, file), join(old, file));
+    }
+    const journal = JSON.parse(
+      readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
+    );
+    journal.entries = journal.entries.filter(
+      (entry: { tag: string }) => entry.tag !== "0047_retention_purges",
+    );
+    writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
+    for (const file of readdirSync(join(migrations, "meta"))) {
+      if (file.endsWith("_snapshot.json") && !file.startsWith("0047"))
+        copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
+    }
+    const path = join(dir, "prior.sqlite");
+    const db = new Database(path, { create: true, strict: true });
+    migrate(drizzle(db), { migrationsFolder: old });
+    db.close();
+    const before = readFileSync(path);
+    const report = verifyDatabase(path);
+    expect(report.problems).toEqual([]);
+    expect(report.ok).toBe(true);
+    expect(report.migrations).toBe(journal.entries.length);
+    expect(readFileSync(path).equals(before)).toBe(true);
+  });
+
+  test("verification rejects an empty migration journal", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    populatedItem(store, "Alpha", "alphaword", DAY0);
+    store.close();
+    const path = join(dir, "db.sqlite");
+    const db = new Database(path, { strict: true });
+    db.query("DELETE FROM __drizzle_migrations").run();
+    db.close();
+    const report = verifyDatabase(path);
+    expect(report.ok).toBe(false);
+    expect(report.migrations).toBe(0);
+    expect(report.problems.join(" ")).toContain("migration journal is empty");
+  });
+
+  test("verification accepts a populated, purged database with consistent search rows", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    populatedItem(store, "Alpha", "alphaword", DAY0);
+    store.retention(
+      retentionPolicy({
+        RETENTION_EXTRACTED_PAYLOAD_DAYS: "1",
+        RETENTION_ANALYSIS_SUMMARY_DAYS: "1",
+      }),
+      { dryRun: false, now: DAY0 + 10 * DAY_MS },
+    );
+    store.close();
+    const report = verifyDatabase(join(dir, "db.sqlite"));
+    expect(report.problems).toEqual([]);
+    expect(report.ftsConsistent).toBe(true);
+  });
+
+  test("verification rejects stale indexed text balanced by nothing", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    populatedItem(store, "Alpha", "alphaword", DAY0);
+    store.close();
+    const path = join(dir, "db.sqlite");
+    const db = new Database(path, { strict: true });
+    db.query("UPDATE items_fts SET text='stale words only'").run();
+    db.close();
+    const report = verifyDatabase(path);
+    expect(report.ftsConsistent).toBe(false);
+    expect(report.problems.join(" ")).toContain("stale");
+  });
+
+  test("verification rejects a missing item row balanced by an orphan search row", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    populatedItem(store, "Alpha", "alphaword", DAY0);
+    store.close();
+    const path = join(dir, "db.sqlite");
+    const db = new Database(path, { strict: true });
+    db.query("UPDATE items_fts SET rowid=9999").run();
+    db.close();
+    const report = verifyDatabase(path);
+    expect(report.ftsConsistent).toBe(false);
+    expect(report.ok).toBe(false);
+    expect(report.problems.join(" ")).toContain("missing from search index");
+    expect(report.problems.join(" ")).toContain("orphaned search index");
+  });
 });

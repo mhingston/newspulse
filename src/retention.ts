@@ -61,3 +61,6 @@ export const PURGED_EXTRACTION = JSON.stringify({
   status: "purged",
   reason: "retention",
 });
+
+/** Tombstone for a removed analysis summary; never reusable as a cached analysis. */
+export const PURGED_ANALYSIS = '{"purged":true}';
