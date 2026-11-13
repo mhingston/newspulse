@@ -8,6 +8,8 @@ import {
 } from "../observed-update";
 import { ProfileStore } from "../profiles";
 import { healthReport } from "../health";
+import { runRetention, type RetentionReport } from "./retention-store";
+import type { RetentionPolicy } from "../retention";
 import { advanceScoreInvalidation, invalidateScores } from "./score-queue";
 import { SCORING_CRITERIA_VERSION, type ScoringInput } from "../scoring";
 import { drizzle } from "drizzle-orm/bun-sqlite";
@@ -830,13 +832,18 @@ export class Store {
         "SELECT id,result,profiles,provider,model,prompt_version,input_hash FROM analyses WHERE item_id=? AND generation=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
       )
       .get(job.item_id, job.generation);
-    const analysis = analysisRow
-      ? {
-          ...analysisRow,
-          result: JSON.parse(analysisRow.result) as ScoringInput["analysis"],
-          profiles: JSON.parse(analysisRow.profiles) as unknown,
-        }
-      : null;
+    // A purged summary is unavailable to scoring, not an empty analysis.
+    const analysisPurged = analysisRow
+      ? (JSON.parse(analysisRow.result) as { purged?: boolean }).purged === true
+      : false;
+    const analysis =
+      analysisRow && !analysisPurged
+        ? {
+            ...analysisRow,
+            result: JSON.parse(analysisRow.result) as ScoringInput["analysis"],
+            profiles: JSON.parse(analysisRow.profiles) as unknown,
+          }
+        : null;
     const story = this.sqlite
       .query<
         {
@@ -1148,6 +1155,12 @@ export class Store {
     this.sqlite
       .query(
         "UPDATE item_scores SET item_id=?,generation=generation+? WHERE item_id=?",
+      )
+      .run(winner, offset, loser);
+    // Purge audits describe the moved generations; repoint them with the rows.
+    this.sqlite
+      .query(
+        "UPDATE retention_purges SET item_id=?,generation=generation+? WHERE item_id=?",
       )
       .run(winner, offset, loser);
     this.sqlite
@@ -1727,11 +1740,16 @@ export class Store {
         "SELECT provider,model,prompt_version,input_hash,profiles,result,usage,cost,created_at FROM analyses WHERE item_id=? AND generation=(SELECT max(generation) FROM processing_jobs WHERE item_id=analyses.item_id AND stage='extract') ORDER BY created_at DESC LIMIT 1",
       )
       .get(id);
+    const analysisPurged = analysisRow
+      ? (JSON.parse(analysisRow.result) as { purged?: boolean }).purged === true
+      : false;
     const analysis = analysisRow
       ? {
           ...analysisRow,
           profiles: JSON.parse(analysisRow.profiles),
-          result: JSON.parse(analysisRow.result) as { summary: string },
+          result: analysisPurged
+            ? ({ purged: true, summary: null } as const)
+            : (JSON.parse(analysisRow.result) as { summary: string }),
           usage: analysisRow.usage ? JSON.parse(analysisRow.usage) : null,
         }
       : null;
@@ -1777,13 +1795,28 @@ export class Store {
         const value = this.processingResult("extract", id);
         if (!value) return null;
         try {
-          return JSON.parse(value) as { text?: string; status?: string };
+          return JSON.parse(value) as {
+            text?: string;
+            status?: string;
+            reason?: string;
+          };
         } catch {
           return null;
         }
       })(),
       analysis,
-      summary: analysis?.result.summary ?? null,
+      summary:
+        analysis && !analysisPurged
+          ? (analysis.result as { summary: string }).summary
+          : null,
+      retention: this.sqlite
+        .query<
+          { class: string; generation: number; purged_at: number },
+          [string]
+        >(
+          "SELECT class,generation,purged_at FROM retention_purges WHERE item_id=? ORDER BY purged_at,id",
+        )
+        .all(id),
       analysis_status: (() => {
         const job = this.sqlite
           .query<
@@ -1934,5 +1967,16 @@ export class Store {
     if (path === ":memory:") throw new Error("Backup needs a file path");
     mkdirSync(dirname(path), { recursive: true });
     this.sqlite.query("VACUUM INTO ?").run(path);
+  }
+
+  /** Dry-run or apply one bounded, idempotent retention pass. */
+  retention(
+    policy: RetentionPolicy,
+    options: { dryRun: boolean; limit?: number; now?: number },
+  ): RetentionReport {
+    return runRetention(this.sqlite, policy, options.now ?? Date.now(), {
+      dryRun: options.dryRun,
+      limit: options.limit ?? 500,
+    });
   }
 }

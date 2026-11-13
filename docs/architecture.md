@@ -29,7 +29,7 @@ Jobs are atomically claimed using an immediate transaction. A 60-second lease ha
 
 FTS results are immediately available after ingestion. Extraction, analysis and scoring are separate processing stages. Digest-like entries with at least five unique links across three hosts retain their original item and fan out up to 50 attributed candidates. Child candidates have titles/URLs but no fetched article body in M1. Feed responses default to at most 1,000 entries; truncation and entry counts are exposed in status, and operators can configure per-feed limits. Older entries beyond a cap are not backfilled.
 
-No raw XML/HTML is retained. Metadata, cleaned content and job history currently have indefinite retention. Backups use SQLite `VACUUM INTO`, which includes committed WAL contents and FTS consistently. Restore checks integrity and requires an unused target path; stop the service and retain the old database until validation succeeds.
+No raw XML/HTML is retained. Metadata, cleaned feed content and job history keep indefinite retention. Derived extraction payloads and analysis summaries can be expired by explicit windows (`RETENTION_EXTRACTED_PAYLOAD_DAYS`, `RETENTION_ANALYSIS_SUMMARY_DAYS`) through bounded, idempotent passes that leave an audit row in `retention_purges`; see the README retention section. Backups use SQLite `VACUUM INTO`, which includes committed WAL contents and FTS consistently. Restore checks integrity and requires an unused target path; stop the service and retain the old database until validation succeeds.
 
 ## Reference review
 

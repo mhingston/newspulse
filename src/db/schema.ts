@@ -722,6 +722,26 @@ export const digestFeedbackTokens = sqliteTable(
  * edition that prompted it; `itemId` is a historical reference and survives
  * canonical item merges. Missing clicks and unread material are never events.
  */
+/**
+ * Durable audit of retention purges. Rows are never deleted by cleanup, so a
+ * purged payload remains explainable after its content is gone.
+ */
+export const retentionPurges = sqliteTable(
+  "retention_purges",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    itemId: text("item_id").notNull(),
+    generation: integer().notNull(),
+    class: text().notNull(),
+    purgedAt: integer("purged_at").notNull(),
+    reason: text().notNull(),
+  },
+  (t) => [
+    uniqueIndex("retention_purge_identity").on(t.itemId, t.generation, t.class),
+    index("retention_purge_time").on(t.purgedAt),
+  ],
+);
+
 export const itemFeedback = sqliteTable(
   "item_feedback",
   {
