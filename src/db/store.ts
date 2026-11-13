@@ -334,15 +334,21 @@ export class Store {
       })
       .immediate();
   }
-  private cancelSourceJobs(id: string) {
-    this.sqlite
+  private cancelSourceJobs(id: string): number {
+    return this.sqlite
       .query(
         "UPDATE jobs SET status='cancelled',lease_token=NULL,lease_until=NULL,finished_at=? WHERE source_id=? AND status IN ('pending','running')",
       )
-      .run(Date.now(), id);
+      .run(Date.now(), id).changes;
   }
-  removeSource(id: string): void {
-    this.sqlite
+  /**
+   * Soft-removes a subscription. The row, its items, references and content
+   * versions stay so historical citations keep resolving; queued and running
+   * polls are cancelled, and a running lease is cleared so a late completion
+   * is rejected. Returns the number of cancelled jobs.
+   */
+  removeSource(id: string): number {
+    return this.sqlite
       .transaction(() => {
         if (
           !this.sqlite
@@ -352,7 +358,7 @@ export class Store {
             .run(id).changes
         )
           throw new Error("Source not found");
-        this.cancelSourceJobs(id);
+        return this.cancelSourceJobs(id);
       })
       .immediate();
   }

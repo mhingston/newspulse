@@ -697,6 +697,7 @@ async function main() {
         const changes: {
           title?: string;
           pollSeconds?: number;
+          enabled?: boolean;
           maxEntries?: number;
           maxBytes?: number;
         } = {};
@@ -707,7 +708,11 @@ async function main() {
             value = arg.slice(pos + 1);
           if (key === "title") changes.title = value;
           else if (key === "poll-seconds") changes.pollSeconds = Number(value);
-          else if (key === "max-entries") changes.maxEntries = Number(value);
+          else if (key === "enabled") {
+            if (value !== "true" && value !== "false")
+              throw new Error("enabled must be true or false");
+            changes.enabled = value === "true";
+          } else if (key === "max-entries") changes.maxEntries = Number(value);
           else if (key === "max-bytes") changes.maxBytes = Number(value);
           else throw new Error(`Unknown source option: ${key}`);
         }
@@ -728,20 +733,36 @@ async function main() {
           ),
         );
         break;
-      case "remove-source":
-        store.removeSource(required(0, "source ID"));
-        console.log("Source removed; history retained");
+      case "remove-source": {
+        const cancelled = store.removeSource(required(0, "source ID"));
+        console.log(
+          `Source removed; history retained; ${cancelled} queued or running poll${cancelled === 1 ? "" : "s"} cancelled`,
+        );
         break;
+      }
       case "import-opml": {
         const feeds = parseOpml(
           await Bun.file(required(0, "OPML path")).text(),
         );
-        store.sqlite
+        // Re-importing never overwrites an operator's title or interval; it
+        // reports which feeds were already subscribed instead.
+        const report = store.sqlite
           .transaction(() => {
-            for (const f of feeds) store.addSource(f.url, f.title);
+            const result = { added: 0, already_subscribed: 0 };
+            for (const f of feeds) {
+              const existing = store.sqlite
+                .query("SELECT 1 FROM sources WHERE url=? AND removed=0")
+                .get(f.url);
+              store.addSource(f.url, f.title);
+              if (existing) result.already_subscribed++;
+              else result.added++;
+            }
+            return result;
           })
           .immediate();
-        console.log(`Imported ${feeds.length} feeds`);
+        console.log(
+          `Imported ${feeds.length} feeds: ${report.added} added, ${report.already_subscribed} already subscribed`,
+        );
         break;
       }
       case "export-opml":

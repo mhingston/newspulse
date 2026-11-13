@@ -25,6 +25,16 @@ export interface HealthReport {
     failures: number;
     last_error: string | null;
   }[];
+  /**
+   * Enabled feeds whose latest successful poll exceeded the entry budget, so
+   * their remaining entries were not ingested. Reported, never inferred complete.
+   */
+  truncated_sources: {
+    source_id: string;
+    title: string;
+    entry_count: number | null;
+    max_entries: number;
+  }[];
   ambiguous_deliveries: { count: number };
   /** Lifetime delivery counts by status; ambiguous sends are never resent automatically. */
   delivery_outcomes: { status: string; count: number }[];
@@ -102,6 +112,21 @@ export function healthReport(
       last_error: row.last_error == null ? null : safeLabel(row.last_error),
     }));
 
+  const truncated = db
+    .query<
+      {
+        source_id: string;
+        title: string;
+        entry_count: number | null;
+        max_entries: number;
+      },
+      []
+    >(
+      "SELECT s.id AS source_id,s.title,st.entry_count,s.max_entries FROM sources s JOIN source_state st ON st.source_id=s.id WHERE s.removed=0 AND s.enabled=1 AND s.kind<>'manual' AND st.truncated=1 ORDER BY s.title,s.id LIMIT 50",
+    )
+    .all()
+    .map((row) => ({ ...row, title: safeLabel(row.title) }));
+
   const ambiguous = db
     .query<{ count: number }, []>(
       "SELECT count(*) AS count FROM deliveries WHERE status='ambiguous'",
@@ -157,6 +182,7 @@ export function healthReport(
   const warnings: string[] = [];
   if (stuck.length) warnings.push("expired_leases");
   if (failing.length) warnings.push("failing_sources");
+  if (truncated.length) warnings.push("truncated_sources");
   if (ambiguous) warnings.push("ambiguous_deliveries");
   if (breach) warnings.push("analysis_envelope_breach");
   if (
@@ -174,6 +200,7 @@ export function healthReport(
     ready: warnings.length === 0,
     stuck_stages: stuck,
     failing_sources: failing,
+    truncated_sources: truncated,
     ambiguous_deliveries: { count: ambiguous },
     delivery_outcomes,
     search_spend: {
