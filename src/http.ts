@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import type { Store } from "./db/store";
 import { handleMcp, type McpOptions } from "./mcp";
 import { applyFeedbackLink } from "./email-feedback";
+import { enabledProcessingStages } from "./analysis-config";
 import { ConfirmationError } from "./confirmations";
 export interface HttpConfig {
   token: string;
@@ -92,7 +93,20 @@ export function createApp(store: Store, config: HttpConfig) {
     }
     return c.json({ ok: true });
   });
-  app.get("/health", (c) => c.json({ ok: true, milestone: "M1" }));
+  // `ok` is process liveness and stays true while the server answers. `ready`
+  // reflects the same durable health warnings `get_status` reports, so a
+  // process that is up but backed up or failing is visible to supervisors.
+  app.get("/health", (c) => {
+    const health = store.status({
+      enabledStages: enabledProcessingStages(config.mcp?.env ?? process.env),
+    }).health;
+    return c.json({
+      ok: true,
+      ready: health.ready,
+      warnings: health.warnings,
+      checked_at: health.checked_at,
+    });
+  });
   // GET never mutates: link scanners and prefetchers see only a confirmation
   // page. The action is applied by the explicit POST the user submits.
   app.get("/feedback/:token", (c) => {
