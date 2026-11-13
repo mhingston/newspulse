@@ -46,7 +46,39 @@ test("CLI round-trip: interval, disable during pending work, re-enable, nested O
     const feed = sources.find((s) => s.url === "https://example.test/feed")!;
 
     await cli(db, "update-source", feed.id, "poll-seconds=300");
+    const queueStore = new Store(db);
+    try {
+      queueStore.enqueueDue(1, true);
+      expect(
+        queueStore.sqlite
+          .query(
+            "SELECT count(*) AS n FROM jobs WHERE source_id=? AND status='pending'",
+          )
+          .get(feed.id),
+      ).toEqual({ n: 1 });
+    } finally {
+      queueStore.close();
+    }
     await cli(db, "disable-source", feed.id);
+    const cancelledStore = new Store(db);
+    try {
+      expect(
+        cancelledStore.sqlite
+          .query(
+            "SELECT count(*) AS n FROM jobs WHERE source_id=? AND status='cancelled'",
+          )
+          .get(feed.id),
+      ).toEqual({ n: 1 });
+      expect(
+        cancelledStore.sqlite
+          .query(
+            "SELECT count(*) AS n FROM jobs WHERE source_id=? AND status='pending'",
+          )
+          .get(feed.id),
+      ).toEqual({ n: 0 });
+    } finally {
+      cancelledStore.close();
+    }
     expect(
       (JSON.parse(await cli(db, "list-sources")) as typeof sources).find(
         (s) => s.id === feed.id,
@@ -159,9 +191,36 @@ test("entry-budget truncation is reported as a health diagnostic until a complet
   expect(report.warnings).toContain("truncated_sources");
   expect(report.ready).toBe(false);
 
-  s.updateSource(source.id, { enabled: false });
-  report = healthReport(s.sqlite, 3);
+  s.enqueueDue(3, true);
+  s.complete(s.claim(3)!, { items: [], entryCount: 1, truncated: false }, 4);
+  report = healthReport(s.sqlite, 5);
   expect(report.truncated_sources).toEqual([]);
+  expect(report.warnings).not.toContain("truncated_sources");
+  expect(report.ready).toBe(true);
+  s.close();
+});
+
+test("disabling a truncated source also clears its truncation warning", () => {
+  const s = new Store(":memory:");
+  const source = s.addSource("https://example.test/feed");
+  s.updateSource(source.id, { maxEntries: 1 });
+  s.enqueueDue(1);
+  s.complete(s.claim(1)!, { items: [], entryCount: 3, truncated: true }, 2);
+  s.updateSource(source.id, { enabled: false });
+  const report = healthReport(s.sqlite, 3);
+  expect(report.truncated_sources).toEqual([]);
+  s.close();
+});
+
+test("a truncated Hacker News discussion is not an entry-budget warning", () => {
+  const s = new Store(":memory:");
+  const source = s.addSource("https://news.ycombinator.com/item?id=1", "HN");
+  expect(source.kind).toBe("hackernews");
+  s.enqueueDue(1);
+  s.complete(s.claim(1)!, { items: [], entryCount: 1, truncated: true }, 2);
+  const report = healthReport(s.sqlite, 3);
+  expect(report.truncated_sources).toEqual([]);
+  expect(report.warnings).not.toContain("truncated_sources");
   s.close();
 });
 

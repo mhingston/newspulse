@@ -26,8 +26,11 @@ export interface HealthReport {
     last_error: string | null;
   }[];
   /**
-   * Enabled feeds whose latest successful poll exceeded the entry budget, so
-   * their remaining entries were not ingested. Reported, never inferred complete.
+   * Enabled RSS/Atom feeds whose latest successful poll exceeded the entry
+   * budget, so their remaining entries were not ingested. Reported, never
+   * inferred complete. Other adapters' `truncated` flags (for example
+   * Hacker News comment or request bounds) are not entry-budget signals and
+   * are not reported here.
    */
   truncated_sources: {
     source_id: string;
@@ -122,7 +125,7 @@ export function healthReport(
       },
       []
     >(
-      "SELECT s.id AS source_id,s.title,st.entry_count,s.max_entries FROM sources s JOIN source_state st ON st.source_id=s.id WHERE s.removed=0 AND s.enabled=1 AND s.kind<>'manual' AND st.truncated=1 ORDER BY s.title,s.id LIMIT 50",
+      "SELECT s.id AS source_id,s.title,st.entry_count,s.max_entries FROM sources s JOIN source_state st ON st.source_id=s.id WHERE s.removed=0 AND s.enabled=1 AND s.kind='rss' AND st.truncated=1 ORDER BY s.title,s.id LIMIT 50",
     )
     .all()
     .map((row) => ({ ...row, title: safeLabel(row.title) }));
