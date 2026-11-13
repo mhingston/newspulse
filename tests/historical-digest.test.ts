@@ -473,6 +473,51 @@ test("post-cutoff merges of inactive story members make group citations unavaila
   }
 });
 
+test("purged feed text keeps its citation reconstructible in historical digests", () => {
+  const store = new Store(":memory:");
+  try {
+    const cutoff = Date.now() - 1_000;
+    addScoredItem(store, cutoff);
+    store.sqlite
+      .query("UPDATE digest_history_state SET evidence_from=0 WHERE id=1")
+      .run();
+    store.sqlite
+      .query(
+        "UPDATE content_versions SET text='',purged_at=? WHERE item_id='item'",
+      )
+      .run(cutoff - 1);
+    store.sqlite
+      .query("UPDATE content SET text='',purged_at=? WHERE item_id='item'")
+      .run(cutoff - 1);
+    const draft = historicalDigestDraft(store, {
+      date: "2026-06-01",
+      timezone: "Europe/London",
+      now: cutoff,
+      minScore: 50,
+      maxItems: 10,
+      maxPerInterest: 4,
+    });
+    expect(draft).toMatchObject({
+      status: "ready",
+      decisionEvidence: [
+        {
+          evidence: {
+            citations: [
+              {
+                sourceId: "source",
+                nativeId: "native",
+                url: "https://example.com/original",
+              },
+            ],
+          },
+        },
+      ],
+    });
+  } finally {
+    store.close();
+  }
+});
+
 test("global invalidation sweep records interleaved per-item score invalidation", () => {
   const store = new Store(":memory:");
   try {

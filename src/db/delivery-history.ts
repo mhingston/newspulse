@@ -123,7 +123,7 @@ export function deliveryHistory(
             },
             [string]
           >(
-            "SELECT source_id,native_id,observed_at,backfilled FROM content_versions WHERE item_id=? ORDER BY id LIMIT 1",
+            "SELECT source_id,native_id,observed_at,backfilled FROM content_versions WHERE item_id=? AND purged_at IS NULL ORDER BY id LIMIT 1",
           )
           .get(itemId)
       : null;
@@ -139,7 +139,7 @@ export function deliveryHistory(
           },
           [string]
         >(
-          "SELECT title,text,source_id,observed_at,backfilled FROM content_versions WHERE item_id=? ORDER BY id DESC LIMIT 1",
+          "SELECT title,text,source_id,observed_at,backfilled FROM content_versions WHERE item_id=? AND purged_at IS NULL ORDER BY id DESC LIMIT 1",
         )
         .get(itemId)
     : null;
@@ -625,7 +625,7 @@ export function relatedDeliveryHistory(
       },
       [string]
     >(
-      "SELECT source_id,native_id,observed_at,backfilled,title FROM content_versions WHERE item_id=? ORDER BY id LIMIT 1",
+      "SELECT source_id,native_id,observed_at,backfilled,title FROM content_versions WHERE item_id=? AND purged_at IS NULL ORDER BY id LIMIT 1",
     )
     .get(candidateItemId);
   const latestObservation = db
@@ -640,7 +640,7 @@ export function relatedDeliveryHistory(
       },
       [string]
     >(
-      "SELECT source_id,native_id,observed_at,backfilled,title,text FROM content_versions WHERE item_id=? ORDER BY id DESC LIMIT 1",
+      "SELECT source_id,native_id,observed_at,backfilled,title,text FROM content_versions WHERE item_id=? AND purged_at IS NULL ORDER BY id DESC LIMIT 1",
     )
     .get(candidateItemId);
   const extractionMatchesObservation =

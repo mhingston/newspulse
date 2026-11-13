@@ -31,6 +31,17 @@ const TABLES_BY_MIGRATION: { tag: string; tables: readonly string[] }[] = [
   { tag: "0048_delivery_suppressions", tables: ["delivery_suppressions"] },
 ];
 
+/** Columns introduced by a migration; checked only once that migration is applied. */
+const COLUMNS_BY_MIGRATION: { tag: string; columns: [string, string][] }[] = [
+  {
+    tag: "0049_feed_text_purged_at",
+    columns: [
+      ["content", "purged_at"],
+      ["content_versions", "purged_at"],
+    ],
+  },
+];
+
 /** Migrations in bundle order, read from the checked-in Drizzle journal. */
 const JOURNAL = (
   JSON.parse(
@@ -151,6 +162,16 @@ function inspect(db: Database): RecoveryReport {
     counts[table] = db
       .query<{ n: number }, []>(`SELECT count(*) n FROM ${table}`)
       .get()!.n;
+  }
+  for (const { tag, columns } of COLUMNS_BY_MIGRATION) {
+    if (!applied.includes(tag)) continue;
+    for (const [table, column] of columns) {
+      const present = db
+        .query<{ name: string }, []>(`PRAGMA table_info(${table})`)
+        .all()
+        .some((row) => (row as { name: string }).name === column);
+      if (!present) problems.push(`missing column ${table}.${column}`);
+    }
   }
   return {
     ok: problems.length === 0,

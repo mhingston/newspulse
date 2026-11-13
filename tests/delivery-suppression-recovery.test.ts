@@ -34,18 +34,18 @@ function priorVersionBackup(dir: string): string {
   const old = join(dir, "prior-migrations");
   mkdirSync(join(old, "meta"), { recursive: true });
   for (const file of readdirSync(migrations)) {
-    if (file.endsWith(".sql") && !/^004[78]_/.test(file))
+    if (file.endsWith(".sql") && !/^004[789]_/.test(file))
       copyFileSync(join(migrations, file), join(old, file));
   }
   const journal = JSON.parse(
     readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
   );
   journal.entries = journal.entries.filter(
-    (entry: { tag: string }) => !/^004[78]_/.test(entry.tag),
+    (entry: { tag: string }) => !/^004[789]_/.test(entry.tag),
   );
   writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
   for (const file of readdirSync(join(migrations, "meta"))) {
-    if (file.endsWith("_snapshot.json") && !/^004[78]/.test(file))
+    if (file.endsWith("_snapshot.json") && !/^004[789]/.test(file))
       copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
   }
   const db = new Database(join(dir, "prior.sqlite"), {
