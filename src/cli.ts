@@ -40,6 +40,10 @@ import {
   previewDeliveryRestoreAcknowledgment,
   confirmDeliveryRestoreAcknowledgment,
 } from "./delivery-restore-guard";
+import {
+  confirmDeliverySuppression,
+  previewDeliverySuppression,
+} from "./delivery-suppression";
 import { DeliveryStore } from "./db/delivery-store";
 import { acquireDeliveryLock } from "./delivery-lock";
 import {
@@ -175,7 +179,9 @@ async function main() {
     command === "delivery-reconcile" ||
     command === "delivery-reconcile-preview" ||
     command === "delivery-restore-preview" ||
-    command === "delivery-restore-confirm"
+    command === "delivery-restore-confirm" ||
+    command === "delivery-suppress-preview" ||
+    command === "delivery-suppress-confirm"
       ? acquireDeliveryLock(path)
       : null;
   const discoveryLock = [
@@ -569,6 +575,36 @@ async function main() {
         console.log("Delivery restore reconciliation acknowledged");
         break;
       }
+      case "delivery-suppress-preview":
+      case "delivery-suppress-confirm": {
+        const action = {
+          editionDate: required(0, "edition date"),
+          recipient: required(1, "recipient"),
+          providerId: required(2, "provider acceptance ID"),
+        };
+        const context = { sender: process.env.DELIVERY_FROM ?? "" };
+        if (command === "delivery-suppress-preview") {
+          console.log(
+            JSON.stringify(
+              previewDeliverySuppression(store.sqlite, action, context),
+              null,
+              2,
+            ),
+          );
+        } else {
+          confirmDeliverySuppression(
+            store.sqlite,
+            action,
+            context,
+            Number(required(3, "preview asOf")),
+            required(4, "preview hash"),
+          );
+          console.log(
+            "Delivery suppression recorded; accepted by provider, not delivered to inbox; no send performed",
+          );
+        }
+        break;
+      }
       case "delivery-list": {
         console.log(
           JSON.stringify(new DeliveryStore(store.sqlite).list(), null, 2),
@@ -864,7 +900,7 @@ async function main() {
       }
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|retention-preview|retention-apply|verify-backup|delivery-list|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|retention-preview|retention-apply|verify-backup|delivery-list|delivery-suppress-preview EDITION_DATE RECIPIENT PROVIDER_ID|delivery-suppress-confirm EDITION_DATE RECIPIENT PROVIDER_ID AS_OF HASH|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

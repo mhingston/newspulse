@@ -417,19 +417,28 @@ describe("content retention", () => {
     const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
     mkdirSync(old, { recursive: true });
     for (const file of readdirSync(migrations)) {
-      if (file.endsWith(".sql") && file !== "0047_retention_purges.sql")
+      if (
+        file.endsWith(".sql") &&
+        !file.startsWith("0047_") &&
+        !file.startsWith("0048_")
+      )
         copyFileSync(join(migrations, file), join(old, file));
     }
     const journal = JSON.parse(
       readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
     );
     journal.entries = journal.entries.filter(
-      (entry: { tag: string }) => entry.tag !== "0047_retention_purges",
+      (entry: { tag: string }) =>
+        !entry.tag.startsWith("0047_") && !entry.tag.startsWith("0048_"),
     );
     mkdirSync(join(old, "meta"), { recursive: true });
     writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
     for (const file of readdirSync(join(migrations, "meta"))) {
-      if (file.endsWith("_snapshot.json") && !file.startsWith("0047"))
+      if (
+        file.endsWith("_snapshot.json") &&
+        !file.startsWith("0047") &&
+        !file.startsWith("0048")
+      )
         copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
     }
     const path = join(dir, "prior.sqlite");
@@ -881,18 +890,27 @@ describe("retention review hardening", () => {
     const old = join(dir, "prior-migrations");
     mkdirSync(join(old, "meta"), { recursive: true });
     for (const file of readdirSync(migrations)) {
-      if (file.endsWith(".sql") && file !== "0047_retention_purges.sql")
+      if (
+        file.endsWith(".sql") &&
+        !file.startsWith("0047_") &&
+        !file.startsWith("0048_")
+      )
         copyFileSync(join(migrations, file), join(old, file));
     }
     const journal = JSON.parse(
       readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
     );
     journal.entries = journal.entries.filter(
-      (entry: { tag: string }) => entry.tag !== "0047_retention_purges",
+      (entry: { tag: string }) =>
+        !entry.tag.startsWith("0047_") && !entry.tag.startsWith("0048_"),
     );
     writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
     for (const file of readdirSync(join(migrations, "meta"))) {
-      if (file.endsWith("_snapshot.json") && !file.startsWith("0047"))
+      if (
+        file.endsWith("_snapshot.json") &&
+        !file.startsWith("0047") &&
+        !file.startsWith("0048")
+      )
         copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
     }
     const path = join(dir, "prior.sqlite");

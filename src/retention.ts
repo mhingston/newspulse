@@ -13,6 +13,7 @@ export type RetentionClass = (typeof RETENTION_CLASSES)[number];
 export interface RetentionPolicy {
   extractedPayloadDays?: number;
   analysisSummaryDays?: number;
+  inboundBodyDays?: number;
 }
 
 export const DAY_MS = 86_400_000;
@@ -27,7 +28,7 @@ function days(name: string, value: string | undefined): number | undefined {
   return parsed;
 }
 
-/** Parses `RETENTION_EXTRACTED_PAYLOAD_DAYS` and `RETENTION_ANALYSIS_SUMMARY_DAYS`. */
+/** Parses the opt-in retention windows; each unset variable retains its class indefinitely. */
 export function retentionPolicy(
   env: Record<string, string | undefined> = process.env,
 ): RetentionPolicy {
@@ -40,18 +41,24 @@ export function retentionPolicy(
       "RETENTION_ANALYSIS_SUMMARY_DAYS",
       env.RETENTION_ANALYSIS_SUMMARY_DAYS,
     ),
+    inboundBodyDays: days(
+      "RETENTION_INBOUND_BODY_DAYS",
+      env.RETENTION_INBOUND_BODY_DAYS,
+    ),
   };
 }
 
 export function retentionCutoff(
   policy: RetentionPolicy,
-  cls: RetentionClass,
+  cls: RetentionClass | "inbound_body",
   now: number,
 ): number | null {
   const window =
     cls === "extracted_payload"
       ? policy.extractedPayloadDays
-      : policy.analysisSummaryDays;
+      : cls === "analysis_summary"
+        ? policy.analysisSummaryDays
+        : policy.inboundBodyDays;
   if (window === undefined) return null;
   return now - window * DAY_MS;
 }
@@ -64,3 +71,13 @@ export const PURGED_EXTRACTION = JSON.stringify({
 
 /** Tombstone for a removed analysis summary; never reusable as a cached analysis. */
 export const PURGED_ANALYSIS = '{"purged":true}';
+
+/**
+ * Stored in `inbound_messages.body` once the provider body is removed. The
+ * body is only read for indexing, and an indexed message is never re-read,
+ * so the tombstone is never parsed as an email.
+ */
+export const PURGED_INBOUND_BODY = JSON.stringify({
+  status: "purged",
+  reason: "retention",
+});
