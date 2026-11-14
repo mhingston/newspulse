@@ -62,3 +62,31 @@ Interpretation preserved in decision [D14](decisions.md): vocabulary mismatch an
 - Optional timing on either replay is a local measurement, not ingestion-to-publication latency or a comparable deterministic metric.
 
 The nine-item corpus is deliberately small and synthetic. It includes positive, negative, borderline, duplicate, outside-subscription and unknown examples, but is neither representative nor a basis for real-world quality claims. Rankings do not simulate delivery or user feedback. The current baseline uses no recorded model analyses; if future examples include analyses, their provider, model and prompt version must be recorded. Synthetic profiles are not the user's interests.
+
+## Source recommendation replay (issue #33)
+
+Issue #33 requires measuring whether opt-in recommendations of new sources add value over item-level discovery alone before any automatic source following. The replay uses the dedicated labeled corpus [source-recommendation-corpus-v1](../tests/fixtures/source-recommendation-corpus-v1.json) (30 items across 9 recorded domains, including a high-value publisher with explicit useful feedback, a repetitive low-value publisher, duplicate mirrors, an unavailable feed, a source with recorded recent quality decline, a subscribed source, and a Reddit discussion reached only through search snippets). It populates a throwaway database with the exact production schema — items, item_sources, discovery run/page/results provenance, explicit feedback, unavailable extraction outcomes and recorded feed-link HTML — and then runs the shipped `source-suggestions-v1` aggregation unchanged, so shipped behavior and measured behavior cannot drift.
+
+Reproduce:
+
+```sh
+bun run cli evaluate-source-recommendations tests/fixtures/source-recommendation-corpus-v1.json
+# Optional local timing observation is emitted to stderr, not the deterministic report:
+bun run cli evaluate-source-recommendations tests/fixtures/source-recommendation-corpus-v1.json --timing
+```
+
+The [source-recommendations-v1](baselines/source-recommendations-v1.json) baseline records the replay deterministically; a test verifies a fresh run matches it exactly.
+
+Recorded baseline findings (2026-11-11 fixture metrics; see the baseline for the corpus hash):
+
+| Measure                                    | Baseline (item-level discovery only) | With proposed suggestions  |
+| ------------------------------------------ | ------------------------------------ | -------------------------- |
+| Labeled development recall                 | 2/8 (0.250)                          | 8/8 (1.000)                |
+| Lift                                       | —                                    | +0.750                     |
+| Novelty (newly covered developments/total) | —                                    | 6/8 (0.750)                |
+| Distinct relevant domains                  | 1                                    | 4                          |
+| Suggestion precision (labeled proposals)   | —                                    | 2/3 (0.667)                |
+| Recorded false positives                   | —                                    | 1 (`mixed-review.example`) |
+| API cost of suggestion generation          | —                                    | 0 (micros)                 |
+
+Interpretation preserved in decision [D16](decisions.md): proposing from provenance is measurably useful, and its false positives are explicit ("avoid"-labeled proposals listed for review, never hidden). The estimator refuses volume-as-quality (the repetitive source fails on the repetition penalty plus the recent-feedback requirement), counts mirrors as duplicates (0 meaningful items), gives unavailable feeds no value, and declines sources whose recorded quality has recently fallen (recorded skip reasons). Reddit domains are never suggested from snippets. Suggestion generation reads only already-recorded rows: it consumes no search/discovery budget, makes no provider calls and its measured cost is 0 micros beyond the recorded discovery spend; real-world usefulness, latency and cost remain unknown and are reported as unknown, not zero.

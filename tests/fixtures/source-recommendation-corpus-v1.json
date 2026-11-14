@@ -1,0 +1,318 @@
+{
+  "version": 1,
+  "id": "source-recommendation-corpus-v1",
+  "asOf": 1797000000000,
+  "windowDays": 60,
+  "subscription": {
+    "url": "https://subscribe.example/feed",
+    "title": "Subscribed journal feed"
+  },
+  "recordedDiscoveryCostMicros": 4200,
+  "domainLabels": [
+    {
+      "host": "subscribe.example",
+      "label": "subscribed"
+    },
+    {
+      "host": "signal-press.example",
+      "label": "suggest"
+    },
+    {
+      "host": "field-notes.example",
+      "label": "suggest"
+    },
+    {
+      "host": "mixed-review.example",
+      "label": "avoid"
+    },
+    {
+      "host": "chatter-mill.example",
+      "label": "avoid"
+    },
+    {
+      "host": "mirror-daily.example",
+      "label": "avoid"
+    },
+    {
+      "host": "fading-quarterly.example",
+      "label": "avoid"
+    },
+    {
+      "host": "dark-press.example",
+      "label": "avoid"
+    },
+    {
+      "host": "old.reddit.com",
+      "label": "avoid"
+    }
+  ],
+  "items": [
+    {
+      "id": "sub-robotics",
+      "url": "https://subscribe.example/robotics-benchmark",
+      "title": "Robotics benchmark suite released",
+      "publishedAt": 1795790400000,
+      "relevance": "relevant",
+      "development": "robotics benchmarks",
+      "subscribed": true,
+      "discovered": false
+    },
+    {
+      "id": "sub-attestation",
+      "url": "https://subscribe.example/attestations",
+      "title": "Signed attestations for dependency supply chains",
+      "publishedAt": 1795790400000,
+      "relevance": "relevant",
+      "development": "supply-chain attestations",
+      "subscribed": true,
+      "discovered": false
+    },
+    {
+      "id": "sp-agents",
+      "url": "https://signal-press.example/agents-eval",
+      "title": "Agent evaluation harness shares task suites",
+      "publishedAt": 1796827200000,
+      "relevance": "relevant",
+      "development": "agent eval harness",
+      "feedback": "useful",
+      "feedbackAt": 1796827200000
+    },
+    {
+      "id": "sp-lint",
+      "url": "https://signal-press.example/linter-post",
+      "title": "Linter rules for supply-chain safety",
+      "publishedAt": 1796568000000,
+      "relevance": "relevant",
+      "development": "linter supply chain",
+      "feedback": "useful",
+      "feedbackAt": 1796222400000,
+      "feedHtml": "<!doctype html><html><head><link rel=\"alternate\" type=\"application/rss+xml\" title=\"RSS\" href=\"/feed.xml\"></head><body><p>Article text.</p></body></html>"
+    },
+    {
+      "id": "sp-quantum",
+      "url": "https://signal-press.example/quantum-migration",
+      "title": "Post-quantum key rollout notes",
+      "publishedAt": 1796568000000,
+      "relevance": "relevant",
+      "development": "post-quantum rollouts",
+      "feedback": "useful",
+      "feedbackAt": 1796568000000
+    },
+    {
+      "id": "sp-notes",
+      "url": "https://signal-press.example/opinion",
+      "title": "Opinion: tools do not matter",
+      "publishedAt": 1795790400000,
+      "relevance": "irrelevant",
+      "discovered": true
+    },
+    {
+      "id": "sp-history",
+      "url": "https://signal-press.example/retro",
+      "title": "Retrospective on past migrations",
+      "publishedAt": 1795790400000,
+      "relevance": null,
+      "discovered": true
+    },
+    {
+      "id": "fn-ci",
+      "url": "https://field-notes.example/reproducible-ci",
+      "title": "Reproducible CI on shared runners",
+      "publishedAt": 1796222400000,
+      "relevance": "relevant",
+      "development": "reproducible CI",
+      "feedback": "useful",
+      "feedbackAt": 1796222400000
+    },
+    {
+      "id": "fn-boards",
+      "url": "https://field-notes.example/bring-up",
+      "title": "Hardware bring-up journals",
+      "publishedAt": 1796568000000,
+      "relevance": "relevant",
+      "development": "hardware bring-up"
+    },
+    {
+      "id": "fn-log",
+      "url": "https://field-notes.example/changelog",
+      "title": "Changelog digest",
+      "publishedAt": 1796222400000,
+      "relevance": "irrelevant",
+      "discovered": true
+    },
+    {
+      "id": "mr-tool",
+      "url": "https://mixed-review.example/build-tools",
+      "title": "Build tools benchmarks",
+      "publishedAt": 1795185600000,
+      "relevance": "relevant",
+      "development": "build tooling",
+      "feedback": "useful",
+      "feedbackAt": 1795185600000
+    },
+    {
+      "id": "mr-hype",
+      "url": "https://mixed-review.example/hype",
+      "title": "Hype roundup",
+      "publishedAt": 1795185600000,
+      "relevance": "irrelevant",
+      "feedback": "not_useful",
+      "feedbackAt": 1795185600000
+    },
+    {
+      "id": "mr-rumor",
+      "url": "https://mixed-review.example/rumors",
+      "title": "Rumor round-up",
+      "publishedAt": 1795185600000,
+      "relevance": "irrelevant",
+      "discovered": true
+    },
+    {
+      "id": "mr-old",
+      "url": "https://mixed-review.example/archives",
+      "title": "Archived list post",
+      "publishedAt": 1795185600000,
+      "relevance": "borderline",
+      "discovered": true
+    },
+    {
+      "id": "cm-a",
+      "url": "https://chatter-mill.example/hot-take-a",
+      "title": "Hot take A",
+      "publishedAt": 1796568000000,
+      "relevance": "irrelevant",
+      "feedback": "useful",
+      "feedbackAt": 1796568000000,
+      "repeatedResults": 5
+    },
+    {
+      "id": "cm-b",
+      "url": "https://chatter-mill.example/hot-take-b",
+      "title": "Hot take B",
+      "publishedAt": 1796568000000,
+      "relevance": "irrelevant",
+      "feedback": "not_useful",
+      "feedbackAt": 1796568000000,
+      "repeatedResults": 5
+    },
+    {
+      "id": "cm-c",
+      "url": "https://chatter-mill.example/hot-take-c",
+      "title": "Hot take C",
+      "publishedAt": 1796222400000,
+      "relevance": "irrelevant",
+      "repeatedResults": 5
+    },
+    {
+      "id": "mirror-1",
+      "url": "https://mirror-daily.example/agents-eval",
+      "title": "Agent evaluation harness shares task suites",
+      "publishedAt": 1796827200000,
+      "ingestedAt": 1796830800000,
+      "relevance": "irrelevant",
+      "discovered": true
+    },
+    {
+      "id": "mirror-2",
+      "url": "https://mirror-daily.example/linter-post",
+      "title": "Linter rules for supply-chain safety",
+      "publishedAt": 1796568000000,
+      "ingestedAt": 1796571600000,
+      "relevance": "irrelevant",
+      "discovered": true
+    },
+    {
+      "id": "mirror-3",
+      "url": "https://mirror-daily.example/quantum-migration",
+      "title": "Post-quantum key rollout notes",
+      "publishedAt": 1796568000000,
+      "ingestedAt": 1796571600000,
+      "relevance": "irrelevant",
+      "discovered": true
+    },
+    {
+      "id": "fq-a",
+      "url": "https://fading-quarterly.example/deep-1",
+      "title": "Early deep dive one",
+      "publishedAt": 1789224000000,
+      "relevance": "relevant",
+      "feedback": "useful",
+      "feedbackAt": 1789224000000
+    },
+    {
+      "id": "fq-b",
+      "url": "https://fading-quarterly.example/deep-2",
+      "title": "Early deep dive two",
+      "publishedAt": 1789224000000,
+      "relevance": "relevant",
+      "feedback": "useful",
+      "feedbackAt": 1789224000000
+    },
+    {
+      "id": "fq-c",
+      "url": "https://fading-quarterly.example/recent-1",
+      "title": "Recent recap one",
+      "publishedAt": 1795185600000,
+      "relevance": "irrelevant",
+      "feedback": "not_useful",
+      "feedbackAt": 1795185600000
+    },
+    {
+      "id": "fq-d",
+      "url": "https://fading-quarterly.example/recent-2",
+      "title": "Recent recap two",
+      "publishedAt": 1795185600000,
+      "relevance": "irrelevant",
+      "feedback": "not_useful",
+      "feedbackAt": 1795185600000
+    },
+    {
+      "id": "fq-e",
+      "url": "https://fading-quarterly.example/recent-3",
+      "title": "Recent recap three",
+      "publishedAt": 1795185600000,
+      "relevance": null,
+      "discovered": true
+    },
+    {
+      "id": "fq-f",
+      "url": "https://fading-quarterly.example/recent-4",
+      "title": "Recent recap four",
+      "publishedAt": 1795185600000,
+      "relevance": null,
+      "discovered": true
+    },
+    {
+      "id": "dark-1",
+      "url": "https://dark-press.example/notes-1",
+      "title": "Dark press notes one",
+      "publishedAt": 1796568000000,
+      "relevance": "irrelevant",
+      "unavailable": true
+    },
+    {
+      "id": "dark-2",
+      "url": "https://dark-press.example/notes-2",
+      "title": "Dark press notes two",
+      "publishedAt": 1796568000000,
+      "relevance": "irrelevant",
+      "unavailable": true
+    },
+    {
+      "id": "dark-3",
+      "url": "https://dark-press.example/notes-3",
+      "title": "Dark press notes three",
+      "publishedAt": 1796568000000,
+      "relevance": "irrelevant",
+      "unavailable": true
+    },
+    {
+      "id": "rd-post",
+      "url": "https://old.reddit.com/r/testprojects/comments/abc123/verify_publication/",
+      "title": "Discussion thread about release",
+      "publishedAt": 1796827200000,
+      "relevance": "irrelevant",
+      "discovered": true
+    }
+  ]
+}

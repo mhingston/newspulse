@@ -792,3 +792,45 @@ export const itemFeedback = sqliteTable(
   },
   (t) => [index("item_feedback_item").on(t.itemId, t.createdAt)],
 );
+
+/**
+ * Opt-in source suggestions derived from recorded discovery provenance (issue
+ * #33). A suggestion is only ever proposed, never followed: accepting it is an
+ * explicit operator action that routes through the normal source-management
+ * path. Regeneration updates the evidence in place and never resets an
+ * operator decision.
+ */
+export const sourceSuggestions = sqliteTable(
+  "source_suggestions",
+  {
+    id: text().primaryKey(),
+    kind: text().notNull().default("domain"),
+    domain: text().notNull(),
+    url: text().notNull(),
+    title: text("title").notNull(),
+    score: integer().notNull(),
+    state: text().notNull().default("proposed"),
+    explanation: text().notNull(),
+    acceptedSourceId: text("accepted_source_id"),
+    createdAt: integer("created_at").notNull(),
+    updatedAt: integer("updated_at").notNull(),
+  },
+  (t) => [index("source_suggestions_state").on(t.state, t.id)],
+);
+
+/** Audit trail for explicit accept/dismiss/mute decisions on suggestions. */
+export const sourceSuggestionEvents = sqliteTable(
+  "source_suggestion_events",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    suggestionId: text("suggestion_id")
+      .notNull()
+      .references(() => sourceSuggestions.id),
+    fromState: text("from_state").notNull(),
+    toState: text("to_state").notNull(),
+    at: integer().notNull(),
+  },
+  (t) => [
+    index("source_suggestion_events_suggestion").on(t.suggestionId, t.id),
+  ],
+);
