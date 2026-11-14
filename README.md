@@ -151,7 +151,13 @@ bun test
 bun run smoke
 ```
 
-The smoke test uses local RSS/Atom HTTP fixtures, imports OPML, ingests duplicate stories, reopens SQLite, verifies conditional requests, and searches/retrieves provenance using a real official MCP SDK client over HTTP. Tests never send email or make AI calls. Unit/integration tests cover retry deadlines, fenced lease reclamation, URL-less items, digest fan-out, backups, HTTP access controls, fail-closed template configuration and coordinated HTTP/worker shutdown. Feed regressions cover namespace-prefixed Atom, mixed XHTML text/links, out-of-line content summary fallback, escaped HTML URL attributes, original citations, publication-date enrichment and encoded byte streams.
+The smoke test uses local RSS/Atom HTTP fixtures, imports OPML, ingests duplicate stories, reopens SQLite, verifies conditional requests, and searches/retrieves provenance using a real official MCP SDK client over HTTP. Tests never send email or make AI calls. Unit/integration tests cover retry deadlines, fenced lease reclamation, URL-less items, digest fan-out, backups, HTTP access controls, fail-closed template configuration and coordinated HTTP/worker shutdown.
+
+### Full-system acceptance suite
+
+`bun test tests/full-system.test.ts` runs one deterministic end-to-end acceptance pass (issue #23 slice): the real HTTP app with an authenticated official MCP client over a persistent SQLite file, driven through local fakes only — a localhost RSS feed, a signed Resend inbound webhook plus a fake Receiving API, an OpenAI-compatible analysis fake, a fake search provider and a fake outbound email provider (mocked at the adapter boundary — no live providers, no real email, no external model calls). It demonstrates searchable RSS and newsletter ingestion (original plus attributed candidates), interest configuration flowing into analysis and scoring, a budgeted outside-subscription discovery with citations, a curated frozen digest whose outbox send is exercised end to end, and a restart over the same database with no duplicates, working search and working MCP reads, with unauthenticated private routes denied throughout.
+
+Feed regressions cover namespace-prefixed Atom, mixed XHTML text/links, out-of-line content summary fallback, escaped HTML URL attributes, original citations, publication-date enrichment and encoded byte streams.
 
 Feed decoding follows [RFC 7303 §3.2](https://www.rfc-editor.org/rfc/rfc7303#section-3.2): BOM first, then HTTP charset, then XML declaration/autodetection, defaulting to UTF-8. UTF-16LE/BE and legacy encodings supported by Bun's TextDecoder are covered; unsupported encodings (including UTF-32) and invalid bytes produce explicit feed-health errors instead of silent replacement characters.
 
