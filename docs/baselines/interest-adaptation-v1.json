@@ -1,0 +1,1278 @@
+{
+  "evaluation": {
+    "id": "synthetic-robotics-v1",
+    "version": "interest-adaptation-evaluation-v1"
+  },
+  "corpus": {
+    "id": "synthetic-robotics-v1",
+    "version": 1,
+    "asOf": 1794000000000,
+    "items": 9,
+    "hash": "7aa1b833fc2147ee470adeafde4633217d0c44f43ad5105bb8e600d93a4f942b"
+  },
+  "history": {
+    "id": "synthetic-robotics-v1",
+    "version": 1,
+    "events": 6,
+    "hash": "6281c906bf4542b0c599e9980eeff4d292d8145fbc1ca294f575215a992ce40a"
+  },
+  "config": {
+    "k": 5,
+    "asOf": 1794000000000,
+    "criteriaVersion": "deterministic-v3",
+    "groupingVersion": "specific-development-v1",
+    "arms": [
+      "baseline",
+      "recency-weighted-feedback",
+      "expiring-feedback-boost",
+      "adjacent-term-widening"
+    ],
+    "limits": {
+      "recencyHorizonDays": 30,
+      "boostWindowDays": 30,
+      "boostThreshold": 2,
+      "boostExpiryDays": 14,
+      "boostStep": 5,
+      "maxAdjacentTerms": 3,
+      "adjacentTermMinSupport": 2
+    },
+    "profiles": [
+      {
+        "id": "synthetic-robotics",
+        "version": 1
+      }
+    ]
+  },
+  "arms": [
+    {
+      "arm": "baseline",
+      "description": "deterministic-v3: flat +10/-25 adjustment from the latest explicit judgment",
+      "metrics": {
+        "precisionAtK": {
+          "numerator": 4,
+          "denominator": 4,
+          "value": 1,
+          "unknown": 1
+        },
+        "duplicateRate": {
+          "numerator": 0,
+          "denominator": 5,
+          "value": 0,
+          "unknown": 0
+        },
+        "usefulDiscoveries": {
+          "numerator": 4,
+          "denominator": 4,
+          "value": 1,
+          "unknown": 1
+        },
+        "outsideSubscriptionRelevance": {
+          "numerator": 3,
+          "denominator": 3,
+          "value": 1,
+          "unknown": 1
+        },
+        "importantRecall": {
+          "numerator": 3,
+          "denominator": 3,
+          "value": 1,
+          "unknown": 1
+        },
+        "groupPairPrecision": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1,
+          "unknown": 0
+        },
+        "groupPairRecall": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1,
+          "unknown": 8
+        },
+        "topicDrift": {
+          "numerator": 0,
+          "denominator": 2,
+          "value": 0,
+          "unknown": 2
+        },
+        "developmentDiversity": {
+          "numerator": 5,
+          "denominator": 7,
+          "value": 0.7142857142857143,
+          "unknown": 0
+        }
+      },
+      "ranking": [
+        {
+          "id": "atlas-release",
+          "groupId": "story:a424cf2f328fff8706280e88",
+          "eligible": true,
+          "total": 70,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "orion-release",
+          "groupId": "story:4ba1dc8e50183ef5815b20ba",
+          "eligible": true,
+          "total": 70,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "atlas-recall",
+          "groupId": "story:46f5ee28c029ad0cfc5b2625",
+          "eligible": true,
+          "total": 69,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "discussion",
+          "groupId": "story:3cc610240ec72ccfbf16c22b",
+          "eligible": true,
+          "total": 65,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "old-robotics",
+          "groupId": "story:383e72e53d5d68a825899f8a",
+          "eligible": true,
+          "total": 59,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "atlas-duplicate",
+          "groupId": "story:a424cf2f328fff8706280e88",
+          "eligible": true,
+          "total": 58,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "unknown-label",
+          "groupId": "story:8a56baa3e2ebdad054df7a2d",
+          "eligible": true,
+          "total": 52,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "advertisement",
+          "groupId": "story:aacfba7d190db7655bedec38",
+          "eligible": true,
+          "total": 46,
+          "criteriaVersion": "deterministic-v3"
+        }
+      ],
+      "excluded": [
+        {
+          "id": "fashion",
+          "groupId": "story:309d267f086d5fe5433d5bcc",
+          "eligible": false,
+          "total": 30,
+          "criteriaVersion": "deterministic-v3"
+        }
+      ],
+      "changes": {
+        "widenedTerms": [],
+        "temporaryBoosts": [],
+        "reweightedFeedback": [],
+        "addedInterestTerms": []
+      },
+      "missedImportantDevelopments": []
+    },
+    {
+      "arm": "recency-weighted-feedback",
+      "description": "candidate: the judgment adjustment decays linearly with age to zero at the horizon, never exceeding the flat step",
+      "metrics": {
+        "precisionAtK": {
+          "numerator": 4,
+          "denominator": 4,
+          "value": 1,
+          "unknown": 1
+        },
+        "duplicateRate": {
+          "numerator": 1,
+          "denominator": 5,
+          "value": 0.2,
+          "unknown": 0
+        },
+        "usefulDiscoveries": {
+          "numerator": 3,
+          "denominator": 4,
+          "value": 0.75,
+          "unknown": 1
+        },
+        "outsideSubscriptionRelevance": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1,
+          "unknown": 1
+        },
+        "importantRecall": {
+          "numerator": 3,
+          "denominator": 3,
+          "value": 1,
+          "unknown": 1
+        },
+        "groupPairPrecision": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1,
+          "unknown": 0
+        },
+        "groupPairRecall": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1,
+          "unknown": 8
+        },
+        "topicDrift": {
+          "numerator": 0,
+          "denominator": 2,
+          "value": 0,
+          "unknown": 2
+        },
+        "developmentDiversity": {
+          "numerator": 4,
+          "denominator": 7,
+          "value": 0.5714285714285714,
+          "unknown": 0
+        }
+      },
+      "ranking": [
+        {
+          "id": "atlas-release",
+          "groupId": "story:a424cf2f328fff8706280e88",
+          "eligible": true,
+          "total": 70,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "orion-release",
+          "groupId": "story:4ba1dc8e50183ef5815b20ba",
+          "eligible": true,
+          "total": 70,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "atlas-recall",
+          "groupId": "story:46f5ee28c029ad0cfc5b2625",
+          "eligible": true,
+          "total": 69,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "discussion",
+          "groupId": "story:3cc610240ec72ccfbf16c22b",
+          "eligible": true,
+          "total": 65,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "atlas-duplicate",
+          "groupId": "story:a424cf2f328fff8706280e88",
+          "eligible": true,
+          "total": 58,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "old-robotics",
+          "groupId": "story:383e72e53d5d68a825899f8a",
+          "eligible": true,
+          "total": 57,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "unknown-label",
+          "groupId": "story:8a56baa3e2ebdad054df7a2d",
+          "eligible": true,
+          "total": 52,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "advertisement",
+          "groupId": "story:aacfba7d190db7655bedec38",
+          "eligible": true,
+          "total": 47,
+          "criteriaVersion": "deterministic-v3"
+        }
+      ],
+      "excluded": [
+        {
+          "id": "fashion",
+          "groupId": "story:309d267f086d5fe5433d5bcc",
+          "eligible": false,
+          "total": 30,
+          "criteriaVersion": "deterministic-v3"
+        }
+      ],
+      "changes": {
+        "widenedTerms": [],
+        "temporaryBoosts": [],
+        "reweightedFeedback": [
+          {
+            "itemId": "atlas-release",
+            "interestId": "",
+            "terms": [],
+            "expiry": null,
+            "remaining": 0.933,
+            "adjustment": 9
+          },
+          {
+            "itemId": "atlas-duplicate",
+            "interestId": "",
+            "terms": [],
+            "expiry": null,
+            "remaining": 0.967,
+            "adjustment": -24
+          },
+          {
+            "itemId": "atlas-recall",
+            "interestId": "",
+            "terms": [],
+            "expiry": null,
+            "remaining": 0.967,
+            "adjustment": 10
+          },
+          {
+            "itemId": "old-robotics",
+            "interestId": "",
+            "terms": [],
+            "expiry": null,
+            "remaining": 0,
+            "adjustment": 0
+          },
+          {
+            "itemId": "advertisement",
+            "interestId": "",
+            "terms": [],
+            "expiry": null,
+            "remaining": 0.9,
+            "adjustment": -22
+          }
+        ],
+        "addedInterestTerms": []
+      },
+      "missedImportantDevelopments": []
+    },
+    {
+      "arm": "expiring-feedback-boost",
+      "description": "candidate: when the configured count of distinct items holds useful latest judgments inside the window, matching items gain a temporary bounded boost that expires a fixed time after the last useful judgment",
+      "metrics": {
+        "precisionAtK": {
+          "numerator": 4,
+          "denominator": 4,
+          "value": 1,
+          "unknown": 1
+        },
+        "duplicateRate": {
+          "numerator": 1,
+          "denominator": 5,
+          "value": 0.2,
+          "unknown": 0
+        },
+        "usefulDiscoveries": {
+          "numerator": 3,
+          "denominator": 4,
+          "value": 0.75,
+          "unknown": 1
+        },
+        "outsideSubscriptionRelevance": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1,
+          "unknown": 1
+        },
+        "importantRecall": {
+          "numerator": 3,
+          "denominator": 3,
+          "value": 1,
+          "unknown": 1
+        },
+        "groupPairPrecision": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1,
+          "unknown": 0
+        },
+        "groupPairRecall": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1,
+          "unknown": 8
+        },
+        "topicDrift": {
+          "numerator": 0,
+          "denominator": 2,
+          "value": 0,
+          "unknown": 2
+        },
+        "developmentDiversity": {
+          "numerator": 4,
+          "denominator": 7,
+          "value": 0.5714285714285714,
+          "unknown": 0
+        }
+      },
+      "ranking": [
+        {
+          "id": "atlas-release",
+          "groupId": "story:a424cf2f328fff8706280e88",
+          "eligible": true,
+          "total": 72,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "orion-release",
+          "groupId": "story:4ba1dc8e50183ef5815b20ba",
+          "eligible": true,
+          "total": 72,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "atlas-recall",
+          "groupId": "story:46f5ee28c029ad0cfc5b2625",
+          "eligible": true,
+          "total": 70,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "discussion",
+          "groupId": "story:3cc610240ec72ccfbf16c22b",
+          "eligible": true,
+          "total": 66,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "atlas-duplicate",
+          "groupId": "story:a424cf2f328fff8706280e88",
+          "eligible": true,
+          "total": 60,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "old-robotics",
+          "groupId": "story:383e72e53d5d68a825899f8a",
+          "eligible": true,
+          "total": 59,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "unknown-label",
+          "groupId": "story:8a56baa3e2ebdad054df7a2d",
+          "eligible": true,
+          "total": 54,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "advertisement",
+          "groupId": "story:aacfba7d190db7655bedec38",
+          "eligible": true,
+          "total": 48,
+          "criteriaVersion": "deterministic-v3"
+        }
+      ],
+      "excluded": [
+        {
+          "id": "fashion",
+          "groupId": "story:309d267f086d5fe5433d5bcc",
+          "eligible": false,
+          "total": 30,
+          "criteriaVersion": "deterministic-v3"
+        }
+      ],
+      "changes": {
+        "widenedTerms": [],
+        "temporaryBoosts": [
+          {
+            "interestId": "synthetic-robotics",
+            "terms": [],
+            "expiry": 1795123200000,
+            "remaining": 2,
+            "adjustment": 5
+          }
+        ],
+        "reweightedFeedback": [],
+        "addedInterestTerms": []
+      },
+      "missedImportantDevelopments": []
+    },
+    {
+      "arm": "adjacent-term-widening",
+      "description": "candidate: terms supported by explicitly useful items that already matched the interest widen the interest's keywords; original terms are never removed",
+      "metrics": {
+        "precisionAtK": {
+          "numerator": 4,
+          "denominator": 4,
+          "value": 1,
+          "unknown": 1
+        },
+        "duplicateRate": {
+          "numerator": 1,
+          "denominator": 5,
+          "value": 0.2,
+          "unknown": 0
+        },
+        "usefulDiscoveries": {
+          "numerator": 3,
+          "denominator": 4,
+          "value": 0.75,
+          "unknown": 1
+        },
+        "outsideSubscriptionRelevance": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1,
+          "unknown": 1
+        },
+        "importantRecall": {
+          "numerator": 3,
+          "denominator": 3,
+          "value": 1,
+          "unknown": 1
+        },
+        "groupPairPrecision": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1,
+          "unknown": 0
+        },
+        "groupPairRecall": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1,
+          "unknown": 8
+        },
+        "topicDrift": {
+          "numerator": 0,
+          "denominator": 2,
+          "value": 0,
+          "unknown": 2
+        },
+        "developmentDiversity": {
+          "numerator": 4,
+          "denominator": 7,
+          "value": 0.5714285714285714,
+          "unknown": 0
+        }
+      },
+      "ranking": [
+        {
+          "id": "atlas-recall",
+          "groupId": "story:46f5ee28c029ad0cfc5b2625",
+          "eligible": true,
+          "total": 72,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "atlas-release",
+          "groupId": "story:a424cf2f328fff8706280e88",
+          "eligible": true,
+          "total": 72,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "orion-release",
+          "groupId": "story:4ba1dc8e50183ef5815b20ba",
+          "eligible": true,
+          "total": 72,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "discussion",
+          "groupId": "story:3cc610240ec72ccfbf16c22b",
+          "eligible": true,
+          "total": 68,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "atlas-duplicate",
+          "groupId": "story:a424cf2f328fff8706280e88",
+          "eligible": true,
+          "total": 63,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "old-robotics",
+          "groupId": "story:383e72e53d5d68a825899f8a",
+          "eligible": true,
+          "total": 59,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "unknown-label",
+          "groupId": "story:8a56baa3e2ebdad054df7a2d",
+          "eligible": true,
+          "total": 56,
+          "criteriaVersion": "deterministic-v3"
+        },
+        {
+          "id": "advertisement",
+          "groupId": "story:aacfba7d190db7655bedec38",
+          "eligible": true,
+          "total": 46,
+          "criteriaVersion": "deterministic-v3"
+        }
+      ],
+      "excluded": [
+        {
+          "id": "fashion",
+          "groupId": "story:309d267f086d5fe5433d5bcc",
+          "eligible": false,
+          "total": 30,
+          "criteriaVersion": "deterministic-v3"
+        }
+      ],
+      "changes": {
+        "widenedTerms": [],
+        "temporaryBoosts": [],
+        "reweightedFeedback": [],
+        "addedInterestTerms": [
+          {
+            "interestId": "synthetic-robotics",
+            "terms": ["model", "acme", "atlas"]
+          }
+        ]
+      },
+      "missedImportantDevelopments": []
+    }
+  ],
+  "comparison": {
+    "baselineArm": "baseline",
+    "perArm": {
+      "baseline": null,
+      "recency-weighted-feedback": {
+        "precisionAtK": {
+          "baseline": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "importantRecall": {
+          "baseline": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "usefulDiscoveries": {
+          "baseline": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 3,
+            "denominator": 4,
+            "value": 0.75,
+            "unknown": 1
+          },
+          "delta": -0.25,
+          "unknown": true
+        },
+        "outsideSubscriptionRelevance": {
+          "baseline": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "developmentDiversity": {
+          "baseline": {
+            "numerator": 5,
+            "denominator": 7,
+            "value": 0.7142857142857143,
+            "unknown": 0
+          },
+          "current": {
+            "numerator": 4,
+            "denominator": 7,
+            "value": 0.5714285714285714,
+            "unknown": 0
+          },
+          "delta": -0.1428571428571429,
+          "unknown": false
+        },
+        "topicDrift": {
+          "baseline": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 2
+          },
+          "current": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 2
+          },
+          "delta": 0,
+          "unknown": true
+        }
+      },
+      "expiring-feedback-boost": {
+        "precisionAtK": {
+          "baseline": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "importantRecall": {
+          "baseline": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "usefulDiscoveries": {
+          "baseline": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 3,
+            "denominator": 4,
+            "value": 0.75,
+            "unknown": 1
+          },
+          "delta": -0.25,
+          "unknown": true
+        },
+        "outsideSubscriptionRelevance": {
+          "baseline": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "developmentDiversity": {
+          "baseline": {
+            "numerator": 5,
+            "denominator": 7,
+            "value": 0.7142857142857143,
+            "unknown": 0
+          },
+          "current": {
+            "numerator": 4,
+            "denominator": 7,
+            "value": 0.5714285714285714,
+            "unknown": 0
+          },
+          "delta": -0.1428571428571429,
+          "unknown": false
+        },
+        "topicDrift": {
+          "baseline": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 2
+          },
+          "current": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 2
+          },
+          "delta": 0,
+          "unknown": true
+        }
+      },
+      "adjacent-term-widening": {
+        "precisionAtK": {
+          "baseline": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "importantRecall": {
+          "baseline": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "usefulDiscoveries": {
+          "baseline": {
+            "numerator": 4,
+            "denominator": 4,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 3,
+            "denominator": 4,
+            "value": 0.75,
+            "unknown": 1
+          },
+          "delta": -0.25,
+          "unknown": true
+        },
+        "outsideSubscriptionRelevance": {
+          "baseline": {
+            "numerator": 3,
+            "denominator": 3,
+            "value": 1,
+            "unknown": 1
+          },
+          "current": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 1
+          },
+          "delta": 0,
+          "unknown": true
+        },
+        "developmentDiversity": {
+          "baseline": {
+            "numerator": 5,
+            "denominator": 7,
+            "value": 0.7142857142857143,
+            "unknown": 0
+          },
+          "current": {
+            "numerator": 4,
+            "denominator": 7,
+            "value": 0.5714285714285714,
+            "unknown": 0
+          },
+          "delta": -0.1428571428571429,
+          "unknown": false
+        },
+        "topicDrift": {
+          "baseline": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 2
+          },
+          "current": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 2
+          },
+          "delta": 0,
+          "unknown": true
+        }
+      }
+    }
+  },
+  "adoption": {
+    "evaluatedVersion": "interest-adaptation-evaluation-v1",
+    "threshold": {
+      "statement": "Adopt a candidate only when, on the same labeled corpus, replay instant, profiles and top-k budget: precision@k, important-development recall, useful discoveries, outside-subscription relevance and development diversity are all not lower than the baseline, topic drift is not higher, at least one gated axis strictly improves, and no gated axis is unknown. Otherwise retain the deterministic-v3 baseline and record the observed result.",
+      "required": [
+        "precisionAtK",
+        "importantRecall",
+        "usefulDiscoveries",
+        "outsideSubscriptionRelevance",
+        "developmentDiversity",
+        "topicDrift"
+      ]
+    },
+    "perArm": {
+      "baseline": {
+        "metrics": null,
+        "adopted": true,
+        "reason": "Recorded baseline: shipped deterministic-v3 scoring unchanged."
+      },
+      "recency-weighted-feedback": {
+        "metrics": {
+          "precisionAtK": {
+            "baseline": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "importantRecall": {
+            "baseline": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "usefulDiscoveries": {
+            "baseline": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 3,
+              "denominator": 4,
+              "value": 0.75,
+              "unknown": 1
+            },
+            "delta": -0.25,
+            "unknown": true
+          },
+          "outsideSubscriptionRelevance": {
+            "baseline": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 2,
+              "denominator": 2,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "developmentDiversity": {
+            "baseline": {
+              "numerator": 5,
+              "denominator": 7,
+              "value": 0.7142857142857143,
+              "unknown": 0
+            },
+            "current": {
+              "numerator": 4,
+              "denominator": 7,
+              "value": 0.5714285714285714,
+              "unknown": 0
+            },
+            "delta": -0.1428571428571429,
+            "unknown": false
+          },
+          "topicDrift": {
+            "baseline": {
+              "numerator": 0,
+              "denominator": 2,
+              "value": 0,
+              "unknown": 2
+            },
+            "current": {
+              "numerator": 0,
+              "denominator": 2,
+              "value": 0,
+              "unknown": 2
+            },
+            "delta": 0,
+            "unknown": true
+          }
+        },
+        "adopted": false,
+        "reason": "one or more gated metric axes are unknown on this corpus; regressed: developmentDiversity; no gated axis measurably improved over the baseline"
+      },
+      "expiring-feedback-boost": {
+        "metrics": {
+          "precisionAtK": {
+            "baseline": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "importantRecall": {
+            "baseline": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "usefulDiscoveries": {
+            "baseline": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 3,
+              "denominator": 4,
+              "value": 0.75,
+              "unknown": 1
+            },
+            "delta": -0.25,
+            "unknown": true
+          },
+          "outsideSubscriptionRelevance": {
+            "baseline": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 2,
+              "denominator": 2,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "developmentDiversity": {
+            "baseline": {
+              "numerator": 5,
+              "denominator": 7,
+              "value": 0.7142857142857143,
+              "unknown": 0
+            },
+            "current": {
+              "numerator": 4,
+              "denominator": 7,
+              "value": 0.5714285714285714,
+              "unknown": 0
+            },
+            "delta": -0.1428571428571429,
+            "unknown": false
+          },
+          "topicDrift": {
+            "baseline": {
+              "numerator": 0,
+              "denominator": 2,
+              "value": 0,
+              "unknown": 2
+            },
+            "current": {
+              "numerator": 0,
+              "denominator": 2,
+              "value": 0,
+              "unknown": 2
+            },
+            "delta": 0,
+            "unknown": true
+          }
+        },
+        "adopted": false,
+        "reason": "one or more gated metric axes are unknown on this corpus; regressed: developmentDiversity; no gated axis measurably improved over the baseline"
+      },
+      "adjacent-term-widening": {
+        "metrics": {
+          "precisionAtK": {
+            "baseline": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "importantRecall": {
+            "baseline": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "usefulDiscoveries": {
+            "baseline": {
+              "numerator": 4,
+              "denominator": 4,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 3,
+              "denominator": 4,
+              "value": 0.75,
+              "unknown": 1
+            },
+            "delta": -0.25,
+            "unknown": true
+          },
+          "outsideSubscriptionRelevance": {
+            "baseline": {
+              "numerator": 3,
+              "denominator": 3,
+              "value": 1,
+              "unknown": 1
+            },
+            "current": {
+              "numerator": 2,
+              "denominator": 2,
+              "value": 1,
+              "unknown": 1
+            },
+            "delta": 0,
+            "unknown": true
+          },
+          "developmentDiversity": {
+            "baseline": {
+              "numerator": 5,
+              "denominator": 7,
+              "value": 0.7142857142857143,
+              "unknown": 0
+            },
+            "current": {
+              "numerator": 4,
+              "denominator": 7,
+              "value": 0.5714285714285714,
+              "unknown": 0
+            },
+            "delta": -0.1428571428571429,
+            "unknown": false
+          },
+          "topicDrift": {
+            "baseline": {
+              "numerator": 0,
+              "denominator": 2,
+              "value": 0,
+              "unknown": 2
+            },
+            "current": {
+              "numerator": 0,
+              "denominator": 2,
+              "value": 0,
+              "unknown": 2
+            },
+            "delta": 0,
+            "unknown": true
+          }
+        },
+        "adopted": false,
+        "reason": "one or more gated metric axes are unknown on this corpus; regressed: developmentDiversity; no gated axis measurably improved over the baseline"
+      }
+    },
+    "adoptedArm": null,
+    "summary": "No candidate met the threshold on this corpus; the deterministic-v3 baseline is retained and the observed result is recorded for revisit."
+  },
+  "usage": {
+    "providerCalls": 0,
+    "cost": null,
+    "costPerUsefulDiscovery": {
+      "value": null,
+      "usefulDiscoveries": 4,
+      "unknownLabels": 1
+    }
+  },
+  "latencyMs": null,
+  "latencyReason": "No timing observation recorded; elapsed time is environment-dependent and excluded from deterministic replay."
+}
