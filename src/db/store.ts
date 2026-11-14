@@ -8,7 +8,11 @@ import {
 } from "../observed-update";
 import { ProfileStore } from "../profiles";
 import { healthReport } from "../health";
-import { runRetention, type RetentionReport } from "./retention-store";
+import {
+  contentFingerprint,
+  runRetention,
+  type RetentionReport,
+} from "./retention-store";
 import { PURGED_INBOUND_BODY, type RetentionPolicy } from "../retention";
 import { advanceScoreInvalidation, invalidateScores } from "./score-queue";
 import { SCORING_CRITERIA_VERSION, type ScoringInput } from "../scoring";
@@ -1319,10 +1323,11 @@ export class Store {
             title: string;
             backfilled: number;
             url: string | null;
+            text_fingerprint: string | null;
           },
           [string, string]
         >(
-          "SELECT text,title,backfilled,url FROM content_versions WHERE source_id=? AND native_id=? ORDER BY id DESC LIMIT 1",
+          "SELECT text,title,backfilled,url,text_fingerprint FROM content_versions WHERE source_id=? AND native_id=? ORDER BY id DESC LIMIT 1",
         )
         .get(sourceId, candidate.nativeId);
       const originalUrl = candidate.sourceUrl ?? candidate.url ?? prior.url;
@@ -1337,16 +1342,28 @@ export class Store {
             "SELECT count(*) n FROM content WHERE item_id=? AND purged_at IS NOT NULL",
           )
           .get(prior.item_id)!.n > 0;
-      // A purged body cannot be compared, so an unchanged title and URL keep it
-      // tombstoned: no text is restored and no extraction is queued.
+      // A purged body cannot be compared by text, but the fingerprint retained
+      // at purge time can: an unchanged body keeps the tombstone, while a
+      // body-only change restores the new text under the normal update rules.
+      // Without a retained fingerprint (rows purged before it existed) only the
+      // title and URL are compared, which stays conservative.
+      const bodyChanged = purged
+        ? candidate.text !== "" &&
+          previous?.text_fingerprint != null &&
+          previous.text_fingerprint !== contentFingerprint(candidate.text)
+        : candidate.text !== "" && lastBody !== candidate.text;
       const changed = purged
         ? !previous ||
           previous.title !== candidate.title ||
-          previous.url !== originalUrl
+          previous.url !== originalUrl ||
+          bodyChanged
         : !previous ||
           previous.title !== candidate.title ||
           (candidate.text !== "" && lastBody !== candidate.text) ||
           previous.url !== originalUrl;
+      // A purged observation whose body is unchanged keeps its tombstone; a
+      // restored observation is a fresh, unpurged version carrying its text.
+      const keepPurged = purged && !bodyChanged;
       if (changed || previous?.backfilled) {
         this.sqlite
           .query(
@@ -1357,10 +1374,10 @@ export class Store {
             sourceId,
             candidate.nativeId,
             candidate.title,
-            purged ? "" : candidate.text,
+            keepPurged ? "" : candidate.text,
             originalUrl,
             now,
-            purged ? now : null,
+            keepPurged ? now : null,
           );
       }
       if (changed) {
@@ -1377,10 +1394,10 @@ export class Store {
             .query("UPDATE items SET url=coalesce(url,?) WHERE id=?")
             .run(canonicalItemUrl(candidate.url), prior.item_id);
       }
-      if (changed && !purged) {
+      if (changed && !keepPurged) {
         if (candidate.text)
           this.sqlite
-            .query("UPDATE content SET text=? WHERE item_id=?")
+            .query("UPDATE content SET text=?,purged_at=NULL WHERE item_id=?")
             .run(candidate.text, prior.item_id);
         const generation = this.sqlite
           .query<{ n: number }, [string]>(

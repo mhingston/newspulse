@@ -49,6 +49,11 @@ export const contentVersions = sqliteTable(
     observedAt: integer("observed_at").notNull(),
     backfilled: integer().notNull().default(0),
     purgedAt: integer("purged_at"),
+    /**
+     * SHA-256 of the version's original body text, retained when retention
+     * clears the text so a later re-poll can still detect a body-only change.
+     */
+    textFingerprint: text("text_fingerprint"),
   },
   (t) => [
     index("content_versions_source_native").on(t.sourceId, t.nativeId, t.id),

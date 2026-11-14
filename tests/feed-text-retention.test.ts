@@ -1,7 +1,19 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Store } from "../src/db/store";
 import { DAY_MS, retentionPolicy } from "../src/retention";
 import { verifyDatabase } from "../src/recovery";
@@ -357,6 +369,329 @@ describe("feed-text retention", () => {
           "SELECT count(*) n FROM retention_purges WHERE class='feed_text'",
         ),
       ).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a body-only change after purge is detected and the new text is restored", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // Same title, URL and guid; only the body changed.
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      const rePOLLED_AT = DAY0 + 5 * DAY_MS + 12 * 60 * 60 * 1000;
+      store.enqueueDue(rePOLLED_AT);
+      const poll = store.claim(rePOLLED_AT)!;
+      store.complete(
+        poll,
+        {
+          items: parseFeed(
+            feed("Alpha", "a substantially corrected body with new facts"),
+            source.url,
+          ),
+        },
+        rePOLLED_AT,
+      );
+      // The new observation is fresh: its text is kept and the tombstone lifts.
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({
+        text: "a substantially corrected body with new facts",
+        purged_at: null,
+      });
+      const versions = store.sqlite
+        .query<
+          { text: string; purged_at: number | null; observed_at: number },
+          [string]
+        >(
+          "SELECT text,purged_at,observed_at FROM content_versions WHERE item_id=? ORDER BY id",
+        )
+        .all(itemId);
+      expect(versions.at(-1)).toMatchObject({
+        text: "a substantially corrected body with new facts",
+        purged_at: null,
+        observed_at: rePOLLED_AT,
+      });
+      // The purged history itself stays purged and audited.
+      expect(versions[0]).toMatchObject({
+        text: "",
+        purged_at: DAY0 + 5 * DAY_MS,
+      });
+      expect(
+        count(
+          store,
+          "SELECT count(*) n FROM retention_purges WHERE item_id='" +
+            itemId +
+            "' AND class='feed_text'",
+        ),
+      ).toBe(1);
+      // The restored text is searchable and a new extraction generation runs.
+      expect(store.search("substantially corrected")).toHaveLength(1);
+      expect(store.search("feedtextword")).toHaveLength(0);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      ).toBe(2);
+      expect(
+        store.sqlite
+          .query<{ status: string; generation: number }, [string]>(
+            "SELECT status,generation FROM processing_jobs WHERE item_id=? AND stage='extract' ORDER BY generation DESC LIMIT 1",
+          )
+          .get(itemId),
+      ).toEqual({ status: "pending", generation: 2 });
+      // Once the new generation settles, retention applies to the restored
+      // text on its own age, exactly as for any other observation.
+      const now = rePOLLED_AT + 60 * 60 * 1000;
+      const settle = (
+        stage: "extract" | "group" | "analyse" | "score",
+        outcome: string,
+        result?: string,
+      ) => {
+        store.completeProcessing(
+          store.claimProcessing(stage, now)!,
+          outcome,
+          now,
+          result,
+        );
+      };
+      settle(
+        "extract",
+        "extracted",
+        JSON.stringify({ status: "extracted", text: "payload Alpha body" }),
+      );
+      settle("group", "grouped");
+      settle("analyse", "unavailable");
+      settle("score", "scored");
+      const later = store.retention(
+        retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }),
+        { dryRun: true, now: rePOLLED_AT + 6 * DAY_MS },
+      );
+      expect(later.eligible.feed_text).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a title-only change after purge keeps the tombstone", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      store.enqueueDue(DAY0 + 6 * DAY_MS);
+      const poll = store.claim(DAY0 + 6 * DAY_MS)!;
+      store.complete(
+        poll,
+        {
+          items: parseFeed(
+            feed("Alpha renamed", "feedtextword body"),
+            source.url,
+          ),
+        },
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "", purged_at: DAY0 + 5 * DAY_MS });
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      ).toBe(1);
+      expect(store.search("Alpha renamed")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a changed body on a purged item without a retained fingerprint stays tombstoned", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // Rows purged before the fingerprint column existed have none.
+      store.sqlite
+        .query(
+          "UPDATE content_versions SET text_fingerprint=NULL WHERE item_id=?",
+        )
+        .run(itemId);
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      store.enqueueDue(DAY0 + 6 * DAY_MS);
+      const poll = store.claim(DAY0 + 6 * DAY_MS)!;
+      store.complete(
+        poll,
+        {
+          items: parseFeed(
+            feed("Alpha", "a substantially corrected body with new facts"),
+            source.url,
+          ),
+        },
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "", purged_at: DAY0 + 5 * DAY_MS });
+      expect(store.search("substantially corrected")).toHaveLength(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("migrating a populated 0049 database adds the fingerprint column and preserves tombstones", () => {
+    const dir = temp();
+    // A database at the previous schema: one item whose feed text was already
+    // purged (no fingerprint existed yet) and one item still holding text.
+    const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
+    const old = join(dir, "prior-migrations");
+    mkdirSync(join(old, "meta"), { recursive: true });
+    for (const file of readdirSync(migrations)) {
+      if (file.endsWith(".sql") && !/^0050_/.test(file))
+        copyFileSync(join(migrations, file), join(old, file));
+    }
+    const journal = JSON.parse(
+      readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
+    );
+    journal.entries = journal.entries.filter(
+      (entry: { tag: string }) => !entry.tag.startsWith("0050_"),
+    );
+    writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
+    for (const file of readdirSync(join(migrations, "meta"))) {
+      if (file.endsWith("_snapshot.json") && !file.startsWith("0050"))
+        copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
+    }
+    const path = join(dir, "prior.sqlite");
+    const db = new Database(path, { create: true, strict: true });
+    db.exec("PRAGMA foreign_keys=ON");
+    migrate(drizzle(db), { migrationsFolder: old });
+    db.exec(`INSERT INTO sources(id,kind,url,title) VALUES('src','rss','https://example.test/migration.xml','Feed');
+      INSERT INTO items(id,identity,title,ingested_at,status) VALUES('legacy','url:https://example.test/legacy','Legacy',${DAY0},'extracted');
+      INSERT INTO item_sources(item_id,source_id,native_id,url) VALUES('legacy','src','legacy-1','https://example.test/legacy');
+      INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at,purged_at) VALUES('legacy','src','legacy-1','Legacy','','https://example.test/legacy',${DAY0},${DAY0});
+      INSERT INTO content(item_id,text,purged_at) VALUES('legacy','',${DAY0});
+      INSERT INTO retention_purges(item_id,generation,class,purged_at,reason) VALUES('legacy',0,'feed_text',${DAY0},'retention');
+      INSERT INTO items(id,identity,title,ingested_at,status) VALUES('fresh','url:https://example.test/fresh','Fresh',${DAY0},'extracted');
+      INSERT INTO item_sources(item_id,source_id,native_id,url) VALUES('fresh','src','fresh-1','https://example.test/fresh');
+      INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at) VALUES('fresh','src','fresh-1','Fresh','migrationword body','https://example.test/fresh',${DAY0});
+      INSERT INTO content(item_id,text) VALUES('fresh','migrationword body');`);
+    const backup = join(dir, "backup.sqlite");
+    db.query("VACUUM INTO ?").run(backup);
+    db.close();
+
+    // Reopening runs the new migration; the preserved tombstone keeps the
+    // purged row unavailable, and newly purged text gains a fingerprint.
+    const store = new Store(path);
+    try {
+      expect(
+        store.sqlite
+          .query<{ name: string }, []>(
+            "SELECT name FROM pragma_table_info('content_versions') WHERE name='text_fingerprint'",
+          )
+          .all(),
+      ).toHaveLength(1);
+      expect(store.search("migrationword")).toHaveLength(1);
+      expect(store.getItem("legacy")!.text).toBe("");
+
+      // The legacy tombstone has no fingerprint, so a changed body stays
+      // conservatively unavailable instead of being mistaken for unchanged.
+      store.enqueueDue(DAY0 + DAY_MS, true);
+      const poll = store.claim(DAY0 + DAY_MS)!;
+      store.complete(
+        poll,
+        {
+          items: parseFeed(
+            `<?xml version="1.0"?>\n<rss version="2.0"><channel><title>Feed</title>\n<item><title>Legacy</title><link>https://example.test/legacy</link><guid>legacy-1</guid><description>a republished body with entirely new wording here</description></item>\n<item><title>Fresh</title><link>https://example.test/fresh</link><guid>fresh-1</guid><description>migrationword body</description></item>\n</channel></rss>`,
+            "https://example.test/migration.xml",
+          ),
+        },
+        DAY0 + DAY_MS,
+      );
+      expect(store.getItem("legacy")!.text).toBe("");
+      expect(store.search("entirely new wording")).toHaveLength(0);
+
+      // The fresh item is settled only after its pipeline completes; run the
+      // real purge, which must record fingerprints for the preserved text.
+      const staged = DAY0 + DAY_MS;
+      store.completeProcessing(
+        store.claimProcessing("extract", staged)!,
+        "extracted",
+        staged,
+        JSON.stringify({ status: "extracted", text: "payload" }),
+      );
+      store.completeProcessing(
+        store.claimProcessing("group", staged)!,
+        "grouped",
+        staged,
+      );
+      store.completeProcessing(
+        store.claimProcessing("analyse", staged)!,
+        "unavailable",
+        staged,
+      );
+      store.completeProcessing(
+        store.claimProcessing("score", staged)!,
+        "scored",
+        staged,
+      );
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      expect(store.getItem("fresh")!.text).toBe("");
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM content_versions WHERE item_id='fresh' AND text_fingerprint IS NOT NULL",
+          )
+          .get()!.n,
+      ).toBe(1);
+
+      // And a later body-only change on the migrated-then-purged item restores.
+      store.enqueueDue(DAY0 + 6 * DAY_MS, true);
+      const second = store.claim(DAY0 + 6 * DAY_MS)!;
+      store.complete(
+        second,
+        {
+          items: parseFeed(
+            `<?xml version="1.0"?>\n<rss version="2.0"><channel><title>Feed</title>\n<item><title>Fresh</title><link>https://example.test/fresh</link><guid>fresh-1</guid><description>a corrected migrationword-free body</description></item>\n</channel></rss>`,
+            "https://example.test/migration.xml",
+          ),
+        },
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(store.getItem("fresh")!.text).toBe(
+        "a corrected migrationword-free body",
+      );
+      expect(store.search("a corrected migrationword-free body")).toHaveLength(
+        1,
+      );
+      // The pristine backup copy still verifies and restores unchanged.
+      expect(verifyDatabase(backup).ok).toBe(true);
     } finally {
       store.close();
     }

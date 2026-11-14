@@ -1,4 +1,5 @@
 import type { Database } from "bun:sqlite";
+import { createHash } from "node:crypto";
 import {
   PURGED_ANALYSIS,
   PURGED_EXTRACTION,
@@ -7,6 +8,15 @@ import {
   type RetentionClass,
   type RetentionPolicy,
 } from "../retention";
+
+/**
+ * Deterministic fingerprint of a body's original text. It is recorded when a
+ * purge destroys the text so a later re-poll can still tell an unchanged body
+ * from a changed one; it is not a security boundary, only a change signal.
+ */
+export function contentFingerprint(text: string): string {
+  return createHash("sha256").update(text).digest("hex");
+}
 
 export interface RetentionCandidate {
   itemId: string;
@@ -276,8 +286,20 @@ function feedTextCandidates(
  * Clears the content and every version's text and marks each row purged. Rows
  * stay so identity, observation timestamps, source references and the
  * observed-update history remain; comparison readers exclude purged rows.
+ * Before the text is destroyed, each version's body fingerprint is recorded so
+ * a later re-poll with a changed body is still detectable.
  */
 function purgeFeedText(db: Database, itemId: string, now: number) {
+  const versions = db
+    .query<{ id: number; text: string }, [string]>(
+      "SELECT id,text FROM content_versions WHERE item_id=? AND text_fingerprint IS NULL AND text<>''",
+    )
+    .all(itemId);
+  const fingerprint = db.query(
+    "UPDATE content_versions SET text_fingerprint=? WHERE id=?",
+  );
+  for (const version of versions)
+    fingerprint.run(contentFingerprint(version.text), version.id);
   db.query(
     "UPDATE content SET text='',purged_at=? WHERE item_id=? AND purged_at IS NULL",
   ).run(now, itemId);
