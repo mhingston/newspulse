@@ -1,0 +1,52 @@
+{
+  "version": 1,
+  "corpusId": "synthetic-robotics-v1",
+  "k": 5,
+  "events": [
+    {
+      "itemId": "atlas-release",
+      "useful": true,
+      "at": 1793827200000,
+      "source": "mcp"
+    },
+    {
+      "itemId": "atlas-duplicate",
+      "useful": true,
+      "at": 1793827200000,
+      "source": "email"
+    },
+    {
+      "itemId": "atlas-duplicate",
+      "useful": false,
+      "at": 1793913600000,
+      "source": "mcp"
+    },
+    {
+      "itemId": "atlas-recall",
+      "useful": true,
+      "at": 1793913600000,
+      "source": "email"
+    },
+    {
+      "itemId": "advertisement",
+      "useful": false,
+      "at": 1793740800000,
+      "source": "mcp"
+    },
+    {
+      "itemId": "old-robotics",
+      "useful": true,
+      "at": 1783632000000,
+      "source": "mcp"
+    }
+  ],
+  "limits": {
+    "recencyHorizonDays": 30,
+    "boostWindowDays": 30,
+    "boostThreshold": 2,
+    "boostExpiryDays": 14,
+    "boostStep": 5,
+    "maxAdjacentTerms": 3,
+    "adjacentTermMinSupport": 2
+  }
+}
