@@ -9,6 +9,15 @@ import { DigestStore } from "../src/db/digest-store";
 import { DeliveryStore } from "../src/db/delivery-store";
 import { DeliveryWorker, type DeliveryEmailProvider } from "../src/delivery";
 import { parseFeed } from "../src/adapters/rss";
+import {
+  HttpContentExtractor,
+  extractionHandler,
+} from "../src/adapters/extraction";
+import { OpenAICompatibleAnalysis } from "../src/adapters/analysis";
+import { analysisHandler } from "../src/analysis-service";
+import { AnalysisBudget } from "../src/analysis-budget";
+import { scoringHandler } from "../src/scoring-service";
+import { ProcessingWorker } from "../src/worker";
 import { verifyDatabase } from "../src/recovery";
 import {
   assertDeliveryRestoreAcknowledged,
@@ -26,65 +35,141 @@ const DAY0 = Date.UTC(2026, 10, 1);
 const date = "2026-11-01";
 const recipient = "reader@example.test";
 const sender = "sender@example.test";
-const FEED = `<?xml version="1.0"?>
-<rss version="2.0"><channel><title>Feed</title>
-<item><title>Alpha</title><link>https://example.test/alpha</link><guid>alpha-1</guid><description>rehearsalword body</description></item>
-<item><title>Beta</title><link>https://example.test/beta</link><guid>beta-1</guid><description>betaword body</description></item>
-</channel></rss>`;
+
+const headline = (title: string, link: string) =>
+  `<item><title>${title}</title><link>${link}</link><guid>${link}</guid><description>Acme released the Atlas 2 robotics model today.</description></item>`;
+const FEEDS: [string, string][] = [
+  [
+    "https://news-one.example/rss",
+    `<?xml version="1.0"?><rss version="2.0"><channel><title>Feed One</title>${headline(
+      "Acme releases Atlas 2 robotics model",
+      "https://articles.example/alpha",
+    )}</channel></rss>`,
+  ],
+  [
+    "https://news-two.example/rss",
+    `<?xml version="1.0"?><rss version="2.0"><channel><title>Feed Two</title>${headline(
+      "Atlas 2 robotics model launched by Acme",
+      "https://articles.example/beta",
+    )}</channel></rss>`,
+  ],
+];
+
+/** Runs one poll for a specific source, skipping any other due source first. */
+function pollSource(
+  store: Store,
+  source: { id: string; url: string },
+  xml: string,
+  now: number,
+) {
+  store.enqueueDue(now, true);
+  let job = store.claim(now);
+  while (job && job.source_id !== source.id) {
+    store.complete(job, { items: [] }, now);
+    job = store.claim(now);
+  }
+  store.complete(job!, { items: parseFeed(xml, source.url) }, now);
+}
 
 /**
- * Builds a populated backup by driving the real pipeline: a real poll feeds
- * parsed items through the store, the processing stages run through the real
- * claim/complete paths with the extraction and analysis providers faked at
- * their boundary, the edition is frozen and its outbox row prepared through
- * the real digest and delivery stores, and the operator-facing backup command
+ * Builds a populated backup by driving the real pipeline: polls feed parsed
+ * items through the store, the processing stages run through the real
+ * handlers from src/main.ts with the external providers faked at their
+ * boundary (a scripted HTTP transport for extraction, a scripted LLM response
+ * for analysis), the edition is frozen and its outbox row prepared through the
+ * real digest and delivery stores, and the operator-facing backup command
  * snapshots the result. No hand-written schema SQL anywhere.
  */
-function pipelineBackup(dir: string): string {
+async function pipelineBackup(
+  dir: string,
+): Promise<{ backup: string; sources: { id: string; xml: string }[] }> {
   const dbPath = join(dir, "source.sqlite");
   const store = new Store(dbPath);
-  const source = store.addSource("https://example.test/feed.xml", "Feed");
-  store.enqueueDue(DAY0);
-  const poll = store.claim(DAY0)!;
-  store.complete(poll, { items: parseFeed(FEED, source.url) }, DAY0);
-  const items: { itemId: string; title: string }[] = [];
-  for (const title of ["Alpha", "Beta"]) {
-    const item = store.search(title)[0]!;
-    items.push({ itemId: item.id, title });
-    const extract = store.claimProcessing("extract", DAY0)!;
-    store.completeProcessing(
-      extract,
-      "extracted",
-      DAY0,
-      JSON.stringify({ status: "extracted", text: `payload ${title} body` }),
-    );
-    store.completeProcessing(
-      store.claimProcessing("group", DAY0)!,
-      "grouped",
-      DAY0,
-    );
-    store.completeProcessing(
-      store.claimProcessing("analyse", DAY0)!,
-      "unavailable",
-      DAY0,
-    );
-    store.completeProcessing(
-      store.claimProcessing("score", DAY0)!,
-      "scored",
-      DAY0,
-    );
+  const sources: { id: string; xml: string }[] = [];
+  for (const [url, xml] of FEEDS) {
+    const source = store.addSource(url, "Feed");
+    pollSource(store, source, xml, DAY0);
+    sources.push({ id: source.id, xml });
   }
+  const extractor = new HttpContentExtractor(
+    async () => ["93.184.216.34"],
+    async (url) => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: `<article>_UNTRUSTED_ article body for ${url.pathname}</article>`,
+    }),
+  );
+  const analysisClient = new OpenAICompatibleAnalysis(
+    {
+      endpoint: "https://analysis.example/v1/chat/completions",
+      model: "model",
+      apiKey: "test-key",
+      maxInputChars: 16000,
+      maxOutputTokens: 1000,
+      timeoutMs: 45000,
+    },
+    async () =>
+      Response.json({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: {
+              content: JSON.stringify({
+                summary: "Acme released the Atlas 2 robotics model.",
+                classification: "product release",
+                claims: [],
+                uncertainty: [],
+              }),
+            },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      }),
+  );
+  // The same handlers main.ts wires, with faked providers at the boundary.
+  const worker = new ProcessingWorker(store, {
+    extract: extractionHandler(store, extractor),
+    group: async () => {
+      const result = store.stories.reconcile();
+      if (result.stale) throw new Error("Story inputs changed during grouping");
+      return { status: "grouped", result: JSON.stringify(result) };
+    },
+    analyse: analysisHandler(
+      store,
+      analysisClient,
+      new AnalysisBudget(store.sqlite, {
+        maxTokens: 1_000_000,
+        maxMicros: 1_000_000_000,
+        maxConcurrent: 1,
+      }),
+      {
+        provider: "https://analysis.example",
+        model: "model",
+        promptVersion: "1",
+        reserveTokens: 1000,
+        reserveMicros: 1000,
+      },
+    ),
+    score: scoringHandler(store),
+  });
+  expect(await worker.drain("extract")).toBe(2);
+  expect(await worker.drain("group")).toBe(2);
+  expect(await worker.drain("analyse")).toBe(2);
+  expect(await worker.drain("score")).toBe(2);
+
+  const items = store.search("Atlas").map((item) => item.id);
+  expect(items).toHaveLength(2);
   const digests = new DigestStore(store.sqlite);
   digests.freeze(
     {
       date,
       timezone: "Europe/London",
       subject: "News",
-      html: "<p>Alpha</p>",
-      text: "Alpha",
+      html: "<p>Atlas 2</p>",
+      text: "Atlas 2",
       decisionSnapshot: {},
-      items: items.map((item) => ({
-        itemId: item.itemId,
+      items: items.map((itemId) => ({
+        itemId,
         groupId: null,
         scoreId: null,
         snapshot: {},
@@ -109,7 +194,7 @@ function pipelineBackup(dir: string): string {
   });
   if (backupRun.exitCode !== 0)
     throw new Error(`backup failed: ${backupRun.stderr.toString()}`);
-  return backup;
+  return { backup, sources };
 }
 
 function count(path: string, sql: string): number {
@@ -132,11 +217,13 @@ function restoreCli(backup: string, restored: string) {
 test("restore rehearsal: pipeline-built backup restores into a new stopped path, verifies, and a restart is idempotent", async () => {
   const dir = mkdtempSync(join(tmpdir(), "restore-rehearsal-"));
   try {
-    const backup = pipelineBackup(dir);
+    const { backup, sources } = await pipelineBackup(dir);
     const before = verifyDatabase(backup);
     expect(before.problems).toEqual([]);
     expect(before.ok).toBe(true);
     expect(before.counts.items).toBe(2);
+    expect(before.counts.item_scores).toBe(2);
+    expect(before.counts.analyses).toBe(2);
     expect(before.counts.deliveries).toBe(1);
 
     const restored = join(dir, "restored", "newspulse.sqlite");
@@ -154,6 +241,8 @@ test("restore rehearsal: pipeline-built backup restores into a new stopped path,
     expect(report.problems).toEqual([]);
     expect(report.counts.items).toBe(before.counts.items);
     expect(report.counts.content_versions).toBe(before.counts.content_versions);
+    expect(report.counts.item_scores).toBe(before.counts.item_scores);
+    expect(report.counts.analyses).toBe(before.counts.analyses);
     expect(report.counts.deliveries).toBe(1);
     const journal = JSON.parse(
       readFileSync(
@@ -165,21 +254,53 @@ test("restore rehearsal: pipeline-built backup restores into a new stopped path,
     ).entries.length as number;
     expect(report.migrations).toBe(journal);
 
-    // Restart: reopening runs no new migrations. Re-polling the same feed must
-    // not duplicate items, versions or processing work, and the prepared
-    // outbox row survives.
+    // Restart: reopening runs no new migrations. The processed history —
+    // scores, analysis summaries and story memberships — survives, and
+    // re-polling the same feeds must not duplicate items, versions or work.
     const store = new Store(restored);
-    const ids: string[] = [];
     try {
-      const source = store.sources()[0]!;
-      store.enqueueDue(DAY0 + DAY_MS, true);
-      const poll = store.claim(DAY0 + DAY_MS)!;
-      store.complete(
-        poll,
-        { items: parseFeed(FEED, source.url) },
-        DAY0 + DAY_MS,
+      for (const itemId of store.search("Atlas").map((item) => item.id)) {
+        const item = store.getItem(itemId)!;
+        expect(item.summary).toBe("Acme released the Atlas 2 robotics model.");
+        expect(item.story.current).not.toBeNull();
+        const scores = store.scoreHistory(itemId);
+        expect(scores).toHaveLength(1);
+        expect(scores[0]!.result).toMatchObject({
+          eligible: expect.any(Boolean),
+        });
+      }
+      const memberships = store.sqlite
+        .query<{ n: number }, []>(
+          "SELECT count(*) n FROM story_memberships WHERE ended_at IS NULL",
+        )
+        .get()!.n;
+      expect(memberships).toBe(2);
+      for (const { id, xml } of sources) {
+        store.enqueueDue(DAY0 + DAY_MS, true);
+        let poll = store.claim(DAY0 + DAY_MS)!;
+        while (poll && poll.source_id !== id) {
+          store.complete(poll, { items: [] }, DAY0 + DAY_MS);
+          poll = store.claim(DAY0 + DAY_MS)!;
+        }
+        store.complete(
+          poll,
+          { items: parseFeed(xml, store.source(id)!.url) },
+          DAY0 + DAY_MS,
+        );
+      }
+      expect(count(restored, "SELECT count(*) n FROM items")).toBe(2);
+      expect(
+        count(
+          restored,
+          "SELECT count(*) n FROM (SELECT source_id,native_id FROM item_sources GROUP BY 1,2 HAVING count(*)>1)",
+        ),
+      ).toBe(0);
+      expect(count(restored, "SELECT count(*) n FROM item_scores")).toBe(2);
+      expect(count(restored, "SELECT count(*) n FROM analyses")).toBe(2);
+      expect(count(restored, "SELECT count(*) n FROM story_memberships")).toBe(
+        2,
       );
-      ids.push(...store.search("Alpha").map((item) => item.id));
+
       // The operator reconciles the restored database: the provider had
       // accepted the send before the crash, so the pending outbox row is
       // suppressed with a payload-bound confirmation and never resent.
@@ -245,13 +366,6 @@ test("restore rehearsal: pipeline-built backup restores into a new stopped path,
     } finally {
       store.close();
     }
-    expect(count(restored, "SELECT count(*) n FROM items")).toBe(2);
-    expect(
-      count(
-        restored,
-        "SELECT count(*) n FROM (SELECT source_id,native_id FROM item_sources GROUP BY 1,2 HAVING count(*)>1)",
-      ),
-    ).toBe(0);
     const restarted = verifyDatabase(restored);
     expect(restarted.ftsConsistent).toBe(true);
     expect(restarted.problems).toEqual([]);
@@ -260,10 +374,10 @@ test("restore rehearsal: pipeline-built backup restores into a new stopped path,
   }
 });
 
-test("restore rehearsal: retention purge on the restored database keeps verification passing", () => {
+test("restore rehearsal: retention purge on the restored database keeps verification passing", async () => {
   const dir = mkdtempSync(join(tmpdir(), "restore-rehearsal-purge-"));
   try {
-    const backup = pipelineBackup(dir);
+    const { backup, sources } = await pipelineBackup(dir);
     const restored = join(dir, "restored.sqlite");
     expect(restoreCli(backup, restored).exitCode).toBe(0);
     const before = verifyDatabase(restored);
@@ -271,16 +385,12 @@ test("restore rehearsal: retention purge on the restored database keeps verifica
     const store = new Store(restored);
     try {
       // The restored items carry scored, settled feed text, so the real
-      // retention pass purges it on the restored copy.
+      // retention pass fingerprints and purges it on the restored copy.
       const report = store.retention(
         retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }),
         { dryRun: false, now: DAY0 + 5 * DAY_MS },
       );
       expect(report.purged.feed_text).toBe(2);
-      expect(store.search("rehearsalword")).toHaveLength(0);
-      expect(store.search("Alpha")).toHaveLength(1);
-      // A re-poll of the unchanged feed stays tombstoned: no text is restored
-      // and no new extraction generation is queued.
       expect(
         store.sqlite
           .query<{ n: number }, []>(
@@ -288,14 +398,22 @@ test("restore rehearsal: retention purge on the restored database keeps verifica
           )
           .get()!.n,
       ).toBe(0);
-      const source = store.sources()[0]!;
-      store.enqueueDue(DAY0 + 6 * DAY_MS, true);
-      const poll = store.claim(DAY0 + 6 * DAY_MS)!;
-      store.complete(
-        poll,
-        { items: parseFeed(FEED, source.url) },
-        DAY0 + 6 * DAY_MS,
-      );
+      expect(store.search("Atlas 2")).toHaveLength(2);
+      // A re-poll of the unchanged feeds stays tombstoned: no text is restored
+      // and no new extraction generation is queued.
+      for (const { id, xml } of sources) {
+        store.enqueueDue(DAY0 + 6 * DAY_MS, true);
+        let poll = store.claim(DAY0 + 6 * DAY_MS)!;
+        while (poll && poll.source_id !== id) {
+          store.complete(poll, { items: [] }, DAY0 + 6 * DAY_MS);
+          poll = store.claim(DAY0 + 6 * DAY_MS)!;
+        }
+        store.complete(
+          poll,
+          { items: parseFeed(xml, store.source(id)!.url) },
+          DAY0 + 6 * DAY_MS,
+        );
+      }
       expect(
         store.sqlite
           .query<{ n: number }, []>(
@@ -305,11 +423,9 @@ test("restore rehearsal: retention purge on the restored database keeps verifica
       ).toBe(0);
       expect(
         store.sqlite
-          .query<{ text: string }, [string]>(
-            "SELECT text FROM content WHERE item_id=?",
-          )
-          .get(store.search("Alpha")[0]!.id)!.text,
-      ).toBe("");
+          .query<{ text: string }, []>("SELECT DISTINCT text FROM content")
+          .all(),
+      ).toEqual([{ text: "" }]);
     } finally {
       store.close();
     }

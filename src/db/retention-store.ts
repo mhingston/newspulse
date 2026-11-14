@@ -18,6 +18,13 @@ export function contentFingerprint(text: string): string {
   return createHash("sha256").update(text).digest("hex");
 }
 
+/**
+ * Marks an observation that was purged while already empty, so it stays
+ * distinguishable from a legacy tombstone whose text was destroyed before
+ * fingerprints existed and whose body is therefore unknown.
+ */
+export const EMPTY_CONTENT_FINGERPRINT = contentFingerprint("");
+
 export interface RetentionCandidate {
   itemId: string;
   generation: number;
@@ -282,33 +289,69 @@ function feedTextCandidates(
     .map((row) => ({ itemId: row.item_id, observedAt: row.observed_at }));
 }
 
+/** Bounds tombstone fingerprinting per pass so hashing never dominates the write lock. */
+const FINGERPRINT_VERSION_LIMIT = 512;
+const FINGERPRINT_BYTE_LIMIT = 8 * 1024 * 1024;
+
+interface FingerprintBudget {
+  versions: number;
+  bytes: number;
+}
+
+/**
+ * Records fingerprints for an item's unpurged versions before their text is
+ * destroyed: the hash of each body still held, and the empty fingerprint for
+ * observations that were already empty, so a later body from the same source
+ * stays comparable. Legacy tombstones (purged before fingerprints existed) are
+ * never given one. The work is bounded by the pass budget; the byte budget may
+ * be exceeded by one version so a single oversized body still makes progress.
+ * Returns false when versions remain unprocessed and the purge must wait for a
+ * later pass.
+ */
+function fingerprintBeforePurge(
+  db: Database,
+  itemId: string,
+  budget: FingerprintBudget,
+): boolean {
+  const next = db.query<{ id: number; text: string }, [string]>(
+    "SELECT id,text FROM content_versions WHERE item_id=? AND purged_at IS NULL AND text_fingerprint IS NULL ORDER BY id LIMIT 1",
+  );
+  const record = db.query(
+    "UPDATE content_versions SET text_fingerprint=? WHERE id=? AND text_fingerprint IS NULL",
+  );
+  for (;;) {
+    const row = next.get(itemId);
+    if (!row) return true;
+    if (budget.versions <= 0 || budget.bytes < 0) return false;
+    record.run(contentFingerprint(row.text), row.id);
+    budget.versions -= 1;
+    budget.bytes -= row.text.length;
+  }
+}
+
 /**
  * Clears the content and every version's text and marks each row purged. Rows
  * stay so identity, observation timestamps, source references and the
- * observed-update history remain; comparison readers exclude purged rows.
- * Before the text is destroyed, each version's body fingerprint is recorded so
- * a later re-poll with a changed body is still detectable.
+ * observed-update history remain; comparison readers exclude purged rows, and
+ * every version's fingerprint was recorded by fingerprintBeforePurge before
+ * this runs. Each purge cycle writes its own audit row, so a restored body
+ * that is later removed again records the later removal time.
  */
 function purgeFeedText(db: Database, itemId: string, now: number) {
-  const versions = db
-    .query<{ id: number; text: string }, [string]>(
-      "SELECT id,text FROM content_versions WHERE item_id=? AND text_fingerprint IS NULL AND text<>''",
-    )
-    .all(itemId);
-  const fingerprint = db.query(
-    "UPDATE content_versions SET text_fingerprint=? WHERE id=?",
-  );
-  for (const version of versions)
-    fingerprint.run(contentFingerprint(version.text), version.id);
   db.query(
     "UPDATE content SET text='',purged_at=? WHERE item_id=? AND purged_at IS NULL",
   ).run(now, itemId);
   db.query(
     "UPDATE content_versions SET text='',purged_at=? WHERE item_id=? AND purged_at IS NULL",
   ).run(now, itemId);
+  const cycle = db
+    .query<{ n: number }, [string]>(
+      "SELECT coalesce(max(generation)+1,0) AS n FROM retention_purges WHERE item_id=? AND class='feed_text'",
+    )
+    .get(itemId)!.n;
   db.query(
-    "INSERT OR IGNORE INTO retention_purges(item_id,generation,class,purged_at,reason) VALUES(?,0,'feed_text',?,'retention')",
-  ).run(itemId, now);
+    "INSERT INTO retention_purges(item_id,generation,class,purged_at,reason) VALUES(?,?,'feed_text',?,'retention')",
+  ).run(itemId, cycle, now);
 }
 
 /** Rebuilds one item's FTS row with the same composition as the search triggers. */
@@ -320,14 +363,20 @@ function rebuildItemSearch(db: Database, itemId: string) {
 
 /**
  * Previews or applies one bounded retention pass. Applying runs in a single
- * short transaction per call and never calls providers. Repeated calls are
- * idempotent: audited generations are never selected again.
+ * short transaction per call and never calls providers; tombstone hashing is
+ * bounded by versions and bytes so it cannot stretch that transaction.
+ * Repeated calls are idempotent: audited generations are never selected again.
  */
 export function runRetention(
   db: Database,
   policy: RetentionPolicy,
   now: number,
-  options: { dryRun: boolean; limit: number },
+  options: {
+    dryRun: boolean;
+    limit: number;
+    /** Test hook: overrides the per-pass tombstone fingerprinting budget. */
+    fingerprintBudget?: FingerprintBudget;
+  },
 ): RetentionReport {
   if (!Number.isSafeInteger(options.limit) || options.limit < 1)
     throw new Error("Retention limit must be a positive integer");
@@ -336,6 +385,11 @@ export function runRetention(
   const bodyCutoff = retentionCutoff(policy, "inbound_body", now);
   const feedTextCutoff = retentionCutoff(policy, "feed_text", now);
   const reservationsActive = activeAnalysisReservation(db);
+  const budget = options.fingerprintBudget ?? {
+    versions: FINGERPRINT_VERSION_LIMIT,
+    bytes: FINGERPRINT_BYTE_LIMIT,
+  };
+  let fingerprintDeferred = 0;
   const report: RetentionReport = {
     dryRun: options.dryRun,
     policy,
@@ -391,8 +445,14 @@ export function runRetention(
     report.eligible.feed_text = feedText.length;
     if (!options.dryRun)
       for (const row of feedText) {
-        purgeFeedText(db, row.itemId, now);
         items.add(row.itemId);
+        // Fingerprint first: an item whose tombstone is not fully prepared
+        // waits for a later pass instead of losing text uncomparably.
+        if (!fingerprintBeforePurge(db, row.itemId, budget)) {
+          fingerprintDeferred += 1;
+          continue;
+        }
+        purgeFeedText(db, row.itemId, now);
         report.purged.feed_text += 1;
         rebuildItemSearch(db, row.itemId);
       }
@@ -420,15 +480,13 @@ export function runRetention(
       extracted.length < options.limit &&
       summaries.length < options.limit &&
       bodies.length < options.limit &&
-      feedText.length < options.limit;
+      feedText.length < options.limit &&
+      fingerprintDeferred === 0;
   });
   work.immediate();
   // Counting history is unbounded, so it runs after the writer lock is released.
-  report.deferred = countDeferred(
-    db,
-    extractCutoff,
-    summaryCutoff,
-    feedTextCutoff,
-  );
+  report.deferred =
+    countDeferred(db, extractCutoff, summaryCutoff, feedTextCutoff) +
+    fingerprintDeferred;
   return report;
 }

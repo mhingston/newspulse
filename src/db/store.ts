@@ -10,6 +10,7 @@ import { ProfileStore } from "../profiles";
 import { healthReport } from "../health";
 import {
   contentFingerprint,
+  EMPTY_CONTENT_FINGERPRINT,
   runRetention,
   type RetentionReport,
 } from "./retention-store";
@@ -1343,24 +1344,46 @@ export class Store {
           )
           .get(prior.item_id)!.n > 0;
       // A purged body cannot be compared by text, but the fingerprint retained
-      // at purge time can: an unchanged body keeps the tombstone, while a
-      // body-only change restores the new text under the normal update rules.
-      // Without a retained fingerprint (rows purged before it existed) only the
-      // title and URL are compared, which stays conservative.
-      const bodyChanged = purged
-        ? candidate.text !== "" &&
-          previous?.text_fingerprint != null &&
-          previous.text_fingerprint !== contentFingerprint(candidate.text)
-        : candidate.text !== "" && lastBody !== candidate.text;
-      const changed = purged
-        ? !previous ||
-          previous.title !== candidate.title ||
-          previous.url !== originalUrl ||
-          bodyChanged
-        : !previous ||
-          previous.title !== candidate.title ||
-          (candidate.text !== "" && lastBody !== candidate.text) ||
-          previous.url !== originalUrl;
+      // when it was purged can. The lookup scans back to the latest retained
+      // fingerprint for this source/native ID instead of trusting the newest
+      // version: a tombstone written by a title- or URL-only update carries no
+      // fingerprint and must not erase the knowledge. A known-empty marker says
+      // the source's last delivered body was empty without overwriting an
+      // earlier real body, and legacy tombstones (purged before fingerprints
+      // existed) stay unknown, which keeps them conservatively tombstoned.
+      const lastFingerprint = this.sqlite
+        .query<{ text_fingerprint: string }, [string, string, string]>(
+          `SELECT text_fingerprint FROM content_versions
+            WHERE source_id=? AND native_id=? AND text_fingerprint IS NOT NULL
+            ORDER BY (text_fingerprint <> ?) DESC, id DESC LIMIT 1`,
+        )
+        .get(
+          sourceId,
+          candidate.nativeId,
+          EMPTY_CONTENT_FINGERPRINT,
+        )?.text_fingerprint;
+      // The live body wins when this source still has one; otherwise its
+      // retained fingerprint speaks, so a source whose latest body was purged
+      // stays comparable even after another source restored the shared content.
+      let bodyChanged = false;
+      if (candidate.text !== "") {
+        if (lastBody !== undefined) {
+          bodyChanged = lastBody !== candidate.text;
+        } else if (lastFingerprint !== undefined) {
+          bodyChanged = lastFingerprint !== contentFingerprint(candidate.text);
+        } else if (!purged) {
+          // No body history for this source and nothing retained: a delivered
+          // body is new information, as for a placeholder awaiting its text.
+          bodyChanged = true;
+        }
+        // A purged source without a retained fingerprint stays conservatively
+        // unchanged rather than guessing.
+      }
+      const changed =
+        !previous ||
+        previous.title !== candidate.title ||
+        bodyChanged ||
+        previous.url !== originalUrl;
       // A purged observation whose body is unchanged keeps its tombstone; a
       // restored observation is a fresh, unpurged version carrying its text.
       const keepPurged = purged && !bodyChanged;
