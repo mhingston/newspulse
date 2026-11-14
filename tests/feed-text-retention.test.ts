@@ -1,8 +1,25 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
+import {
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readdirSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { Store } from "../src/db/store";
+import {
+  contentFingerprint,
+  EMPTY_CONTENT_FINGERPRINT,
+  runRetention,
+} from "../src/db/retention-store";
 import { DAY_MS, retentionPolicy } from "../src/retention";
 import { verifyDatabase } from "../src/recovery";
 import { parseFeed } from "../src/adapters/rss";
@@ -25,6 +42,75 @@ const feed = (title: string, text: string) => `<?xml version="1.0"?>
 <rss version="2.0"><channel><title>Feed</title>
 <item><title>${title}</title><link>https://example.test/${title.replace(/\W+/g, "-")}</link><guid>${title}</guid><description>${text}</description></item>
 </channel></rss>`;
+
+/** A feed with explicit per-source identity, for multi-source items. */
+const feedWith = (item: {
+  title: string;
+  text: string;
+  guid: string;
+  link: string;
+}) => `<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Feed</title>
+<item><title>${item.title}</title><link>${item.link}</link><guid>${item.guid}</guid><description>${item.text}</description></item>
+</channel></rss>`;
+
+/** Settles whatever extract work is pending, then group, analyse and score. */
+function settlePending(store: Store, now: number) {
+  for (;;) {
+    const extract = store.claimProcessing("extract", now);
+    if (!extract) break;
+    store.completeProcessing(
+      extract,
+      "extracted",
+      now,
+      JSON.stringify({
+        status: "extracted",
+        text: `settled payload for ${extract.item_id}`,
+      }),
+    );
+  }
+  const stages = [
+    ["group", "grouped"],
+    ["analyse", "unavailable"],
+    ["score", "scored"],
+  ] as const;
+  for (const [stage, outcome] of stages) {
+    const job = store.claimProcessing(stage, now);
+    if (job) store.completeProcessing(job, outcome, now);
+  }
+}
+
+/** Runs one poll for a specific source, skipping any other due source first. */
+function pollSource(
+  store: Store,
+  source: { id: string; url: string },
+  xml: string,
+  now: number,
+) {
+  store.enqueueDue(now, true);
+  let job = store.claim(now);
+  while (job && job.source_id !== source.id) {
+    store.complete(job, { items: [] }, now);
+    job = store.claim(now);
+  }
+  store.complete(job!, { items: parseFeed(xml, source.url) }, now);
+}
+
+/** Ingests one item through successive body revisions and settles every generation. */
+function multiVersionItem(
+  store: Store,
+  title: string,
+  bodies: string[],
+): string {
+  const source = store.addSource(`https://example.test/${title}.xml`, title);
+  let now = DAY0;
+  for (const body of bodies) {
+    pollSource(store, source, feed(title, body), now);
+    now += 1000;
+  }
+  settlePending(store, now);
+  return store.search(title)[0]!.id;
+}
 
 /** Ingests one feed item and settles extract, group, analyse (none) and score. */
 function scoredItem(store: Store, title: string, body: string, now: number) {
@@ -357,6 +443,884 @@ describe("feed-text retention", () => {
           "SELECT count(*) n FROM retention_purges WHERE class='feed_text'",
         ),
       ).toBe(2);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a body-only change after purge is detected and the new text is restored", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // Same title, URL and guid; only the body changed.
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      const rePOLLED_AT = DAY0 + 5 * DAY_MS + 12 * 60 * 60 * 1000;
+      store.enqueueDue(rePOLLED_AT);
+      const poll = store.claim(rePOLLED_AT)!;
+      store.complete(
+        poll,
+        {
+          items: parseFeed(
+            feed("Alpha", "a substantially corrected body with new facts"),
+            source.url,
+          ),
+        },
+        rePOLLED_AT,
+      );
+      // The new observation is fresh: its text is kept and the tombstone lifts.
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({
+        text: "a substantially corrected body with new facts",
+        purged_at: null,
+      });
+      const versions = store.sqlite
+        .query<
+          { text: string; purged_at: number | null; observed_at: number },
+          [string]
+        >(
+          "SELECT text,purged_at,observed_at FROM content_versions WHERE item_id=? ORDER BY id",
+        )
+        .all(itemId);
+      expect(versions.at(-1)).toMatchObject({
+        text: "a substantially corrected body with new facts",
+        purged_at: null,
+        observed_at: rePOLLED_AT,
+      });
+      // The purged history itself stays purged and audited.
+      expect(versions[0]).toMatchObject({
+        text: "",
+        purged_at: DAY0 + 5 * DAY_MS,
+      });
+      expect(
+        count(
+          store,
+          "SELECT count(*) n FROM retention_purges WHERE item_id='" +
+            itemId +
+            "' AND class='feed_text'",
+        ),
+      ).toBe(1);
+      // The restored text is searchable and a new extraction generation runs.
+      expect(store.search("substantially corrected")).toHaveLength(1);
+      expect(store.search("feedtextword")).toHaveLength(0);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      ).toBe(2);
+      expect(
+        store.sqlite
+          .query<{ status: string; generation: number }, [string]>(
+            "SELECT status,generation FROM processing_jobs WHERE item_id=? AND stage='extract' ORDER BY generation DESC LIMIT 1",
+          )
+          .get(itemId),
+      ).toEqual({ status: "pending", generation: 2 });
+      // Once the new generation settles, retention applies to the restored
+      // text on its own age, exactly as for any other observation.
+      const now = rePOLLED_AT + 60 * 60 * 1000;
+      const settle = (
+        stage: "extract" | "group" | "analyse" | "score",
+        outcome: string,
+        result?: string,
+      ) => {
+        store.completeProcessing(
+          store.claimProcessing(stage, now)!,
+          outcome,
+          now,
+          result,
+        );
+      };
+      settle(
+        "extract",
+        "extracted",
+        JSON.stringify({ status: "extracted", text: "payload Alpha body" }),
+      );
+      settle("group", "grouped");
+      settle("analyse", "unavailable");
+      settle("score", "scored");
+      const later = store.retention(
+        retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }),
+        { dryRun: true, now: rePOLLED_AT + 6 * DAY_MS },
+      );
+      expect(later.eligible.feed_text).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a title-only change after purge keeps the tombstone", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      store.enqueueDue(DAY0 + 6 * DAY_MS);
+      const poll = store.claim(DAY0 + 6 * DAY_MS)!;
+      store.complete(
+        poll,
+        {
+          items: parseFeed(
+            feed("Alpha renamed", "feedtextword body"),
+            source.url,
+          ),
+        },
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "", purged_at: DAY0 + 5 * DAY_MS });
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      ).toBe(1);
+      expect(store.search("Alpha renamed")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a changed body on a purged item without a retained fingerprint stays tombstoned", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "feedtextword body", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // Rows purged before the fingerprint column existed have none.
+      store.sqlite
+        .query(
+          "UPDATE content_versions SET text_fingerprint=NULL WHERE item_id=?",
+        )
+        .run(itemId);
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      store.enqueueDue(DAY0 + 6 * DAY_MS);
+      const poll = store.claim(DAY0 + 6 * DAY_MS)!;
+      store.complete(
+        poll,
+        {
+          items: parseFeed(
+            feed("Alpha", "a substantially corrected body with new facts"),
+            source.url,
+          ),
+        },
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "", purged_at: DAY0 + 5 * DAY_MS });
+      expect(store.search("substantially corrected")).toHaveLength(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("migrating a populated 0049 database adds the fingerprint column and preserves tombstones", () => {
+    const dir = temp();
+    // A database at the previous schema: one item whose feed text was already
+    // purged (no fingerprint existed yet) and one item still holding text.
+    const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
+    const old = join(dir, "prior-migrations");
+    mkdirSync(join(old, "meta"), { recursive: true });
+    for (const file of readdirSync(migrations)) {
+      if (file.endsWith(".sql") && !/^0050_/.test(file))
+        copyFileSync(join(migrations, file), join(old, file));
+    }
+    const journal = JSON.parse(
+      readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
+    );
+    journal.entries = journal.entries.filter(
+      (entry: { tag: string }) => !entry.tag.startsWith("0050_"),
+    );
+    writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
+    for (const file of readdirSync(join(migrations, "meta"))) {
+      if (file.endsWith("_snapshot.json") && !file.startsWith("0050"))
+        copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
+    }
+    const path = join(dir, "prior.sqlite");
+    const db = new Database(path, { create: true, strict: true });
+    db.exec("PRAGMA foreign_keys=ON");
+    migrate(drizzle(db), { migrationsFolder: old });
+    db.exec(`INSERT INTO sources(id,kind,url,title) VALUES('src','rss','https://example.test/migration.xml','Feed');
+      INSERT INTO items(id,identity,title,ingested_at,status) VALUES('legacy','url:https://example.test/legacy','Legacy',${DAY0},'extracted');
+      INSERT INTO item_sources(item_id,source_id,native_id,url) VALUES('legacy','src','legacy-1','https://example.test/legacy');
+      INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at,purged_at) VALUES('legacy','src','legacy-1','Legacy','','https://example.test/legacy',${DAY0},${DAY0});
+      INSERT INTO content(item_id,text,purged_at) VALUES('legacy','',${DAY0});
+      INSERT INTO retention_purges(item_id,generation,class,purged_at,reason) VALUES('legacy',0,'feed_text',${DAY0},'retention');
+      INSERT INTO items(id,identity,title,ingested_at,status) VALUES('fresh','url:https://example.test/fresh','Fresh',${DAY0},'extracted');
+      INSERT INTO item_sources(item_id,source_id,native_id,url) VALUES('fresh','src','fresh-1','https://example.test/fresh');
+      INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at) VALUES('fresh','src','fresh-1','Fresh','migrationword body','https://example.test/fresh',${DAY0});
+      INSERT INTO content(item_id,text) VALUES('fresh','migrationword body');`);
+    const backup = join(dir, "backup.sqlite");
+    db.query("VACUUM INTO ?").run(backup);
+    db.close();
+
+    // Reopening runs the new migration; the preserved tombstone keeps the
+    // purged row unavailable, and newly purged text gains a fingerprint.
+    const store = new Store(path);
+    try {
+      expect(
+        store.sqlite
+          .query<{ name: string }, []>(
+            "SELECT name FROM pragma_table_info('content_versions') WHERE name='text_fingerprint'",
+          )
+          .all(),
+      ).toHaveLength(1);
+      expect(store.search("migrationword")).toHaveLength(1);
+      expect(store.getItem("legacy")!.text).toBe("");
+
+      // The legacy tombstone has no fingerprint, so a changed body stays
+      // conservatively unavailable instead of being mistaken for unchanged.
+      store.enqueueDue(DAY0 + DAY_MS, true);
+      const poll = store.claim(DAY0 + DAY_MS)!;
+      store.complete(
+        poll,
+        {
+          items: parseFeed(
+            `<?xml version="1.0"?>\n<rss version="2.0"><channel><title>Feed</title>\n<item><title>Legacy</title><link>https://example.test/legacy</link><guid>legacy-1</guid><description>a republished body with entirely new wording here</description></item>\n<item><title>Fresh</title><link>https://example.test/fresh</link><guid>fresh-1</guid><description>migrationword body</description></item>\n</channel></rss>`,
+            "https://example.test/migration.xml",
+          ),
+        },
+        DAY0 + DAY_MS,
+      );
+      expect(store.getItem("legacy")!.text).toBe("");
+      expect(store.search("entirely new wording")).toHaveLength(0);
+
+      // The fresh item is settled only after its pipeline completes; run the
+      // real purge, which must record fingerprints for the preserved text.
+      const staged = DAY0 + DAY_MS;
+      store.completeProcessing(
+        store.claimProcessing("extract", staged)!,
+        "extracted",
+        staged,
+        JSON.stringify({ status: "extracted", text: "payload" }),
+      );
+      store.completeProcessing(
+        store.claimProcessing("group", staged)!,
+        "grouped",
+        staged,
+      );
+      store.completeProcessing(
+        store.claimProcessing("analyse", staged)!,
+        "unavailable",
+        staged,
+      );
+      store.completeProcessing(
+        store.claimProcessing("score", staged)!,
+        "scored",
+        staged,
+      );
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      expect(store.getItem("fresh")!.text).toBe("");
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM content_versions WHERE item_id='fresh' AND text_fingerprint IS NOT NULL",
+          )
+          .get()!.n,
+      ).toBe(1);
+
+      // And a later body-only change on the migrated-then-purged item restores.
+      store.enqueueDue(DAY0 + 6 * DAY_MS, true);
+      const second = store.claim(DAY0 + 6 * DAY_MS)!;
+      store.complete(
+        second,
+        {
+          items: parseFeed(
+            `<?xml version="1.0"?>\n<rss version="2.0"><channel><title>Feed</title>\n<item><title>Fresh</title><link>https://example.test/fresh</link><guid>fresh-1</guid><description>a corrected migrationword-free body</description></item>\n</channel></rss>`,
+            "https://example.test/migration.xml",
+          ),
+        },
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(store.getItem("fresh")!.text).toBe(
+        "a corrected migrationword-free body",
+      );
+      expect(store.search("a corrected migrationword-free body")).toHaveLength(
+        1,
+      );
+      // The pristine backup copy still verifies and restores unchanged.
+      expect(verifyDatabase(backup).ok).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a title-only tombstone after purge does not hide a later body-only change", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "firstbody one", DAY0);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // A title-only re-poll records a tombstoned version with no fingerprint.
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      pollSource(
+        store,
+        source,
+        feedWith({
+          title: "Alpha renamed",
+          text: "firstbody one",
+          guid: "Alpha",
+          link: "https://example.test/Alpha",
+        }),
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text_fingerprint: string | null }, [string]>(
+            "SELECT text_fingerprint FROM content_versions WHERE item_id=? ORDER BY id DESC LIMIT 1",
+          )
+          .get(itemId)!.text_fingerprint,
+      ).toBeNull();
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      ).toBe(1);
+      // The later body-only change is still detected through the fingerprint
+      // retained by the earlier purged version.
+      pollSource(
+        store,
+        source,
+        feedWith({
+          title: "Alpha renamed",
+          text: "a replacement body with new facts",
+          guid: "Alpha",
+          link: "https://example.test/Alpha",
+        }),
+        DAY0 + 7 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({
+        text: "a replacement body with new facts",
+        purged_at: null,
+      });
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract' AND generation=2`,
+        ),
+      ).toBe(1);
+      expect(store.search("replacement body")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a known-empty observation keeps the last real body comparable after purge", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "firstbody one", DAY0);
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      // A title change with an empty body leaves a trailing empty observation.
+      pollSource(
+        store,
+        source,
+        feedWith({
+          title: "Alpha renamed",
+          text: "",
+          guid: "Alpha",
+          link: "https://example.test/Alpha",
+        }),
+        DAY0 + DAY_MS,
+      );
+      settlePending(store, DAY0 + 2 * DAY_MS);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      const versions = store.sqlite
+        .query<{ text: string; text_fingerprint: string | null }, [string]>(
+          "SELECT text,text_fingerprint FROM content_versions WHERE item_id=? ORDER BY id",
+        )
+        .all(itemId);
+      // The real body keeps its fingerprint; the empty observation records the
+      // known-empty marker instead of looking like a legacy tombstone.
+      expect(versions[0]).toEqual({
+        text: "",
+        text_fingerprint: contentFingerprint("firstbody one"),
+      });
+      expect(versions[1]).toEqual({
+        text: "",
+        text_fingerprint: EMPTY_CONTENT_FINGERPRINT,
+      });
+      // Re-delivering the original body is unchanged relative to the last real
+      // body, so the tombstone holds instead of resurrecting purged text.
+      const extractsBefore = count(
+        store,
+        `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+      );
+      pollSource(
+        store,
+        source,
+        feedWith({
+          title: "Alpha renamed",
+          text: "firstbody one",
+          guid: "Alpha",
+          link: "https://example.test/Alpha",
+        }),
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "", purged_at: DAY0 + 5 * DAY_MS });
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      ).toBe(extractsBefore);
+      // A different body is still detected.
+      pollSource(
+        store,
+        source,
+        feedWith({
+          title: "Alpha renamed",
+          text: "a replacement body with new facts",
+          guid: "Alpha",
+          link: "https://example.test/Alpha",
+        }),
+        DAY0 + 7 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string }, [string]>(
+            "SELECT text FROM content WHERE item_id=?",
+          )
+          .get(itemId)!.text,
+      ).toBe("a replacement body with new facts");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("an unchanged re-poll from a second source does not undo another source's restore", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const shared = {
+        title: "Shared story",
+        guid: "",
+        link: "https://example.test/shared",
+      };
+      const sourceA = store.addSource("https://example.test/a.xml", "A");
+      pollSource(
+        store,
+        sourceA,
+        feedWith({ ...shared, guid: "a-1", text: "original body words" }),
+        DAY0,
+      );
+      settlePending(store, DAY0 + 1000);
+      const sourceB = store.addSource("https://example.test/b.xml", "B");
+      pollSource(
+        store,
+        sourceB,
+        feedWith({ ...shared, guid: "b-1", text: "original body words" }),
+        DAY0 + 2000,
+      );
+      settlePending(store, DAY0 + 3000);
+      const itemId = store.search("Shared story")[0]!.id;
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM item_sources WHERE item_id='${itemId}'`,
+        ),
+      ).toBe(2);
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // Source A delivers a changed body: the tombstone lifts for the item.
+      pollSource(
+        store,
+        sourceA,
+        feedWith({
+          ...shared,
+          guid: "a-1",
+          text: "a corrected body from source a",
+        }),
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({
+        text: "a corrected body from source a",
+        purged_at: null,
+      });
+      // Source B re-polls with its unchanged body: its own latest body was
+      // purged, so its retained fingerprint must decide, and it matches.
+      const before = {
+        versions: count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}'`,
+        ),
+        extracts: count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      };
+      pollSource(
+        store,
+        sourceB,
+        feedWith({ ...shared, guid: "b-1", text: "original body words" }),
+        DAY0 + 7 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string }, [string]>(
+            "SELECT text FROM content WHERE item_id=?",
+          )
+          .get(itemId)!.text,
+      ).toBe("a corrected body from source a");
+      expect({
+        versions: count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}'`,
+        ),
+        extracts: count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      }).toEqual(before);
+      // A genuinely changed body from B is still detected and processed.
+      pollSource(
+        store,
+        sourceB,
+        feedWith({
+          ...shared,
+          guid: "b-1",
+          text: "a corrected body from source b",
+        }),
+        DAY0 + 8 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string }, [string]>(
+            "SELECT text FROM content WHERE item_id=?",
+          )
+          .get(itemId)!.text,
+      ).toBe("a corrected body from source b");
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract' AND generation=3 AND status='pending'`,
+        ),
+      ).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a source whose only observation was empty is recognized when it later delivers a body", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const shared = {
+        title: "Shared story",
+        guid: "",
+        link: "https://example.test/shared",
+      };
+      const sourceA = store.addSource("https://example.test/a.xml", "A");
+      pollSource(
+        store,
+        sourceA,
+        feedWith({ ...shared, guid: "a-1", text: "" }),
+        DAY0,
+      );
+      settlePending(store, DAY0 + 1000);
+      const sourceB = store.addSource("https://example.test/b.xml", "B");
+      pollSource(
+        store,
+        sourceB,
+        feedWith({ ...shared, guid: "b-1", text: "original body words" }),
+        DAY0 + 2000,
+      );
+      settlePending(store, DAY0 + 3000);
+      const itemId = store.search("Shared story")[0]!.id;
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      const versions = store.sqlite
+        .query<
+          { source_id: string; text: string; text_fingerprint: string | null },
+          [string]
+        >(
+          "SELECT source_id,text,text_fingerprint FROM content_versions WHERE item_id=? ORDER BY id",
+        )
+        .all(itemId);
+      expect(versions).toEqual([
+        {
+          source_id: sourceA.id,
+          text: "",
+          text_fingerprint: EMPTY_CONTENT_FINGERPRINT,
+        },
+        {
+          source_id: sourceB.id,
+          text: "",
+          text_fingerprint: contentFingerprint("original body words"),
+        },
+      ]);
+      // Source A now delivers a real body: the known-empty marker makes the
+      // change detectable, so the body is stored and processed.
+      pollSource(
+        store,
+        sourceA,
+        feedWith({ ...shared, guid: "a-1", text: "a first real body" }),
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "a first real body", purged_at: null });
+      expect(
+        store.sqlite
+          .query<{ text: string }, [string, string]>(
+            "SELECT text FROM content_versions WHERE item_id=? AND source_id=? ORDER BY id DESC LIMIT 1",
+          )
+          .get(itemId, sourceA.id)!.text,
+      ).toBe("a first real body");
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract' AND generation=3 AND status='pending'`,
+        ),
+      ).toBe(1);
+      expect(store.search("first real body")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a second purge of a restored item records its own audit row", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = scoredItem(store, "Alpha", "firstbody one", DAY0);
+      const policy = retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" });
+      store.retention(policy, { dryRun: false, now: DAY0 + 5 * DAY_MS });
+      expect(
+        store.sqlite
+          .query<{ generation: number; purged_at: number }, [string]>(
+            "SELECT generation,purged_at FROM retention_purges WHERE item_id=? AND class='feed_text' ORDER BY generation",
+          )
+          .all(itemId),
+      ).toEqual([{ generation: 0, purged_at: DAY0 + 5 * DAY_MS }]);
+      // A body change restores the text under a new generation.
+      const source = store.addSource("https://example.test/Alpha.xml", "Alpha");
+      pollSource(
+        store,
+        source,
+        feedWith({
+          title: "Alpha",
+          text: "a replacement body with new facts",
+          guid: "Alpha",
+          link: "https://example.test/Alpha",
+        }),
+        DAY0 + 6 * DAY_MS,
+      );
+      settlePending(store, DAY0 + 6 * DAY_MS + 1000);
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({
+        text: "a replacement body with new facts",
+        purged_at: null,
+      });
+      // The restored text ages out too: the dry run sees it and the applied
+      // second purge records its own audit row instead of being absorbed.
+      const preview = store.retention(policy, {
+        dryRun: true,
+        now: DAY0 + 11 * DAY_MS,
+      });
+      expect(preview.eligible.feed_text).toBe(1);
+      const second = store.retention(policy, {
+        dryRun: false,
+        now: DAY0 + 12 * DAY_MS,
+      });
+      expect(second.purged.feed_text).toBe(1);
+      expect(
+        store.sqlite
+          .query<{ generation: number; purged_at: number }, [string]>(
+            "SELECT generation,purged_at FROM retention_purges WHERE item_id=? AND class='feed_text' ORDER BY generation",
+          )
+          .all(itemId),
+      ).toEqual([
+        { generation: 0, purged_at: DAY0 + 5 * DAY_MS },
+        { generation: 1, purged_at: DAY0 + 12 * DAY_MS },
+      ]);
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "", purged_at: DAY0 + 12 * DAY_MS });
+      expect(store.getItem(itemId)!.retention).toHaveLength(2);
+      expect(
+        store.retention(policy, { dryRun: false, now: DAY0 + 13 * DAY_MS })
+          .eligible.feed_text,
+      ).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("tombstone fingerprinting is bounded per pass and completes across passes", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = multiVersionItem(store, "Alpha", [
+        "first version body",
+        "second version body",
+        "third version body",
+        "fourth version body",
+      ]);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}'`,
+        ),
+      ).toBe(4);
+      const run = () =>
+        runRetention(
+          store.sqlite,
+          retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }),
+          DAY0 + 5 * DAY_MS,
+          {
+            dryRun: false,
+            limit: 10,
+            fingerprintBudget: { versions: 2, bytes: 1 << 30 },
+          },
+        );
+      // The first pass fingerprints only its budget and defers the tombstone.
+      const first = run();
+      expect(first.purged.feed_text).toBe(0);
+      expect(first.eligible.feed_text).toBe(1);
+      expect(first.complete).toBe(false);
+      expect(first.deferred).toBe(1);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}' AND text_fingerprint IS NOT NULL`,
+        ),
+      ).toBe(2);
+      expect(store.getItem(itemId)!.text).toBe("fourth version body");
+      expect(
+        count(
+          store,
+          "SELECT count(*) n FROM retention_purges WHERE class='feed_text'",
+        ),
+      ).toBe(0);
+      // The next pass finishes the fingerprints and applies the tombstone.
+      const second = run();
+      expect(second.purged.feed_text).toBe(1);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}' AND text_fingerprint IS NOT NULL`,
+        ),
+      ).toBe(4);
+      expect(store.getItem(itemId)!.text).toBe("");
+      expect(
+        count(
+          store,
+          "SELECT count(*) n FROM retention_purges WHERE class='feed_text'",
+        ),
+      ).toBe(1);
+      expect(run().eligible.feed_text).toBe(0);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("tombstone fingerprinting respects a byte budget across passes", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = multiVersionItem(store, "Alpha", [
+        "first version body",
+        "second version body",
+        "third version body",
+      ]);
+      const run = () =>
+        runRetention(
+          store.sqlite,
+          retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }),
+          DAY0 + 5 * DAY_MS,
+          {
+            dryRun: false,
+            limit: 10,
+            fingerprintBudget: { versions: 100, bytes: 0 },
+          },
+        );
+      // An exhausted byte budget still fingerprints one version per pass, so
+      // progress is guaranteed without hashing the item's whole history.
+      expect(run().purged.feed_text).toBe(0);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}' AND text_fingerprint IS NOT NULL`,
+        ),
+      ).toBe(1);
+      expect(run().purged.feed_text).toBe(0);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}' AND text_fingerprint IS NOT NULL`,
+        ),
+      ).toBe(2);
+      const third = run();
+      expect(third.purged.feed_text).toBe(1);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}' AND text_fingerprint IS NULL`,
+        ),
+      ).toBe(0);
+      expect(store.getItem(itemId)!.text).toBe("");
     } finally {
       store.close();
     }

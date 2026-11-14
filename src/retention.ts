@@ -82,7 +82,11 @@ export const PURGED_EXTRACTION = JSON.stringify({
  * be diffed as real content by observed-update and delivery-history, and a
  * blank one would trigger re-extraction. The explicit `purged_at` marker on
  * `content` and `content_versions` is the only signal, and every comparison
- * reader excludes marked rows. The stored text is cleared.
+ * reader excludes marked rows. The stored text is cleared, but each version
+ * first records a body fingerprint (`content_versions.text_fingerprint`) so a
+ * later re-poll can still tell an unchanged body from a changed one. An
+ * observation that was already empty records the empty fingerprint, keeping it
+ * distinguishable from a legacy tombstone whose body is unknown.
  */
 
 /** Tombstone for a removed analysis summary; never reusable as a cached analysis. */

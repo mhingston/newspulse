@@ -433,7 +433,8 @@ describe("content retention", () => {
         file.endsWith(".sql") &&
         !file.startsWith("0047_") &&
         !file.startsWith("0049_") &&
-        !file.startsWith("0048_")
+        !file.startsWith("0048_") &&
+        !file.startsWith("0050_")
       )
         copyFileSync(join(migrations, file), join(old, file));
     }
@@ -444,7 +445,8 @@ describe("content retention", () => {
       (entry: { tag: string }) =>
         !entry.tag.startsWith("0047_") &&
         !entry.tag.startsWith("0048_") &&
-        !entry.tag.startsWith("0049_"),
+        !entry.tag.startsWith("0049_") &&
+        !entry.tag.startsWith("0050_"),
     );
     mkdirSync(join(old, "meta"), { recursive: true });
     writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
@@ -453,7 +455,8 @@ describe("content retention", () => {
         file.endsWith("_snapshot.json") &&
         !file.startsWith("0047") &&
         !file.startsWith("0048") &&
-        !file.startsWith("0049")
+        !file.startsWith("0049") &&
+        !file.startsWith("0050")
       )
         copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
     }
@@ -910,7 +913,8 @@ describe("retention review hardening", () => {
         file.endsWith(".sql") &&
         !file.startsWith("0047_") &&
         !file.startsWith("0049_") &&
-        !file.startsWith("0048_")
+        !file.startsWith("0048_") &&
+        !file.startsWith("0050_")
       )
         copyFileSync(join(migrations, file), join(old, file));
     }
@@ -921,7 +925,8 @@ describe("retention review hardening", () => {
       (entry: { tag: string }) =>
         !entry.tag.startsWith("0047_") &&
         !entry.tag.startsWith("0048_") &&
-        !entry.tag.startsWith("0049_"),
+        !entry.tag.startsWith("0049_") &&
+        !entry.tag.startsWith("0050_"),
     );
     writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
     for (const file of readdirSync(join(migrations, "meta"))) {
@@ -929,7 +934,8 @@ describe("retention review hardening", () => {
         file.endsWith("_snapshot.json") &&
         !file.startsWith("0047") &&
         !file.startsWith("0048") &&
-        !file.startsWith("0049")
+        !file.startsWith("0049") &&
+        !file.startsWith("0050")
       )
         copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
     }
