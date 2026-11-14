@@ -1,0 +1,72 @@
+{
+  "version": 1,
+  "corpusId": "synthetic-retrieval-v1",
+  "k": 5,
+  "queries": [
+    {
+      "id": "q-direct-robotics",
+      "scenario": "control",
+      "query": "robotics benchmark manipulation",
+      "relevantIds": ["robot-benchmark-suite"],
+      "notes": "Recorded query whose wording matches the corpus; expected to work on the unchanged baseline."
+    },
+    {
+      "id": "q-vocab-llm",
+      "scenario": "vocabulary-mismatch",
+      "query": "LLM evaluation protocols",
+      "relevantIds": ["llm-eval-post", "llm-safety-post"],
+      "notes": "Recorded query uses the acronym; corpus text uses expanded terminology."
+    },
+    {
+      "id": "q-vocab-quant",
+      "scenario": "vocabulary-mismatch",
+      "query": "quantization inference cost",
+      "relevantIds": ["quant-post"],
+      "notes": "Recorded query uses 'quantization'; corpus text describes 4-bit weight compression."
+    },
+    {
+      "id": "q-vocab-sbom",
+      "scenario": "vocabulary-mismatch",
+      "query": "SBOM dependency provenance",
+      "relevantIds": ["sbom-post"],
+      "notes": "Recorded query uses the acronym; corpus text spells out software bill of materials."
+    },
+    {
+      "id": "q-connect-scaling",
+      "scenario": "paper-connection",
+      "query": "scaling laws training compute",
+      "relevantIds": ["scaling-laws-preprint", "scaling-blog-tiein"],
+      "notes": "A preprint and a later engineering post describe the same work in different vocabulary; both are relevant to the recorded query."
+    },
+    {
+      "id": "q-history-atlas",
+      "scenario": "historical-development",
+      "query": "atlas controller recall safety",
+      "relevantIds": ["atlas-recall-2024", "atlas-release-2026"],
+      "notes": "The development spans a 2024 recall and its 2026 successor release; plural and prefix morphology must connect them."
+    },
+    {
+      "id": "q-unavailable-litigation",
+      "scenario": "unavailable-content",
+      "query": "warehouse automation litigation",
+      "relevantIds": ["paywalled-unavailable"],
+      "notes": "The only relevant item was recorded as unavailable (no extracted text); no keyword strategy can retrieve it."
+    },
+    {
+      "id": "q-papers-protocols",
+      "scenario": "metadata-filter",
+      "query": "evaluation protocols",
+      "relevantIds": ["benchmark-paper", "sim2real-paper"],
+      "filters": { "sourceKind": "manual" },
+      "notes": "Recorded intent is papers only; a sourceKind filter should narrow results without changing the query text."
+    },
+    {
+      "id": "q-atlas-window",
+      "scenario": "metadata-filter",
+      "query": "atlas controller",
+      "relevantIds": ["atlas-recall-2024"],
+      "filters": { "from": 1737000000000, "to": 1739000000000 },
+      "notes": "Recorded intent targets the recall period; an ingestion-time window, mirroring the production since/until contract on items.ingested_at, should remove unrelated Atlas controller items."
+    }
+  ]
+}
