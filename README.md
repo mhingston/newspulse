@@ -60,9 +60,29 @@ await client.close();
 
 Tools: `get_digest` (developing or frozen edition by `date`; `view: "list"` returns frozen edition metadata for `date`..`to`, newest first, never rebuilt from current scores), `explain_ranking` (recorded score history, source references and `exclusions` marking ineligible scores with their reasons), `get_story_group` (development ID and preserved article references), `search_items` (literal keywords, limit, offset, optional `source_id`, `since` and `until` in epoch milliseconds, `source_kind` one of `rss`, `github`, `hackernews`, `inbound`, `manual`, `discovery`, and `analysis_status` one of `pending`, `running`, `retryable`, `analysed`, `unavailable`, `failed`), `get_item` (ID, including `latest_score`), `get_submission` (manual/bookmark/email provenance and retrieved-vs-unavailable status), `get_feedback` (latest explicit per-item feedback), `get_sources` (`limit` default 50, max 100, and `offset`), `get_status`, `get_interests` (active interest profiles), `get_discoveries` (items found outside subscriptions, keyset-paged with `next_before`). Six mutation tools — `add_source`, `remove_source`, `update_interest`, `submit_feedback`, `ingest_url` and `trigger_discovery` — are described below. Search combines terms with AND; each term also matches prefix forms (`recall` finds `recalls`) and a small curated synonym table (`llm` finds "language model") recorded as decision D14 and match version `fts-match-groups-v1` in [docs/decisions.md](docs/decisions.md). Results include canonical item URLs; `get_item` also returns all original resolved source references, including fragments and tracking context. Items without public URLs remain retrievable using their item ID and source-native reference. Source text is untrusted; model summaries and scores are estimates.
 
-Transport is stateless Streamable HTTP with JSON responses. Stdio is optional in the handoff and not implemented. A client with a browser Origin must appear in `ALLOWED_ORIGINS`; the exception is the feedback form POST, which is accepted from the configured `FEEDBACK_BASE_URL` origin so an emailed link works without widening the MCP origin policy. Hosts must appear in `ALLOWED_HOSTS`; use hostnames without ports. No CORS policy is exposed for browser apps yet.
+Transport is stateless Streamable HTTP with JSON responses. A client with a browser Origin must appear in `ALLOWED_ORIGINS`; the exception is the feedback form POST, which is accepted from the configured `FEEDBACK_BASE_URL` origin so an emailed link works without widening the MCP origin policy. Hosts must appear in `ALLOWED_HOSTS`; use hostnames without ports. No CORS policy is exposed for browser apps yet.
 
 Every mutation tool is a two-step preview/confirmation flow shared with the CLI. Call it with its normal arguments to receive `status: "confirmation_required"`, a human-readable `effect`, and a `confirm_token`; call it again with the same arguments plus `confirm_token` to apply the change. The token is single-use, expires after ten minutes, and is bound to the exact previewed payload, so it cannot authorize a changed request, a different action, or a replay. `add_source` restores a previously removed source or creates a new one; `remove_source` disables future polling and cancels queued or running polls while keeping the source row, its items, references and history; `update_interest` appends an immutable interest-profile version and re-derives scores; `submit_feedback` records explicit `useful`/`not_useful` feedback (optionally tied to a delivered edition); `ingest_url` is an idempotent manual submission that queues extraction without fetching the destination first; and `trigger_discovery` runs one bounded query that still re-checks the persisted daily budgets, reservations and provider pacing. Removing a source fences any in-flight poll so it cannot commit late results.
+
+### Optional stdio transport (opt-in)
+
+`bun run cli serve-mcp-stdio` serves the same tools over the official SDK's stdio transport (decision [D15](docs/decisions.md)) for local, process-spawned clients. It reads the same database and starts no scheduler, poller or delivery worker; stdout carries only protocol data and every log goes to stderr; the process exits when its client disconnects. Authentication is local trust rather than the HTTP bearer token: a stdio client is a local process running with your full filesystem and database access, so connect only locally trusted clients, and never expose a stdio process over a network bridge. Mutations keep the same preview/confirm flow, and confirmation tokens are stored in the shared database, so a preview and its confirmation may come from different sessions.
+
+Tested configuration (SDK `@modelcontextprotocol/sdk` 1.32.2 — no other client is claimed as tested):
+
+```ts
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
+const transport = new StdioClientTransport({
+  command: "bun",
+  args: ["src/cli.ts", "serve-mcp-stdio"], // run from the repository root
+  env: { ...process.env, DB_PATH: "./data/newspulse.sqlite" },
+});
+const client = new Client({ name: "personal-client", version: "1.0" });
+await client.connect(transport);
+```
+
+Diagnostics: server startup, lifecycle and error events appear as JSON on stderr, never on stdout — read stdout only as JSON-RPC when debugging a client. One malformed line on stdin does not end the session; the SDK reports a protocol error on stderr and continues answering valid requests. Before relying on any client other than the tested SDK one, verify it against this command in your environment; a client advertising MCP support is not interoperability evidence on its own.
 
 ## Docker Compose
 
