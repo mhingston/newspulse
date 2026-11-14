@@ -40,22 +40,33 @@ export function createRetrievalFtsDatabase(
     CREATE TABLE retrieval_items (
       rowid INTEGER PRIMARY KEY,
       id TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      text TEXT NOT NULL,
       published_at INTEGER,
+      ingested_at INTEGER NOT NULL,
       source_kind TEXT NOT NULL
     );
+    CREATE INDEX retrieval_ingested ON retrieval_items(ingested_at);
     CREATE VIRTUAL TABLE items_fts USING fts5(title, text);
   `);
   const insert = db.query(
-    "INSERT INTO retrieval_items(rowid, id, published_at, source_kind) VALUES (?, ?, ?, ?)",
+    "INSERT INTO retrieval_items(rowid, id, title, text, published_at, ingested_at, source_kind) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   const insertFts = db.query(
     "INSERT INTO items_fts(rowid, title, text) VALUES (?, ?, ?)",
   );
   corpus.items.forEach((item, index) => {
     const rowid = index + 1;
-    insert.run(rowid, item.id, item.publishedAt, item.sourceKind);
-    const text = item.unavailable ? "" : item.text;
-    insertFts.run(rowid, item.title, text);
+    insert.run(
+      rowid,
+      item.id,
+      item.title,
+      item.unavailable ? "" : item.text,
+      item.publishedAt,
+      item.ingestedAt,
+      item.sourceKind,
+    );
+    insertFts.run(rowid, item.title, item.unavailable ? "" : item.text);
   });
   return buildSearchInterface(db);
 }
@@ -64,6 +75,9 @@ function buildSearchInterface(db: Database): RetrievalFtsDatabase {
   return {
     db,
     search(match, filters, k) {
+      // The from/to window replays the production since/until contract
+      // exactly: Store.search applies it to items.ingested_at with an
+      // inclusive lower and exclusive upper bound.
       return db
         .query<
           { id: string },
@@ -80,8 +94,8 @@ function buildSearchInterface(db: Database): RetrievalFtsDatabase {
         >(
           `SELECT r.id FROM items_fts JOIN retrieval_items r ON r.rowid = items_fts.rowid
        WHERE items_fts MATCH ?
-       AND (? IS NULL OR r.published_at >= ?)
-       AND (? IS NULL OR r.published_at < ?)
+       AND (? IS NULL OR r.ingested_at >= ?)
+       AND (? IS NULL OR r.ingested_at < ?)
        AND (? IS NULL OR r.source_kind = ?)
        ORDER BY bm25(items_fts), r.id
        LIMIT ?`,
@@ -112,9 +126,11 @@ function buildSearchInterface(db: Database): RetrievalFtsDatabase {
 }
 
 /**
- * Measures the on-disk cost of the FTS index against the same items stored
- * without FTS. Committed page counts are deterministic for identical rows,
- * so the difference is reported as the index overhead.
+ * Measures the on-disk cost of adding the FTS index on top of identical
+ * canonical storage: both databases carry the same retrieval_items table
+ * with title and text, and only one of them additionally carries items_fts.
+ * Committed page counts are deterministic for identical rows, so the
+ * difference is the pure added-index overhead.
  */
 export function measureIndexFootprint(
   corpus: RetrievalCorpus,
@@ -124,11 +140,20 @@ export function measureIndexFootprint(
   const withoutFts = `${stem}-plain.sqlite`;
   const withFts = `${stem}-fts.sqlite`;
   const plain = new Database(withoutFts);
-  plain.exec(
-    "CREATE TABLE retrieval_items (rowid INTEGER PRIMARY KEY, id TEXT NOT NULL UNIQUE, title TEXT NOT NULL, text TEXT NOT NULL, published_at INTEGER, source_kind TEXT NOT NULL);",
-  );
+  plain.exec(`
+    CREATE TABLE retrieval_items (
+      rowid INTEGER PRIMARY KEY,
+      id TEXT NOT NULL UNIQUE,
+      title TEXT NOT NULL,
+      text TEXT NOT NULL,
+      published_at INTEGER,
+      ingested_at INTEGER NOT NULL,
+      source_kind TEXT NOT NULL
+    );
+    CREATE INDEX retrieval_ingested ON retrieval_items(ingested_at);
+  `);
   const insertPlain = plain.query(
-    "INSERT INTO retrieval_items(rowid, id, title, text, published_at, source_kind) VALUES (?, ?, ?, ?, ?, ?)",
+    "INSERT INTO retrieval_items(rowid, id, title, text, published_at, ingested_at, source_kind) VALUES (?, ?, ?, ?, ?, ?, ?)",
   );
   corpus.items.forEach((item, index) => {
     insertPlain.run(
@@ -137,6 +162,7 @@ export function measureIndexFootprint(
       item.title,
       item.unavailable ? "" : item.text,
       item.publishedAt,
+      item.ingestedAt,
       item.sourceKind,
     );
   });

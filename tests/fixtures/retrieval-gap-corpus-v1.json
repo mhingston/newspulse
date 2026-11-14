@@ -9,6 +9,7 @@
       "text": "A research group publishes reproducible evaluation protocols for large language model agents. The write-up covers task suites, grading rubrics, statistical uncertainty in reported accuracy and comparison with earlier evaluation harnesses.",
       "sourceKind": "rss",
       "publishedAt": 1793980000000,
+      "ingestedAt": 1793980000000,
       "unavailable": false
     },
     {
@@ -17,6 +18,7 @@
       "text": "Safety researchers report red-team evaluation results for a deployed language model. Their methodology documents attack prompts, refusal rate measurement, remediation follow-up and open review notes.",
       "sourceKind": "rss",
       "publishedAt": 1793970000000,
+      "ingestedAt": 1793970000000,
       "unavailable": false
     },
     {
@@ -25,6 +27,7 @@
       "text": "This benchmark suite measures manipulation tasks for robot arms. It documents standardized task variants, success metrics, baselines and per-hardware calibration so laboratories can compare results.",
       "sourceKind": "rss",
       "publishedAt": 1793960000000,
+      "ingestedAt": 1793960000000,
       "unavailable": false
     },
     {
@@ -33,6 +36,7 @@
       "text": "An engineering team describes provenance attestations for their dependency supply chain: each build publishes signed software bill of materials metadata, so downstream users can verify component origins and revoke compromised artifacts.",
       "sourceKind": "rss",
       "publishedAt": 1793950000000,
+      "ingestedAt": 1793950000000,
       "unavailable": false
     },
     {
@@ -41,6 +45,7 @@
       "text": "A preprint studies empirical scaling laws for model performance as parameters, data and training compute grow across text, vision and robotics modalities, with fitted curves and released measurement logs.",
       "sourceKind": "manual",
       "publishedAt": 1793900000000,
+      "ingestedAt": 1793900000000,
       "unavailable": false
     },
     {
@@ -49,6 +54,7 @@
       "text": "An engineering blog connects recent power-law performance research to robot learning practice: fixed training compute budgets, data efficiency trade-offs and why curriculum changes can beat additional parameters.",
       "sourceKind": "rss",
       "publishedAt": 1793890000000,
+      "ingestedAt": 1793890000000,
       "unavailable": false
     },
     {
@@ -57,6 +63,7 @@
       "text": "Acme announces the Atlas 2 controller with safety self-tests and factory calibration. Early adopter laboratories report stable operation under load.",
       "sourceKind": "rss",
       "publishedAt": 1710000000000,
+      "ingestedAt": 1710000000000,
       "unavailable": false
     },
     {
@@ -65,6 +72,7 @@
       "text": "Acme recalls the Atlas 2 controller after a safety defect in its actuator watchdog. The advisory documents affected serial ranges, remediation steps and a firmware replacement recall history.",
       "sourceKind": "rss",
       "publishedAt": 1738000000000,
+      "ingestedAt": 1738000000000,
       "unavailable": false
     },
     {
@@ -73,6 +81,7 @@
       "text": "The Atlas 3 controller ships with hardware safety redundancy and a documented remediation bulletin covering earlier recalls. Acme publishes migration guidance for laboratories upgrading controllers.",
       "sourceKind": "rss",
       "publishedAt": 1793900000000,
+      "ingestedAt": 1793900000000,
       "unavailable": false
     },
     {
@@ -81,6 +90,7 @@
       "text": "This write-up evaluates 4-bit weight compression for on-device inference latency, accuracy trade-offs and energy cost on constrained hardware.",
       "sourceKind": "rss",
       "publishedAt": 1793840000000,
+      "ingestedAt": 1793840000000,
       "unavailable": false
     },
     {
@@ -89,6 +99,7 @@
       "text": "A peer-reviewed paper proposes reproducible evaluation protocols for robot perception benchmarks, including dataset versioning, metric definitions and uncertainty reporting.",
       "sourceKind": "manual",
       "publishedAt": 1793800000000,
+      "ingestedAt": 1793800000000,
       "unavailable": false
     },
     {
@@ -97,6 +108,7 @@
       "text": "The paper evaluates sim-to-real transfer for robot learning policies and reports protocol details, randomization ranges and field comparisons.",
       "sourceKind": "manual",
       "publishedAt": 1793790000000,
+      "ingestedAt": 1793790000000,
       "unavailable": false
     },
     {
@@ -105,6 +117,7 @@
       "text": "A community workshop recap collects speculation and notes about the Orion 3 controller, including unverified claims and slides posted by attendees.",
       "sourceKind": "hackernews",
       "publishedAt": 1793950000000,
+      "ingestedAt": 1793950000000,
       "unavailable": false
     },
     {
@@ -113,6 +126,7 @@
       "text": "",
       "sourceKind": "inbound",
       "publishedAt": null,
+      "ingestedAt": 1793990000000,
       "unavailable": true
     },
     {
@@ -121,6 +135,7 @@
       "text": "A retailer announces a seasonal clothing collection with limited runs.",
       "sourceKind": "rss",
       "publishedAt": 1793990000000,
+      "ingestedAt": 1793990000000,
       "unavailable": false
     },
     {
@@ -129,6 +144,7 @@
       "text": "A marketing campaign promotes a household gadget without technical detail.",
       "sourceKind": "rss",
       "publishedAt": 1793990000000,
+      "ingestedAt": 1793990000000,
       "unavailable": false
     },
     {
@@ -137,6 +153,7 @@
       "text": "Local news reports a bakery opening a second storefront downtown.",
       "sourceKind": "rss",
       "publishedAt": 1793990000000,
+      "ingestedAt": 1793990000000,
       "unavailable": false
     },
     {
@@ -145,6 +162,7 @@
       "text": "A community bulletin collects local updates, event notices and meeting times.",
       "sourceKind": "rss",
       "publishedAt": 1793990000000,
+      "ingestedAt": 1793990000000,
       "unavailable": false
     }
   ]

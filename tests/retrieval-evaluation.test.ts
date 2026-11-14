@@ -6,8 +6,8 @@ import { Store } from "../src/db/store";
 import { parseFeed } from "../src/adapters/rss";
 import {
   buildQueryMatch,
+  QUERY_SYNONYMS,
   searchTerms,
-  SEARCH_MATCH_VERSION,
 } from "../src/search-matching";
 import corpusJson from "./fixtures/retrieval-gap-corpus-v1.json";
 import queriesJson from "./fixtures/retrieval-gap-queries-v1.json";
@@ -205,8 +205,11 @@ test("index footprint reports real FTS5 overhead and no vector store", () => {
   try {
     const footprint = measureIndexFootprint(corpus, dir);
     expect(footprint.ftsOverheadBytes).toBeGreaterThan(0);
-    expect(footprint.ftsBytes).toBe(45056);
-    expect(footprint.itemsOnlyBytes).toBe(20480);
+    // Both databases carry the identical canonical base table (title and
+    // text included); the difference is purely the added FTS index.
+    expect(footprint.ftsBytes).toBe(53248);
+    expect(footprint.itemsOnlyBytes).toBe(24576);
+    expect(footprint.ftsOverheadBytes).toBe(28672);
     const second = measureIndexFootprint(
       corpus,
       mkdtempSync(join(dir, "again-")),
@@ -261,6 +264,44 @@ test("deleted content stops matching while canonical metadata survives; restart 
     reopened.db.close();
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("duplicated positive labels are rejected before they can corrupt recall", () => {
+  const fts = createRetrievalFtsDatabase(corpus);
+  try {
+    expect(() =>
+      retrievalQueriesSchema.parse({
+        ...queries,
+        queries: queries.queries.map((q, i) =>
+          i === 0
+            ? { ...q, relevantIds: [q.relevantIds[0], q.relevantIds[0]] }
+            : q,
+        ),
+      }),
+    ).toThrow(/must not repeat a positive/);
+    expect(() =>
+      evaluateRetrievalGaps(
+        corpus,
+        {
+          ...queries,
+          queries: [
+            {
+              id: "dup",
+              scenario: "control",
+              query: "robotics benchmark manipulation",
+              relevantIds: ["robot-benchmark-suite", "robot-benchmark-suite"],
+            },
+          ],
+        },
+        () => (match, filters, k) => fts.search(match, filters, k),
+        null,
+      ),
+    ).toThrow("repeats a relevant id");
+    // A hypothetical duplicate label would otherwise report 0.5 recall even
+    // when every relevant item is retrieved; the guard makes that impossible.
+  } finally {
+    fts.db.close();
   }
 });
 
@@ -330,10 +371,21 @@ test("labels are validated: unknown relevant ids and scenario mismatches fail", 
 });
 
 test("production search adopts the measured match construction, not a drift", () => {
-  const sample = searchTerms("SBOM dependency provenance");
-  expect(buildQueryMatch(sample)).toBe(
-    MATCH_STRATEGIES["and-prefix-group-synonyms"]!.build(sample),
-  );
+  // The adopted strategy and the shipped builder must agree on every recorded
+  // query and every synonym key, not just one sample.
+  for (const recorded of queries.queries) {
+    const sample = searchTerms(recorded.query);
+    expect(buildQueryMatch(sample)).toBe(
+      MATCH_STRATEGIES["and-prefix-group-synonyms"]!.build(sample),
+    );
+  }
+  for (const key of ["constructor", "__proto__", "toString"]) {
+    expect(QUERY_SYNONYMS[key]).toBeUndefined();
+    const sample = searchTerms(key);
+    expect(buildQueryMatch(sample)).toBe(
+      MATCH_STRATEGIES["and-prefix-group-synonyms"]!.build(sample),
+    );
+  }
   const store = new Store(":memory:");
   try {
     const source = store.addSource("https://example.com/feed");
@@ -401,6 +453,7 @@ test("CLI replay is offline, deterministic and emits timing only on stderr", asy
   expect([plainExit, timedExit]).toEqual([0, 0]);
   expect(timedOutput).toBe(plainOutput);
   const report = JSON.parse(plainOutput);
+  expect(report.queries.k).toBe(5); // fixture k applies without an override
   expect(report.latencyMs).toBeNull();
   expect(report.usage).toEqual({ providerCalls: 0, cost: null });
   expect(report.index).not.toBeNull();
@@ -408,6 +461,22 @@ test("CLI replay is offline, deterministic and emits timing only on stderr", asy
     scope: "offline in-process FTS replay",
     deterministic: false,
   });
+  // The advertised optional K argument overrides the fixture value.
+  const override = Bun.spawn([...command, "3"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  const [overrideOutput, overrideExit] = await Promise.all([
+    new Response(override.stdout).text(),
+    override.exited,
+  ]);
+  expect(overrideExit).toBe(0);
+  expect(JSON.parse(overrideOutput).queries.k).toBe(3);
+  const invalid = Bun.spawn([...command, "0"], {
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+  expect(await invalid.exited).not.toBe(0);
 });
 
 test("CLI retrieval replay touches neither DB_PATH nor the network", async () => {

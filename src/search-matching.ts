@@ -15,18 +15,23 @@ export function searchTerms(query: string): string[] {
 /**
  * Curated, versioned synonym expansion. Deliberately small and literal so a
  * measured benefit is attributable; it is not an open vocabulary resource.
+ * The table has no prototype: inherited names such as "constructor" or
+ * "__proto__" must never surface as synonyms in search paths.
  */
 export const SYNONYM_VERSION = "retrieval-synonyms-v1";
-export const QUERY_SYNONYMS: Record<string, string[]> = {
-  benchmark: ["evaluation"],
-  evaluations: ["benchmarks"],
-  llm: ["large language model", "language model"],
-  quantization: ["compression"],
-  robot: ["robotics"],
-  robotics: ["robot"],
-  sbom: ["software bill of materials"],
-  laws: ["power-law"],
-};
+export const QUERY_SYNONYMS: Record<string, string[]> = Object.assign(
+  Object.create(null) as Record<string, string[]>,
+  {
+    benchmark: ["evaluation"],
+    evaluations: ["benchmarks"],
+    llm: ["large language model", "language model"],
+    quantization: ["compression"],
+    robot: ["robotics"],
+    robotics: ["robot"],
+    sbom: ["software bill of materials"],
+    laws: ["power-law"],
+  },
+);
 
 const quote = (term: string) => '"' + term + '"';
 const prefixQuote = (term: string) =>
@@ -38,14 +43,17 @@ function synonymsFor(term: string): string[] {
 }
 
 /**
- * Adopted production strategy (decision D14; candidate and-prefix-group-
- * synonyms): every query term becomes a prefix match OR-grouped with its
- * curated synonyms, and the groups are combined with AND, so required
- * vocabulary is preserved while morphology (recall/recalls) and recorded
- * acronym expansions widen recall. Measured on the labeled retrieval-gap
- * corpus: recall 0.385 → 0.692 and precision at 5 0.625 → 0.750 against the
- * baseline quoted-AND match, with the only unrecovered positives being
- * unavailable content.
+ * Adopted production strategy (decision D14; the measured candidate named
+ * and-prefix-group-synonyms): every query term becomes a prefix match
+ * OR-grouped with its curated synonyms, and the groups are combined with AND,
+ * so required vocabulary is preserved while morphology (recall/recalls) and
+ * recorded acronym expansions widen recall. Measured on the labeled
+ * retrieval-gap corpus: recall at 5 improved from 5/13 (baseline quoted-AND)
+ * to 9/13 and precision at 5 from 5/8 to 9/12. It is the best measured
+ * AND-side candidate on both axes, though prefix-only and plain
+ * synonym-group candidates also improve both. Four labeled positives remain
+ * unrecovered: the unavailable-content item and one positive each in
+ * q-vocab-llm, q-connect-scaling and q-papers-protocols.
  */
 export function buildQueryMatch(terms: string[]): string {
   return terms

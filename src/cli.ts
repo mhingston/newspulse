@@ -144,7 +144,18 @@ async function main() {
       await Bun.file(required(1, "retrieval queries JSON path")).text(),
     );
     const corpus = retrievalCorpusSchema.parse(corpusInput);
-    const queries = retrievalQueriesSchema.parse(queryInput);
+    const parsedQueries = retrievalQueriesSchema.parse(queryInput);
+    const kArg = args.slice(2).find((arg) => arg !== "--timing");
+    const kOverride = kArg === undefined ? undefined : Number(kArg);
+    if (
+      kOverride !== undefined &&
+      (!Number.isSafeInteger(kOverride) || kOverride < 1 || kOverride > 100)
+    )
+      throw new Error("K must be an integer from 1 to 100");
+    const queries =
+      kOverride === undefined
+        ? parsedQueries
+        : { ...parsedQueries, k: kOverride };
     const dir = mkdtempSync(join(tmpdir(), "retrieval-eval-"));
     try {
       const fts = createRetrievalFtsDatabase(corpus);

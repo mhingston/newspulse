@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
 import { z } from "zod";
 import {
-  SEARCH_MATCH_VERSION,
+  buildQueryMatch,
   QUERY_SYNONYMS,
+  SEARCH_MATCH_VERSION,
   SYNONYM_VERSION,
   searchTerms,
 } from "./search-matching";
@@ -30,6 +31,8 @@ const retrievalItemSchema = z.strictObject({
   text: z.string().max(100000),
   sourceKind: z.enum(sourceKinds),
   publishedAt: z.number().int().safe().nullable(),
+  /** Recorded ingestion time; production since/until filters apply to it. */
+  ingestedAt: z.number().int().safe(),
   unavailable: z.boolean(),
 });
 
@@ -102,6 +105,13 @@ export const retrievalQueriesSchema = z
       queries.queries.length
     )
       context.addIssue({ code: "custom", message: "Queries must be unique" });
+    queries.queries.forEach((query, index) => {
+      if (new Set(query.relevantIds).size !== query.relevantIds.length)
+        context.addIssue({
+          code: "custom",
+          message: `relevantIds on queries[${index}] must not repeat a positive: duplicated IDs would corrupt recall denominators`,
+        });
+    });
   });
 export type RetrievalQueries = z.infer<typeof retrievalQueriesSchema>;
 
@@ -157,7 +167,9 @@ export const MATCH_STRATEGIES: Record<
     build: (terms) => andGroups(terms, quote),
   },
   "and-prefix-group-synonyms": {
-    build: (terms) => andGroups(terms, prefixQuote),
+    // The adopted strategy is production's builder itself, so the replay can
+    // never drift from shipped matching behavior.
+    build: (terms) => buildQueryMatch(terms),
   },
 };
 
@@ -341,6 +353,10 @@ export function evaluateRetrievalGaps(
     );
   const byId = new Map(corpus.items.map((item) => [item.id, item]));
   for (const query of queries.queries) {
+    if (new Set(query.relevantIds).size !== query.relevantIds.length)
+      throw new Error(
+        `Query ${query.id} repeats a relevant id; recall denominators require unique positives`,
+      );
     for (const id of query.relevantIds) {
       const item = byId.get(id);
       if (!item)

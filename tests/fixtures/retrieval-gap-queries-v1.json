@@ -66,7 +66,7 @@
       "query": "atlas controller",
       "relevantIds": ["atlas-recall-2024"],
       "filters": { "from": 1737000000000, "to": 1739000000000 },
-      "notes": "Recorded intent targets the recall period; a publication window should remove unrelated Atlas controller items."
+      "notes": "Recorded intent targets the recall period; an ingestion-time window, mirroring the production since/until contract on items.ingested_at, should remove unrelated Atlas controller items."
     }
   ]
 }

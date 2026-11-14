@@ -4,14 +4,14 @@
     "version": 1,
     "asOf": 1794000000000,
     "items": 18,
-    "hash": "cfc8f5d2d374fb67aa3b4cb16de7d894418a06ec8202758059960509aa0e9e4f"
+    "hash": "fa736c047167ad14554e96c29d7f13d216ca5478220bb6e876a9a83b7e7839e6"
   },
   "queries": {
     "id": "synthetic-retrieval-v1",
     "version": 1,
     "k": 5,
     "count": 9,
-    "hash": "f3de95343a2349b87d7ec79d332ae80f0d3f4db1d3b326a5546bb85b291a422a"
+    "hash": "741de03efeda6122b9ce6aa8381b5de42c621b0bb1c2879b6d8dcd2be957fd9f"
   },
   "config": {
     "matchFlavor": "fts5",
@@ -28,9 +28,9 @@
     "synonymTableBytes": 237
   },
   "index": {
-    "itemsOnlyBytes": 20480,
-    "ftsBytes": 45056,
-    "ftsOverheadBytes": 24576
+    "itemsOnlyBytes": 24576,
+    "ftsBytes": 53248,
+    "ftsOverheadBytes": 28672
   },
   "candidates": [
     {
