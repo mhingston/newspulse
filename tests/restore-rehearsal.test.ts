@@ -4,6 +4,8 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { drizzle } from "drizzle-orm/bun-sqlite";
+import { migrate } from "drizzle-orm/bun-sqlite/migrator";
 import { Store } from "../src/db/store";
 import { DigestStore } from "../src/db/digest-store";
 import { DeliveryStore } from "../src/db/delivery-store";
@@ -29,6 +31,7 @@ import {
   previewDeliverySuppression,
 } from "../src/delivery-suppression";
 import { DAY_MS, retentionPolicy } from "../src/retention";
+import { migrationsBefore } from "./fixtures";
 
 const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 const DAY0 = Date.UTC(2026, 10, 1);
@@ -38,6 +41,11 @@ const sender = "sender@example.test";
 
 const headline = (title: string, link: string) =>
   `<item><title>${title}</title><link>${link}</link><guid>${link}</guid><description>Acme released the Atlas 2 robotics model today.</description></item>`;
+const priorFeed = `<?xml version="1.0"?>
+<rss version="2.0"><channel><title>Feed</title>
+<item><title>Alpha</title><link>https://example.test/alpha</link><guid>alpha-1</guid><description>rehearsalword body</description></item>
+<item><title>Beta</title><link>https://example.test/beta</link><guid>beta-1</guid><description>betaword body</description></item>
+</channel></rss>`;
 const FEEDS: [string, string][] = [
   [
     "https://news-one.example/rss",
@@ -300,6 +308,21 @@ test("restore rehearsal: pipeline-built backup restores into a new stopped path,
       expect(count(restored, "SELECT count(*) n FROM story_memberships")).toBe(
         2,
       );
+      // Idempotence is structural, not just outcome equality: no duplicate
+      // versions may appear and no processing work (including pending jobs)
+      // may appear beyond what the backup itself held.
+      expect(count(restored, "SELECT count(*) n FROM content_versions")).toBe(
+        before.counts.content_versions!,
+      );
+      expect(count(restored, "SELECT count(*) n FROM processing_jobs")).toBe(
+        before.counts.processing_jobs!,
+      );
+      const pending = (path: string) =>
+        count(
+          path,
+          "SELECT count(*) n FROM processing_jobs WHERE status IN ('pending','running')",
+        );
+      expect(pending(restored)).toBe(pending(backup));
 
       // The operator reconciles the restored database: the provider had
       // accepted the send before the crash, so the pending outbox row is
@@ -433,6 +456,161 @@ test("restore rehearsal: retention purge on the restored database keeps verifica
     expect(after.problems).toEqual([]);
     expect(after.ftsConsistent).toBe(true);
     expect(after.counts.retention_purges).toBe(2);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("restore rehearsal: a prior-version (0046) backup restores, migrates in place, and restarts idempotently", () => {
+  const dir = mkdtempSync(join(tmpdir(), "restore-rehearsal-prior-"));
+  try {
+    // The upgrade-path rehearsal: a populated database at the pre-0047
+    // schema. The current pipeline cannot produce that schema, so the
+    // fixture is written directly against the checked-in prior migrations;
+    // everything after the fixture (backup, restore, migrate, re-poll) runs
+    // the real code paths.
+    const old = migrationsBefore(dir, 47);
+    const priorPath = join(dir, "prior.sqlite");
+    const db = new Database(priorPath, { create: true, strict: true });
+    db.exec("PRAGMA foreign_keys=ON");
+    migrate(drizzle(db), { migrationsFolder: old });
+    db.query(
+      "INSERT INTO sources(id,kind,url,title,enabled,poll_seconds,next_poll,failures) VALUES('src','rss','https://example.test/feed.xml','Feed',1,1800,0,0)",
+    ).run();
+    const items = [
+      {
+        id: "item-alpha",
+        title: "Alpha",
+        guid: "alpha-1",
+        text: "rehearsalword body",
+      },
+      { id: "item-beta", title: "Beta", guid: "beta-1", text: "betaword body" },
+    ];
+    for (const item of items) {
+      const url = `https://example.test/${item.title.toLowerCase()}`;
+      db.query(
+        "INSERT INTO items(id,identity,url,title,ingested_at,status) VALUES(?,?,?,?,?,'extracted')",
+      ).run(item.id, `url:${url}`, url, item.title, DAY0);
+      db.query(
+        "INSERT INTO item_sources(item_id,source_id,native_id,url) VALUES(?,'src',?,?)",
+      ).run(item.id, item.guid, url);
+      db.query(
+        "INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at) VALUES(?,'src',?,?,?,?,?)",
+      ).run(item.id, item.guid, item.title, item.text, url, DAY0);
+      db.query("INSERT INTO content(item_id,text) VALUES(?,?)").run(
+        item.id,
+        item.text,
+      );
+      db.query(
+        "INSERT INTO processing_jobs(id,stage,item_id,generation,status,outcome,attempts,available_at,queued_at,created_at,result) VALUES(?, 'extract', ?, 1, 'done', 'extracted', 0, ?, ?, ?, ?)",
+      ).run(
+        `extract-${item.id}`,
+        item.id,
+        DAY0,
+        DAY0,
+        DAY0,
+        JSON.stringify({ status: "extracted", text: item.text }),
+      );
+    }
+    const backup = join(dir, "backup.sqlite");
+    db.query("VACUUM INTO ?").run(backup);
+    db.close();
+
+    const before = verifyDatabase(backup);
+    expect(before.problems).toEqual([]);
+    expect(before.ok).toBe(true);
+    expect(before.counts.items).toBe(2);
+    expect(before.counts.content_versions).toBe(2);
+
+    const restored = join(dir, "restored", "newspulse.sqlite");
+    expect(restoreCli(backup, restored).exitCode).toBe(0);
+    // The restored copy keeps the backup's schema version until it is
+    // reopened; verification accepts the older schema as-is.
+    const report = verifyDatabase(restored);
+    expect(report.integrity).toBe("ok");
+    expect(report.foreignKeyViolations).toBe(0);
+    expect(report.ftsConsistent).toBe(true);
+    expect(report.problems).toEqual([]);
+    expect(report.counts.items).toBe(before.counts.items);
+    expect(report.counts.content_versions).toBe(before.counts.content_versions);
+
+    // Restart: reopening migrates the restored copy to the bundled schema,
+    // preserving history and search. Re-polling the same feed must not
+    // duplicate items, versions, or processing work.
+    const store = new Store(restored);
+    try {
+      expect(store.search("rehearsalword").map((item) => item.title)).toEqual([
+        "Alpha",
+      ]);
+      expect(store.search("betaword").map((item) => item.title)).toEqual([
+        "Beta",
+      ]);
+      expect(count(restored, "SELECT count(*) n FROM content")).toBe(2);
+      const jobsBefore = count(
+        restored,
+        "SELECT count(*) n FROM processing_jobs",
+      );
+      const source = store.source("src")!;
+      store.enqueueDue(DAY0 + DAY_MS, true);
+      const poll = store.claim(DAY0 + DAY_MS)!;
+      store.complete(
+        poll,
+        { items: parseFeed(priorFeed, source.url) },
+        DAY0 + DAY_MS,
+      );
+      expect(count(restored, "SELECT count(*) n FROM items")).toBe(2);
+      expect(
+        count(
+          restored,
+          "SELECT count(*) n FROM (SELECT source_id,native_id FROM item_sources GROUP BY 1,2 HAVING count(*)>1)",
+        ),
+      ).toBe(0);
+      expect(count(restored, "SELECT count(*) n FROM content_versions")).toBe(
+        before.counts.content_versions!,
+      );
+      expect(count(restored, "SELECT count(*) n FROM processing_jobs")).toBe(
+        jobsBefore,
+      );
+      expect(
+        count(
+          restored,
+          "SELECT count(*) n FROM processing_jobs WHERE status IN ('pending','running')",
+        ),
+      ).toBe(0);
+      expect(store.search("rehearsalword")).toHaveLength(1);
+      expect(store.search("betaword")).toHaveLength(1);
+    } finally {
+      store.close();
+    }
+    const restarted = verifyDatabase(restored);
+    expect(restarted.ftsConsistent).toBe(true);
+    expect(restarted.problems).toEqual([]);
+    const journal = JSON.parse(
+      readFileSync(
+        fileURLToPath(
+          new URL("../drizzle/meta/_journal.json", import.meta.url),
+        ),
+        "utf8",
+      ),
+    ) as { entries: { idx: number }[] };
+    expect(restarted.migrations).toBe(journal.entries.length);
+    const appliedBefore = count(
+      backup,
+      "SELECT count(*) n FROM __drizzle_migrations",
+    );
+    expect(report.migrations).toBe(appliedBefore);
+
+    // A second restart after the migration is equally idempotent.
+    const again = new Store(restored);
+    try {
+      expect(again.search("rehearsalword")).toHaveLength(1);
+      expect(count(restored, "SELECT count(*) n FROM content_versions")).toBe(
+        before.counts.content_versions!,
+      );
+    } finally {
+      again.close();
+    }
+    expect(verifyDatabase(restored).problems).toEqual([]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

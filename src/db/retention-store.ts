@@ -1,5 +1,6 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
+import { Buffer } from "node:buffer";
 import {
   PURGED_ANALYSIS,
   PURGED_EXTRACTION,
@@ -291,6 +292,7 @@ function feedTextCandidates(
 
 /** Bounds tombstone fingerprinting per pass so hashing never dominates the write lock. */
 const FINGERPRINT_VERSION_LIMIT = 512;
+/** UTF-8 byte budget for tombstone fingerprinting per pass. */
 const FINGERPRINT_BYTE_LIMIT = 8 * 1024 * 1024;
 
 interface FingerprintBudget {
@@ -303,10 +305,11 @@ interface FingerprintBudget {
  * destroyed: the hash of each body still held, and the empty fingerprint for
  * observations that were already empty, so a later body from the same source
  * stays comparable. Legacy tombstones (purged before fingerprints existed) are
- * never given one. The work is bounded by the pass budget; the byte budget may
- * be exceeded by one version so a single oversized body still makes progress.
- * Returns false when versions remain unprocessed and the purge must wait for a
- * later pass.
+ * never given one. Each seek targets the item's next unprocessed version
+ * directly through the partial index, the byte budget counts UTF-8 bytes (the
+ * bytes SHA-256 actually hashes) and may be exceeded by one version so a
+ * single oversized body still makes progress. Returns false when versions
+ * remain unprocessed and the purge must wait for a later pass.
  */
 function fingerprintBeforePurge(
   db: Database,
@@ -316,17 +319,27 @@ function fingerprintBeforePurge(
   const next = db.query<{ id: number; text: string }, [string]>(
     "SELECT id,text FROM content_versions WHERE item_id=? AND purged_at IS NULL AND text_fingerprint IS NULL ORDER BY id LIMIT 1",
   );
-  const record = db.query(
-    "UPDATE content_versions SET text_fingerprint=? WHERE id=? AND text_fingerprint IS NULL",
+  // Lightweight completeness check, so an exhausted budget never loads a body.
+  const pending = db.query<{ n: number }, [string]>(
+    "SELECT EXISTS(SELECT 1 FROM content_versions WHERE item_id=? AND purged_at IS NULL AND text_fingerprint IS NULL) AS n",
   );
   for (;;) {
-    const row = next.get(itemId);
-    if (!row) return true;
-    if (budget.versions <= 0 || budget.bytes < 0) return false;
-    record.run(contentFingerprint(row.text), row.id);
-    budget.versions -= 1;
-    budget.bytes -= row.text.length;
+    if (budget.versions > 0 && budget.bytes >= 0) {
+      const row = next.get(itemId);
+      if (!row) return true;
+      recordFingerprint(db, row.id, row.text);
+      budget.versions -= 1;
+      budget.bytes -= Buffer.byteLength(row.text, "utf8");
+    } else {
+      return !pending.get(itemId)!.n;
+    }
   }
+}
+
+function recordFingerprint(db: Database, id: number, text: string) {
+  db.query(
+    "UPDATE content_versions SET text_fingerprint=? WHERE id=? AND text_fingerprint IS NULL",
+  ).run(contentFingerprint(text), id);
 }
 
 /**

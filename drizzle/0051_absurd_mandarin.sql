@@ -1,0 +1,1 @@
+CREATE INDEX `content_versions_unprocessed` ON `content_versions` (`item_id`) WHERE purged_at IS NULL AND text_fingerprint IS NULL;

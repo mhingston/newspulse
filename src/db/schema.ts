@@ -58,6 +58,11 @@ export const contentVersions = sqliteTable(
   (t) => [
     index("content_versions_source_native").on(t.sourceId, t.nativeId, t.id),
     index("content_versions_item").on(t.itemId, t.id),
+    // Retention's tombstone pass seeks directly to this item's unprocessed
+    // versions instead of rescanning already-fingerprinted ones.
+    index("content_versions_unprocessed")
+      .on(t.itemId)
+      .where(sql`purged_at IS NULL AND text_fingerprint IS NULL`),
   ],
 );
 export const itemUrlAliases = sqliteTable(

@@ -2,18 +2,9 @@ import { afterEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { drizzle } from "drizzle-orm/bun-sqlite";
 import { migrate } from "drizzle-orm/bun-sqlite/migrator";
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { fileURLToPath } from "node:url";
 import { Store } from "../src/db/store";
 import {
   contentFingerprint,
@@ -24,6 +15,7 @@ import { DAY_MS, retentionPolicy } from "../src/retention";
 import { verifyDatabase } from "../src/recovery";
 import { parseFeed } from "../src/adapters/rss";
 import { observedUpdate } from "../src/observed-update";
+import { migrationsBefore } from "./fixtures";
 
 const dirs: string[] = [];
 function temp() {
@@ -641,24 +633,7 @@ describe("feed-text retention", () => {
     const dir = temp();
     // A database at the previous schema: one item whose feed text was already
     // purged (no fingerprint existed yet) and one item still holding text.
-    const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
-    const old = join(dir, "prior-migrations");
-    mkdirSync(join(old, "meta"), { recursive: true });
-    for (const file of readdirSync(migrations)) {
-      if (file.endsWith(".sql") && !/^0050_/.test(file))
-        copyFileSync(join(migrations, file), join(old, file));
-    }
-    const journal = JSON.parse(
-      readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
-    );
-    journal.entries = journal.entries.filter(
-      (entry: { tag: string }) => !entry.tag.startsWith("0050_"),
-    );
-    writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
-    for (const file of readdirSync(join(migrations, "meta"))) {
-      if (file.endsWith("_snapshot.json") && !file.startsWith("0050"))
-        copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
-    }
+    const old = migrationsBefore(dir, 50);
     const path = join(dir, "prior.sqlite");
     const db = new Database(path, { create: true, strict: true });
     db.exec("PRAGMA foreign_keys=ON");
@@ -685,6 +660,13 @@ describe("feed-text retention", () => {
         store.sqlite
           .query<{ name: string }, []>(
             "SELECT name FROM pragma_table_info('content_versions') WHERE name='text_fingerprint'",
+          )
+          .all(),
+      ).toHaveLength(1);
+      expect(
+        store.sqlite
+          .query<{ name: string }, []>(
+            "SELECT name FROM sqlite_master WHERE type='index' AND name='content_versions_unprocessed'",
           )
           .all(),
       ).toHaveLength(1);
@@ -1051,6 +1033,198 @@ describe("feed-text retention", () => {
     }
   });
 
+  test("a metadata-only re-poll from a second source does not overwrite another source's restored body", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const shared = {
+        title: "Shared story",
+        guid: "",
+        link: "https://example.test/shared",
+      };
+      const sourceA = store.addSource("https://example.test/a.xml", "A");
+      pollSource(
+        store,
+        sourceA,
+        feedWith({ ...shared, guid: "a-1", text: "original body words" }),
+        DAY0,
+      );
+      settlePending(store, DAY0 + 1000);
+      const sourceB = store.addSource("https://example.test/b.xml", "B");
+      pollSource(
+        store,
+        sourceB,
+        feedWith({ ...shared, guid: "b-1", text: "original body words" }),
+        DAY0 + 2000,
+      );
+      settlePending(store, DAY0 + 3000);
+      const itemId = store.search("Shared story")[0]!.id;
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // Source A delivers a changed body, lifting the shared tombstone.
+      pollSource(
+        store,
+        sourceA,
+        feedWith({
+          ...shared,
+          guid: "a-1",
+          text: "a corrected body from source a",
+        }),
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "a corrected body from source a", purged_at: null });
+      // Source B re-polls with its stale body under a new title and URL: the
+      // metadata update is recorded, but the unknown body must neither
+      // overwrite A's correction nor queue extraction.
+      const before = {
+        versions: count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}'`,
+        ),
+        extracts: count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      };
+      pollSource(
+        store,
+        sourceB,
+        feedWith({
+          title: "Shared story, retitled",
+          guid: "b-1",
+          link: "https://example.test/shared-moved",
+          text: "original body words",
+        }),
+        DAY0 + 7 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "a corrected body from source a", purged_at: null });
+      expect(store.search("retitled")).toHaveLength(1);
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number }, [string, string]>(
+            "SELECT text,purged_at FROM content_versions WHERE item_id=? AND source_id=? ORDER BY id DESC LIMIT 1",
+          )
+          .get(itemId, sourceB.id),
+      ).toEqual({ text: "", purged_at: DAY0 + 7 * DAY_MS });
+      expect({
+        versions: count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}'`,
+        ),
+        extracts: count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      }).toEqual({ versions: before.versions + 1, extracts: before.extracts });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("a fingerprintless legacy tombstone never takes the restored-content fallback", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const shared = {
+        title: "Shared story",
+        guid: "",
+        link: "https://example.test/shared",
+      };
+      const sourceA = store.addSource("https://example.test/a.xml", "A");
+      pollSource(
+        store,
+        sourceA,
+        feedWith({ ...shared, guid: "a-1", text: "original body words" }),
+        DAY0,
+      );
+      settlePending(store, DAY0 + 1000);
+      const sourceB = store.addSource("https://example.test/b.xml", "B");
+      pollSource(
+        store,
+        sourceB,
+        feedWith({ ...shared, guid: "b-1", text: "original body words" }),
+        DAY0 + 2000,
+      );
+      settlePending(store, DAY0 + 3000);
+      const itemId = store.search("Shared story")[0]!.id;
+      store.retention(retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }), {
+        dryRun: false,
+        now: DAY0 + 5 * DAY_MS,
+      });
+      // Simulate the pre-0050 state: source B's purged versions carry no
+      // fingerprint, while source A's changed body restores the content.
+      store.sqlite
+        .query(
+          "UPDATE content_versions SET text_fingerprint=NULL WHERE item_id=? AND source_id=?",
+        )
+        .run(itemId, sourceB.id);
+      pollSource(
+        store,
+        sourceA,
+        feedWith({
+          ...shared,
+          guid: "a-1",
+          text: "a corrected body from source a",
+        }),
+        DAY0 + 6 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "a corrected body from source a", purged_at: null });
+      const extracts = count(
+        store,
+        `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+      );
+      // Source B re-polls with its stale body and no metadata change: with no
+      // retained fingerprint the source stays conservatively tombstoned, so it
+      // neither overwrites the correction nor queues extraction.
+      pollSource(
+        store,
+        sourceB,
+        feedWith({ ...shared, guid: "b-1", text: "original body words" }),
+        DAY0 + 7 * DAY_MS,
+      );
+      expect(
+        store.sqlite
+          .query<{ text: string; purged_at: number | null }, [string]>(
+            "SELECT text,purged_at FROM content WHERE item_id=?",
+          )
+          .get(itemId),
+      ).toEqual({ text: "a corrected body from source a", purged_at: null });
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM processing_jobs WHERE item_id='${itemId}' AND stage='extract'`,
+        ),
+      ).toBe(extracts);
+      expect(
+        store.sqlite
+          .query<{ purged_at: number | null; text: string }, [string, string]>(
+            "SELECT purged_at,text FROM content_versions WHERE item_id=? AND source_id=? ORDER BY id DESC LIMIT 1",
+          )
+          .get(itemId, sourceB.id),
+      ).toEqual({ purged_at: DAY0 + 5 * DAY_MS, text: "" });
+    } finally {
+      store.close();
+    }
+  });
+
   test("a source whose only observation was empty is recognized when it later delivers a body", () => {
     const store = new Store(join(temp(), "db.sqlite"));
     try {
@@ -1321,6 +1495,56 @@ describe("feed-text retention", () => {
         ),
       ).toBe(0);
       expect(store.getItem(itemId)!.text).toBe("");
+    } finally {
+      store.close();
+    }
+  });
+
+  test("the fingerprint byte budget counts UTF-8 bytes, not UTF-16 code units", () => {
+    const store = new Store(join(temp(), "db.sqlite"));
+    try {
+      const itemId = multiVersionItem(store, "Alpha", [
+        "\u6f22\u5b57\u6f22 first",
+        "\u6f22\u5b57\u6f22 second",
+        "\u6f22\u5b57\u6f22 third",
+      ]);
+      const run = () =>
+        runRetention(
+          store.sqlite,
+          retentionPolicy({ RETENTION_FEED_TEXT_DAYS: "1" }),
+          DAY0 + 5 * DAY_MS,
+          {
+            dryRun: false,
+            limit: 10,
+            fingerprintBudget: { versions: 100, bytes: 10 },
+          },
+        );
+      // Three versions of ~15 UTF-8 bytes (9 UTF-16 units) each: a UTF-16
+      // count would hash two under this budget, byte counting hashes one and
+      // defers the rest.
+      const first = run();
+      expect(first.purged.feed_text).toBe(0);
+      expect(first.deferred).toBe(1);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}' AND text_fingerprint IS NOT NULL`,
+        ),
+      ).toBe(1);
+      expect(run().purged.feed_text).toBe(0);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}' AND text_fingerprint IS NOT NULL`,
+        ),
+      ).toBe(2);
+      expect(run().purged.feed_text).toBe(1);
+      expect(
+        count(
+          store,
+          `SELECT count(*) n FROM content_versions WHERE item_id='${itemId}' AND text_fingerprint IS NULL`,
+        ),
+      ).toBe(0);
     } finally {
       store.close();
     }

@@ -1324,11 +1324,10 @@ export class Store {
             title: string;
             backfilled: number;
             url: string | null;
-            text_fingerprint: string | null;
           },
           [string, string]
         >(
-          "SELECT text,title,backfilled,url,text_fingerprint FROM content_versions WHERE source_id=? AND native_id=? ORDER BY id DESC LIMIT 1",
+          "SELECT text,title,backfilled,url FROM content_versions WHERE source_id=? AND native_id=? ORDER BY id DESC LIMIT 1",
         )
         .get(sourceId, candidate.nativeId);
       const originalUrl = candidate.sourceUrl ?? candidate.url ?? prior.url;
@@ -1343,50 +1342,71 @@ export class Store {
             "SELECT count(*) n FROM content WHERE item_id=? AND purged_at IS NOT NULL",
           )
           .get(prior.item_id)!.n > 0;
-      // A purged body cannot be compared by text, but the fingerprint retained
-      // when it was purged can. The lookup scans back to the latest retained
-      // fingerprint for this source/native ID instead of trusting the newest
-      // version: a tombstone written by a title- or URL-only update carries no
-      // fingerprint and must not erase the knowledge. A known-empty marker says
-      // the source's last delivered body was empty without overwriting an
-      // earlier real body, and legacy tombstones (purged before fingerprints
-      // existed) stay unknown, which keeps them conservatively tombstoned.
-      const lastFingerprint = this.sqlite
-        .query<{ text_fingerprint: string }, [string, string, string]>(
-          `SELECT text_fingerprint FROM content_versions
-            WHERE source_id=? AND native_id=? AND text_fingerprint IS NOT NULL
-            ORDER BY (text_fingerprint <> ?) DESC, id DESC LIMIT 1`,
-        )
-        .get(
-          sourceId,
-          candidate.nativeId,
-          EMPTY_CONTENT_FINGERPRINT,
-        )?.text_fingerprint;
-      // The live body wins when this source still has one; otherwise its
-      // retained fingerprint speaks, so a source whose latest body was purged
-      // stays comparable even after another source restored the shared content.
+      // Comparison and tombstoning follow this source's own body state, not the
+      // shared item's: another source's restore must not make an unchanged body
+      // here look new, and a metadata update here must not restore a body this
+      // source no longer holds.
       let bodyChanged = false;
-      if (candidate.text !== "") {
-        if (lastBody !== undefined) {
-          bodyChanged = lastBody !== candidate.text;
-        } else if (lastFingerprint !== undefined) {
-          bodyChanged = lastFingerprint !== contentFingerprint(candidate.text);
-        } else if (!purged) {
-          // No body history for this source and nothing retained: a delivered
-          // body is new information, as for a placeholder awaiting its text.
-          bodyChanged = true;
+      let sourceTombstoned = false;
+      if (lastBody !== undefined) {
+        if (candidate.text !== "") bodyChanged = lastBody !== candidate.text;
+      } else if (candidate.text !== "") {
+        // The source's last body is gone; consult what was retained when it was
+        // purged. Newest lookups on the source/native index avoid sorting the
+        // version history, and a live body above makes them unnecessary.
+        const newest = this.sqlite
+          .query<{ text_fingerprint: string }, [string, string]>(
+            "SELECT text_fingerprint FROM content_versions WHERE source_id=? AND native_id=? AND text_fingerprint IS NOT NULL ORDER BY id DESC LIMIT 1",
+          )
+          .get(sourceId, candidate.nativeId)?.text_fingerprint;
+        let anchor: string | undefined = newest;
+        if (newest === EMPTY_CONTENT_FINGERPRINT) {
+          // A known-empty marker is newest; the last real body stays the
+          // comparison anchor when one exists.
+          anchor =
+            this.sqlite
+              .query<{ text_fingerprint: string }, [string, string, string]>(
+                "SELECT text_fingerprint FROM content_versions WHERE source_id=? AND native_id=? AND text_fingerprint IS NOT NULL AND text_fingerprint<>? ORDER BY id DESC LIMIT 1",
+              )
+              .get(sourceId, candidate.nativeId, EMPTY_CONTENT_FINGERPRINT)
+              ?.text_fingerprint ?? newest;
         }
-        // A purged source without a retained fingerprint stays conservatively
-        // unchanged rather than guessing.
+        if (anchor !== undefined) {
+          // The source's last body was purged and its fingerprint survived:
+          // only a genuinely different body counts as a change.
+          sourceTombstoned = true;
+          bodyChanged = anchor !== contentFingerprint(candidate.text);
+        } else {
+          // Without a fingerprint the purge left nothing comparable: a source
+          // with purged versions stays conservatively unchanged, while one
+          // that never delivered a body treats it as new information.
+          sourceTombstoned =
+            this.sqlite
+              .query<{ n: number }, [string, string]>(
+                "SELECT EXISTS(SELECT 1 FROM content_versions WHERE source_id=? AND native_id=? AND purged_at IS NOT NULL) AS n",
+              )
+              .get(sourceId, candidate.nativeId)!.n > 0;
+          if (!sourceTombstoned) bodyChanged = true;
+        }
+      } else {
+        // No body on either side: only this source's tombstone state matters
+        // for the version written below.
+        sourceTombstoned =
+          this.sqlite
+            .query<{ n: number }, [string, string]>(
+              "SELECT EXISTS(SELECT 1 FROM content_versions WHERE source_id=? AND native_id=? AND purged_at IS NOT NULL) AS n",
+            )
+            .get(sourceId, candidate.nativeId)!.n > 0;
       }
       const changed =
         !previous ||
         previous.title !== candidate.title ||
         bodyChanged ||
         previous.url !== originalUrl;
-      // A purged observation whose body is unchanged keeps its tombstone; a
-      // restored observation is a fresh, unpurged version carrying its text.
-      const keepPurged = purged && !bodyChanged;
+      // The version is a tombstone when this source's body is gone and the
+      // observation does not restore it, whether the tombstone came from this
+      // source's own purged versions or from the shared purged content.
+      const keepPurged = (purged || sourceTombstoned) && !bodyChanged;
       if (changed || previous?.backfilled) {
         this.sqlite
           .query(
@@ -1438,7 +1458,8 @@ export class Store {
           sourceId,
           inbound ? (candidate.url ?? null) : originalUrl,
         );
-      } else if (!purged) this.enqueueProcessing("extract", prior.item_id, now);
+      } else if (!purged && !sourceTombstoned)
+        this.enqueueProcessing("extract", prior.item_id, now);
       this.insertChildren(candidate, sourceId, now, prior.item_id);
       if (changed || (owner && owner !== previousRef?.item_id))
         this.markGroupingDirty(prior.item_id, now);
