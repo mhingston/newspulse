@@ -25,6 +25,7 @@ import { AnalysisBudget } from "../src/analysis-budget";
 import { analysisHandler } from "../src/analysis-service";
 import { ProcessingWorker } from "../src/worker";
 import { scoreItem } from "../src/scoring";
+import { migrationsBefore } from "./fixtures";
 
 const dirs: string[] = [];
 function temp() {
@@ -425,38 +426,8 @@ describe("content retention", () => {
 
   test("populated prior-version database migrates and retains canonical identity, references and search", () => {
     const dir = temp();
-    const old = join(dir, "prior-migrations");
+    const old = migrationsBefore(dir, 47);
     const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
-    mkdirSync(old, { recursive: true });
-    for (const file of readdirSync(migrations)) {
-      if (
-        file.endsWith(".sql") &&
-        !file.startsWith("0047_") &&
-        !file.startsWith("0049_") &&
-        !file.startsWith("0048_")
-      )
-        copyFileSync(join(migrations, file), join(old, file));
-    }
-    const journal = JSON.parse(
-      readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
-    );
-    journal.entries = journal.entries.filter(
-      (entry: { tag: string }) =>
-        !entry.tag.startsWith("0047_") &&
-        !entry.tag.startsWith("0048_") &&
-        !entry.tag.startsWith("0049_"),
-    );
-    mkdirSync(join(old, "meta"), { recursive: true });
-    writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
-    for (const file of readdirSync(join(migrations, "meta"))) {
-      if (
-        file.endsWith("_snapshot.json") &&
-        !file.startsWith("0047") &&
-        !file.startsWith("0048") &&
-        !file.startsWith("0049")
-      )
-        copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
-    }
     const path = join(dir, "prior.sqlite");
     const db = new Database(path, { create: true, strict: true });
     db.exec("PRAGMA foreign_keys=ON");
@@ -902,37 +873,10 @@ describe("retention review hardening", () => {
 
   test("verification accepts an unmigrated prior-version (0046) backup without modifying it", () => {
     const dir = temp();
-    const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
-    const old = join(dir, "prior-migrations");
-    mkdirSync(join(old, "meta"), { recursive: true });
-    for (const file of readdirSync(migrations)) {
-      if (
-        file.endsWith(".sql") &&
-        !file.startsWith("0047_") &&
-        !file.startsWith("0049_") &&
-        !file.startsWith("0048_")
-      )
-        copyFileSync(join(migrations, file), join(old, file));
-    }
+    const old = migrationsBefore(dir, 47);
     const journal = JSON.parse(
-      readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
-    );
-    journal.entries = journal.entries.filter(
-      (entry: { tag: string }) =>
-        !entry.tag.startsWith("0047_") &&
-        !entry.tag.startsWith("0048_") &&
-        !entry.tag.startsWith("0049_"),
-    );
-    writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
-    for (const file of readdirSync(join(migrations, "meta"))) {
-      if (
-        file.endsWith("_snapshot.json") &&
-        !file.startsWith("0047") &&
-        !file.startsWith("0048") &&
-        !file.startsWith("0049")
-      )
-        copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
-    }
+      readFileSync(join(old, "meta/_journal.json"), "utf8"),
+    ) as { entries: unknown[] };
     const path = join(dir, "prior.sqlite");
     const db = new Database(path, { create: true, strict: true });
     migrate(drizzle(db), { migrationsFolder: old });

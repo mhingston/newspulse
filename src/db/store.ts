@@ -8,7 +8,12 @@ import {
 } from "../observed-update";
 import { ProfileStore } from "../profiles";
 import { healthReport } from "../health";
-import { runRetention, type RetentionReport } from "./retention-store";
+import {
+  contentFingerprint,
+  EMPTY_CONTENT_FINGERPRINT,
+  runRetention,
+  type RetentionReport,
+} from "./retention-store";
 import { PURGED_INBOUND_BODY, type RetentionPolicy } from "../retention";
 import { advanceScoreInvalidation, invalidateScores } from "./score-queue";
 import { SCORING_CRITERIA_VERSION, type ScoringInput } from "../scoring";
@@ -1337,16 +1342,71 @@ export class Store {
             "SELECT count(*) n FROM content WHERE item_id=? AND purged_at IS NOT NULL",
           )
           .get(prior.item_id)!.n > 0;
-      // A purged body cannot be compared, so an unchanged title and URL keep it
-      // tombstoned: no text is restored and no extraction is queued.
-      const changed = purged
-        ? !previous ||
-          previous.title !== candidate.title ||
-          previous.url !== originalUrl
-        : !previous ||
-          previous.title !== candidate.title ||
-          (candidate.text !== "" && lastBody !== candidate.text) ||
-          previous.url !== originalUrl;
+      // Comparison and tombstoning follow this source's own body state, not the
+      // shared item's: another source's restore must not make an unchanged body
+      // here look new, and a metadata update here must not restore a body this
+      // source no longer holds.
+      let bodyChanged = false;
+      let sourceTombstoned = false;
+      if (lastBody !== undefined) {
+        if (candidate.text !== "") bodyChanged = lastBody !== candidate.text;
+      } else if (candidate.text !== "") {
+        // The source's last body is gone; consult what was retained when it was
+        // purged. Newest lookups on the source/native index avoid sorting the
+        // version history, and a live body above makes them unnecessary.
+        const newest = this.sqlite
+          .query<{ text_fingerprint: string }, [string, string]>(
+            "SELECT text_fingerprint FROM content_versions WHERE source_id=? AND native_id=? AND text_fingerprint IS NOT NULL ORDER BY id DESC LIMIT 1",
+          )
+          .get(sourceId, candidate.nativeId)?.text_fingerprint;
+        let anchor: string | undefined = newest;
+        if (newest === EMPTY_CONTENT_FINGERPRINT) {
+          // A known-empty marker is newest; the last real body stays the
+          // comparison anchor when one exists.
+          anchor =
+            this.sqlite
+              .query<{ text_fingerprint: string }, [string, string, string]>(
+                "SELECT text_fingerprint FROM content_versions WHERE source_id=? AND native_id=? AND text_fingerprint IS NOT NULL AND text_fingerprint<>? ORDER BY id DESC LIMIT 1",
+              )
+              .get(sourceId, candidate.nativeId, EMPTY_CONTENT_FINGERPRINT)
+              ?.text_fingerprint ?? newest;
+        }
+        if (anchor !== undefined) {
+          // The source's last body was purged and its fingerprint survived:
+          // only a genuinely different body counts as a change.
+          sourceTombstoned = true;
+          bodyChanged = anchor !== contentFingerprint(candidate.text);
+        } else {
+          // Without a fingerprint the purge left nothing comparable: a source
+          // with purged versions stays conservatively unchanged, while one
+          // that never delivered a body treats it as new information.
+          sourceTombstoned =
+            this.sqlite
+              .query<{ n: number }, [string, string]>(
+                "SELECT EXISTS(SELECT 1 FROM content_versions WHERE source_id=? AND native_id=? AND purged_at IS NOT NULL) AS n",
+              )
+              .get(sourceId, candidate.nativeId)!.n > 0;
+          if (!sourceTombstoned) bodyChanged = true;
+        }
+      } else {
+        // No body on either side: only this source's tombstone state matters
+        // for the version written below.
+        sourceTombstoned =
+          this.sqlite
+            .query<{ n: number }, [string, string]>(
+              "SELECT EXISTS(SELECT 1 FROM content_versions WHERE source_id=? AND native_id=? AND purged_at IS NOT NULL) AS n",
+            )
+            .get(sourceId, candidate.nativeId)!.n > 0;
+      }
+      const changed =
+        !previous ||
+        previous.title !== candidate.title ||
+        bodyChanged ||
+        previous.url !== originalUrl;
+      // The version is a tombstone when this source's body is gone and the
+      // observation does not restore it, whether the tombstone came from this
+      // source's own purged versions or from the shared purged content.
+      const keepPurged = (purged || sourceTombstoned) && !bodyChanged;
       if (changed || previous?.backfilled) {
         this.sqlite
           .query(
@@ -1357,10 +1417,10 @@ export class Store {
             sourceId,
             candidate.nativeId,
             candidate.title,
-            purged ? "" : candidate.text,
+            keepPurged ? "" : candidate.text,
             originalUrl,
             now,
-            purged ? now : null,
+            keepPurged ? now : null,
           );
       }
       if (changed) {
@@ -1377,10 +1437,10 @@ export class Store {
             .query("UPDATE items SET url=coalesce(url,?) WHERE id=?")
             .run(canonicalItemUrl(candidate.url), prior.item_id);
       }
-      if (changed && !purged) {
+      if (changed && !keepPurged) {
         if (candidate.text)
           this.sqlite
-            .query("UPDATE content SET text=? WHERE item_id=?")
+            .query("UPDATE content SET text=?,purged_at=NULL WHERE item_id=?")
             .run(candidate.text, prior.item_id);
         const generation = this.sqlite
           .query<{ n: number }, [string]>(
@@ -1398,7 +1458,8 @@ export class Store {
           sourceId,
           inbound ? (candidate.url ?? null) : originalUrl,
         );
-      } else if (!purged) this.enqueueProcessing("extract", prior.item_id, now);
+      } else if (!purged && !sourceTombstoned)
+        this.enqueueProcessing("extract", prior.item_id, now);
       this.insertChildren(candidate, sourceId, now, prior.item_id);
       if (changed || (owner && owner !== previousRef?.item_id))
         this.markGroupingDirty(prior.item_id, now);

@@ -40,6 +40,10 @@ const COLUMNS_BY_MIGRATION: { tag: string; columns: [string, string][] }[] = [
       ["content_versions", "purged_at"],
     ],
   },
+  {
+    tag: "0050_wandering_mandarin",
+    columns: [["content_versions", "text_fingerprint"]],
+  },
 ];
 
 /** Migrations in bundle order, read from the checked-in Drizzle journal. */

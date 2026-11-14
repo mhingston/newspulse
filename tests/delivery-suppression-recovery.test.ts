@@ -1,14 +1,6 @@
 import { expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import {
-  copyFileSync,
-  mkdirSync,
-  mkdtempSync,
-  readdirSync,
-  readFileSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -19,6 +11,7 @@ import { DeliveryStore } from "../src/db/delivery-store";
 import { DigestStore } from "../src/db/digest-store";
 import { DeliveryWorker, type DeliveryEmailProvider } from "../src/delivery";
 import { acquireDeliveryLock } from "../src/delivery-lock";
+import { migrationsBefore } from "./fixtures";
 
 const date = "2026-11-09";
 const recipient = "reader@example.test";
@@ -30,24 +23,7 @@ const cli = fileURLToPath(new URL("../src/cli.ts", import.meta.url));
 // pending outbox row for that edition. The backup is taken with VACUUM INTO
 // from the same connection so the WAL is folded in.
 function priorVersionBackup(dir: string): string {
-  const migrations = fileURLToPath(new URL("../drizzle/", import.meta.url));
-  const old = join(dir, "prior-migrations");
-  mkdirSync(join(old, "meta"), { recursive: true });
-  for (const file of readdirSync(migrations)) {
-    if (file.endsWith(".sql") && !/^004[789]_/.test(file))
-      copyFileSync(join(migrations, file), join(old, file));
-  }
-  const journal = JSON.parse(
-    readFileSync(join(migrations, "meta/_journal.json"), "utf8"),
-  );
-  journal.entries = journal.entries.filter(
-    (entry: { tag: string }) => !/^004[789]_/.test(entry.tag),
-  );
-  writeFileSync(join(old, "meta/_journal.json"), JSON.stringify(journal));
-  for (const file of readdirSync(join(migrations, "meta"))) {
-    if (file.endsWith("_snapshot.json") && !/^004[789]/.test(file))
-      copyFileSync(join(migrations, "meta", file), join(old, "meta", file));
-  }
+  const old = migrationsBefore(dir, 47);
   const db = new Database(join(dir, "prior.sqlite"), {
     create: true,
     strict: true,
