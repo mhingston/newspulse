@@ -1,0 +1,151 @@
+{
+  "version": 1,
+  "id": "synthetic-retrieval-v1",
+  "asOf": 1794000000000,
+  "items": [
+    {
+      "id": "llm-eval-post",
+      "title": "Benchmarking large language model agents with reproducible protocols",
+      "text": "A research group publishes reproducible evaluation protocols for large language model agents. The write-up covers task suites, grading rubrics, statistical uncertainty in reported accuracy and comparison with earlier evaluation harnesses.",
+      "sourceKind": "rss",
+      "publishedAt": 1793980000000,
+      "unavailable": false
+    },
+    {
+      "id": "llm-safety-post",
+      "title": "Language model red-team evaluation results",
+      "text": "Safety researchers report red-team evaluation results for a deployed language model. Their methodology documents attack prompts, refusal rate measurement, remediation follow-up and open review notes.",
+      "sourceKind": "rss",
+      "publishedAt": 1793970000000,
+      "unavailable": false
+    },
+    {
+      "id": "robot-benchmark-suite",
+      "title": "Robotics benchmark suite for manipulation tasks",
+      "text": "This benchmark suite measures manipulation tasks for robot arms. It documents standardized task variants, success metrics, baselines and per-hardware calibration so laboratories can compare results.",
+      "sourceKind": "rss",
+      "publishedAt": 1793960000000,
+      "unavailable": false
+    },
+    {
+      "id": "sbom-post",
+      "title": "Signed attestations for dependency supply chains",
+      "text": "An engineering team describes provenance attestations for their dependency supply chain: each build publishes signed software bill of materials metadata, so downstream users can verify component origins and revoke compromised artifacts.",
+      "sourceKind": "rss",
+      "publishedAt": 1793950000000,
+      "unavailable": false
+    },
+    {
+      "id": "scaling-laws-preprint",
+      "title": "Empirical scaling laws across modalities",
+      "text": "A preprint studies empirical scaling laws for model performance as parameters, data and training compute grow across text, vision and robotics modalities, with fitted curves and released measurement logs.",
+      "sourceKind": "manual",
+      "publishedAt": 1793900000000,
+      "unavailable": false
+    },
+    {
+      "id": "scaling-blog-tiein",
+      "title": "What training compute budgets mean for robot learning",
+      "text": "An engineering blog connects recent power-law performance research to robot learning practice: fixed training compute budgets, data efficiency trade-offs and why curriculum changes can beat additional parameters.",
+      "sourceKind": "rss",
+      "publishedAt": 1793890000000,
+      "unavailable": false
+    },
+    {
+      "id": "atlas-2-announcement-old",
+      "title": "Acme announces Atlas 2 controller",
+      "text": "Acme announces the Atlas 2 controller with safety self-tests and factory calibration. Early adopter laboratories report stable operation under load.",
+      "sourceKind": "rss",
+      "publishedAt": 1710000000000,
+      "unavailable": false
+    },
+    {
+      "id": "atlas-recall-2024",
+      "title": "Acme recalls Atlas 2 controllers",
+      "text": "Acme recalls the Atlas 2 controller after a safety defect in its actuator watchdog. The advisory documents affected serial ranges, remediation steps and a firmware replacement recall history.",
+      "sourceKind": "rss",
+      "publishedAt": 1738000000000,
+      "unavailable": false
+    },
+    {
+      "id": "atlas-release-2026",
+      "title": "Acme ships Atlas 3 controller with added safety redundancy",
+      "text": "The Atlas 3 controller ships with hardware safety redundancy and a documented remediation bulletin covering earlier recalls. Acme publishes migration guidance for laboratories upgrading controllers.",
+      "sourceKind": "rss",
+      "publishedAt": 1793900000000,
+      "unavailable": false
+    },
+    {
+      "id": "quant-post",
+      "title": "Serving a classifier on constrained hardware",
+      "text": "This write-up evaluates 4-bit weight compression for on-device inference latency, accuracy trade-offs and energy cost on constrained hardware.",
+      "sourceKind": "rss",
+      "publishedAt": 1793840000000,
+      "unavailable": false
+    },
+    {
+      "id": "benchmark-paper",
+      "title": "Reproducible evaluation protocols for robot perception benchmarks",
+      "text": "A peer-reviewed paper proposes reproducible evaluation protocols for robot perception benchmarks, including dataset versioning, metric definitions and uncertainty reporting.",
+      "sourceKind": "manual",
+      "publishedAt": 1793800000000,
+      "unavailable": false
+    },
+    {
+      "id": "sim2real-paper",
+      "title": "Sim-to-real transfer evaluation for robot learning",
+      "text": "The paper evaluates sim-to-real transfer for robot learning policies and reports protocol details, randomization ranges and field comparisons.",
+      "sourceKind": "manual",
+      "publishedAt": 1793790000000,
+      "unavailable": false
+    },
+    {
+      "id": "orion-workshop",
+      "title": "Orion 3 community workshop recap",
+      "text": "A community workshop recap collects speculation and notes about the Orion 3 controller, including unverified claims and slides posted by attendees.",
+      "sourceKind": "hackernews",
+      "publishedAt": 1793950000000,
+      "unavailable": false
+    },
+    {
+      "id": "paywalled-unavailable",
+      "title": "Untitled received item",
+      "text": "",
+      "sourceKind": "inbound",
+      "publishedAt": null,
+      "unavailable": true
+    },
+    {
+      "id": "fashion-drop",
+      "title": "Seasonal fashion collection drop",
+      "text": "A retailer announces a seasonal clothing collection with limited runs.",
+      "sourceKind": "rss",
+      "publishedAt": 1793990000000,
+      "unavailable": false
+    },
+    {
+      "id": "ad-campaign",
+      "title": "Advertising campaign for a household gadget",
+      "text": "A marketing campaign promotes a household gadget without technical detail.",
+      "sourceKind": "rss",
+      "publishedAt": 1793990000000,
+      "unavailable": false
+    },
+    {
+      "id": "bakery-post",
+      "title": "Neighborhood bakery opens second location",
+      "text": "Local news reports a bakery opening a second storefront downtown.",
+      "sourceKind": "rss",
+      "publishedAt": 1793990000000,
+      "unavailable": false
+    },
+    {
+      "id": "community-bulletin",
+      "title": "Community bulletin for local updates",
+      "text": "A community bulletin collects local updates, event notices and meeting times.",
+      "sourceKind": "rss",
+      "publishedAt": 1793990000000,
+      "unavailable": false
+    }
+  ]
+}

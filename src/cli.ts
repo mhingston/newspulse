@@ -69,11 +69,23 @@ import {
   copyFileSync,
   existsSync,
   mkdirSync,
+  mkdtempSync,
   rmSync,
 } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join, resolve } from "node:path";
 import { verifyDatabase } from "./recovery";
 import { retentionPolicy } from "./retention";
-import { dirname, resolve } from "node:path";
+import {
+  evaluateRetrievalGaps,
+  retrievalCorpusSchema,
+  retrievalQueriesSchema,
+  type RetrievalSolver,
+} from "./retrieval-evaluation";
+import {
+  createRetrievalFtsDatabase,
+  measureIndexFootprint,
+} from "./retrieval-fts";
 import {
   compareEvaluations,
   evaluateCorpus,
@@ -122,6 +134,57 @@ async function main() {
           deterministic: false,
         }),
       );
+    return;
+  }
+  if (command === "evaluate-retrieval") {
+    const corpusInput: unknown = JSON.parse(
+      await Bun.file(required(0, "retrieval corpus JSON path")).text(),
+    );
+    const queryInput: unknown = JSON.parse(
+      await Bun.file(required(1, "retrieval queries JSON path")).text(),
+    );
+    const corpus = retrievalCorpusSchema.parse(corpusInput);
+    const queries = retrievalQueriesSchema.parse(queryInput);
+    const dir = mkdtempSync(join(tmpdir(), "retrieval-eval-"));
+    try {
+      const fts = createRetrievalFtsDatabase(corpus);
+      const timing = new Map<string, number[]>();
+      const report = evaluateRetrievalGaps(
+        corpus,
+        queries,
+        (strategyId) => (match, filters, k) => {
+          const started = performance.now();
+          const ids = fts.search(match, filters, k);
+          const elapsed = performance.now() - started;
+          timing.set(strategyId, [...(timing.get(strategyId) ?? []), elapsed]);
+          return ids;
+        },
+        measureIndexFootprint(corpus, dir),
+      );
+      fts.db.close();
+      console.log(JSON.stringify(report, null, 2));
+      if (args.includes("--timing"))
+        console.error(
+          JSON.stringify(
+            {
+              scope: "offline in-process FTS replay",
+              deterministic: false,
+              perStrategyMeanMs: Object.fromEntries(
+                [...timing].map(([id, samples]) => [
+                  id,
+                  samples.reduce((sum, sample) => sum + sample, 0) /
+                    samples.length,
+                ]),
+              ),
+              perStrategySamplesMs: Object.fromEntries([...timing]),
+            },
+            null,
+            2,
+          ),
+        );
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
     return;
   }
   if (command === "verify-backup") {
@@ -900,7 +963,7 @@ async function main() {
       }
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|retention-preview|retention-apply|verify-backup|delivery-list|delivery-suppress-preview EDITION_DATE RECIPIENT PROVIDER_ID|delivery-suppress-confirm EDITION_DATE RECIPIENT PROVIDER_ID AS_OF HASH|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|retention-preview|retention-apply|verify-backup|delivery-list|delivery-suppress-preview EDITION_DATE RECIPIENT PROVIDER_ID|delivery-suppress-confirm EDITION_DATE RECIPIENT PROVIDER_ID AS_OF HASH|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-retrieval CORPUS QUERIES [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {

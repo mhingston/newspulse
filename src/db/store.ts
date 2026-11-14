@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import { StoryStore } from "./story-store";
+import { buildQueryMatch, searchTerms } from "../search-matching";
 import { deliveryHistory, relatedDeliveryHistory } from "./delivery-history";
 import { createHash } from "node:crypto";
 import {
@@ -1742,12 +1743,9 @@ export class Store {
       analysisStatus?: string;
     } = {},
   ): Item[] {
-    const terms = query.match(/[\p{L}\p{N}_]+/gu) ?? [];
+    const terms = searchTerms(query);
     if (!terms.length) return [];
-    const match = terms
-      .slice(0, 30)
-      .map((x) => '"' + x + '"')
-      .join(" AND ");
+    const match = buildQueryMatch(terms);
     return this.sqlite
       .query<
         Item,

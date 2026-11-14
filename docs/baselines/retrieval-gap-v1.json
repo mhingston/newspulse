@@ -1,0 +1,2425 @@
+{
+  "corpus": {
+    "id": "synthetic-retrieval-v1",
+    "version": 1,
+    "asOf": 1794000000000,
+    "items": 18,
+    "hash": "cfc8f5d2d374fb67aa3b4cb16de7d894418a06ec8202758059960509aa0e9e4f"
+  },
+  "queries": {
+    "id": "synthetic-retrieval-v1",
+    "version": 1,
+    "k": 5,
+    "count": 9,
+    "hash": "f3de95343a2349b87d7ec79d332ae80f0d3f4db1d3b326a5546bb85b291a422a"
+  },
+  "config": {
+    "matchFlavor": "fts5",
+    "tokenizer": "unicode61-default",
+    "strategyIds": [
+      "and-quoted",
+      "or-quoted",
+      "and-prefix",
+      "or-prefix",
+      "and-group-synonyms",
+      "and-prefix-group-synonyms"
+    ],
+    "synonymVersion": "retrieval-synonyms-v1",
+    "synonymTableBytes": 237
+  },
+  "index": {
+    "itemsOnlyBytes": 20480,
+    "ftsBytes": 45056,
+    "ftsOverheadBytes": 24576
+  },
+  "candidates": [
+    {
+      "strategyId": "and-quoted",
+      "filters": "none",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 2,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 3,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 3,
+            "value": 0.3333333333333333,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 5,
+        "denominator": 13,
+        "value": 0.38461538461538464,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 5,
+        "denominator": 8,
+        "value": 0.625,
+        "unknown": 4
+      },
+      "zeroResultQueryIds": [
+        "q-vocab-llm",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-unavailable-litigation"
+      ],
+      "fullRecallQueryIds": ["q-direct-robotics", "q-atlas-window"]
+    },
+    {
+      "strategyId": "and-quoted",
+      "filters": "recorded",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 5,
+        "denominator": 13,
+        "value": 0.38461538461538464,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 5,
+        "denominator": 5,
+        "value": 1,
+        "unknown": 4
+      },
+      "zeroResultQueryIds": [
+        "q-vocab-llm",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-unavailable-litigation"
+      ],
+      "fullRecallQueryIds": ["q-direct-robotics", "q-atlas-window"]
+    },
+    {
+      "strategyId": "or-quoted",
+      "filters": "none",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 5,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 5,
+            "value": 0.2,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 4,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 4,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 5,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 5,
+            "value": 0.4,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 4,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 4,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 4,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 4,
+            "value": 0.25,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 12,
+        "denominator": 13,
+        "value": 0.9230769230769231,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 12,
+        "denominator": 26,
+        "value": 0.46153846153846156,
+        "unknown": 1
+      },
+      "zeroResultQueryIds": ["q-unavailable-litigation"],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-vocab-llm",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-connect-scaling",
+        "q-history-atlas",
+        "q-papers-protocols",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "or-quoted",
+      "filters": "recorded",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 5,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 5,
+            "value": 0.2,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 4,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 4,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 5,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 5,
+            "value": 0.4,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 12,
+        "denominator": 13,
+        "value": 0.9230769230769231,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 12,
+        "denominator": 21,
+        "value": 0.5714285714285714,
+        "unknown": 1
+      },
+      "zeroResultQueryIds": ["q-unavailable-litigation"],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-vocab-llm",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-connect-scaling",
+        "q-history-atlas",
+        "q-papers-protocols",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "and-prefix",
+      "filters": "none",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 2,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 3,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 3,
+            "value": 0.3333333333333333,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 6,
+        "denominator": 13,
+        "value": 0.46153846153846156,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 6,
+        "denominator": 9,
+        "value": 0.6666666666666666,
+        "unknown": 4
+      },
+      "zeroResultQueryIds": [
+        "q-vocab-llm",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-unavailable-litigation"
+      ],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-history-atlas",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "and-prefix",
+      "filters": "recorded",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 2,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 6,
+        "denominator": 13,
+        "value": 0.46153846153846156,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 6,
+        "denominator": 6,
+        "value": 1,
+        "unknown": 4
+      },
+      "zeroResultQueryIds": [
+        "q-vocab-llm",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-unavailable-litigation"
+      ],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-history-atlas",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "or-prefix",
+      "filters": "none",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 5,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 5,
+            "value": 0.2,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 4,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 4,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 5,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 5,
+            "value": 0.4,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 4,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 4,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 4,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 4,
+            "value": 0.25,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 12,
+        "denominator": 13,
+        "value": 0.9230769230769231,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 12,
+        "denominator": 26,
+        "value": 0.46153846153846156,
+        "unknown": 1
+      },
+      "zeroResultQueryIds": ["q-unavailable-litigation"],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-vocab-llm",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-connect-scaling",
+        "q-history-atlas",
+        "q-papers-protocols",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "or-prefix",
+      "filters": "recorded",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 5,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 5,
+            "value": 0.2,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 4,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 4,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 5,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 5,
+            "value": 0.4,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 12,
+        "denominator": 13,
+        "value": 0.9230769230769231,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 12,
+        "denominator": 21,
+        "value": 0.5714285714285714,
+        "unknown": 1
+      },
+      "zeroResultQueryIds": ["q-unavailable-litigation"],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-vocab-llm",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-connect-scaling",
+        "q-history-atlas",
+        "q-papers-protocols",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "and-group-synonyms",
+      "filters": "none",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 2,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 3,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 3,
+            "value": 0.3333333333333333,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 8,
+        "denominator": 13,
+        "value": 0.6153846153846154,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 8,
+        "denominator": 11,
+        "value": 0.7272727272727273,
+        "unknown": 1
+      },
+      "zeroResultQueryIds": ["q-unavailable-litigation"],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "and-group-synonyms",
+      "filters": "recorded",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 8,
+        "denominator": 13,
+        "value": 0.6153846153846154,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 8,
+        "denominator": 8,
+        "value": 1,
+        "unknown": 1
+      },
+      "zeroResultQueryIds": ["q-unavailable-litigation"],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "and-prefix-group-synonyms",
+      "filters": "none",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 2,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 3,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 3,
+            "value": 0.3333333333333333,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 9,
+        "denominator": 13,
+        "value": 0.6923076923076923,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 9,
+        "denominator": 12,
+        "value": 0.75,
+        "unknown": 1
+      },
+      "zeroResultQueryIds": ["q-unavailable-litigation"],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-history-atlas",
+        "q-atlas-window"
+      ]
+    },
+    {
+      "strategyId": "and-prefix-group-synonyms",
+      "filters": "recorded",
+      "perQuery": [
+        {
+          "queryId": "q-direct-robotics",
+          "scenario": "control",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-llm",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-quant",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-vocab-sbom",
+          "scenario": "vocabulary-mismatch",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-connect-scaling",
+          "scenario": "paper-connection",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-history-atlas",
+          "scenario": "historical-development",
+          "retrievedCount": 2,
+          "relevantRetrieved": 2,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 2,
+            "denominator": 2,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-unavailable-litigation",
+          "scenario": "unavailable-content",
+          "retrievedCount": 0,
+          "relevantRetrieved": 0,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 0,
+            "denominator": 1,
+            "value": 0,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 0,
+            "denominator": 0,
+            "value": null,
+            "unknown": 1
+          }
+        },
+        {
+          "queryId": "q-papers-protocols",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 2,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 2,
+            "value": 0.5,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        },
+        {
+          "queryId": "q-atlas-window",
+          "scenario": "metadata-filter",
+          "retrievedCount": 1,
+          "relevantRetrieved": 1,
+          "relevantTotal": 1,
+          "recallAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          },
+          "precisionAtK": {
+            "numerator": 1,
+            "denominator": 1,
+            "value": 1,
+            "unknown": 0
+          }
+        }
+      ],
+      "recallAtK": {
+        "numerator": 9,
+        "denominator": 13,
+        "value": 0.6923076923076923,
+        "unknown": 0
+      },
+      "precisionAtK": {
+        "numerator": 9,
+        "denominator": 9,
+        "value": 1,
+        "unknown": 1
+      },
+      "zeroResultQueryIds": ["q-unavailable-litigation"],
+      "fullRecallQueryIds": [
+        "q-direct-robotics",
+        "q-vocab-quant",
+        "q-vocab-sbom",
+        "q-history-atlas",
+        "q-atlas-window"
+      ]
+    }
+  ],
+  "unavailableContentGaps": {
+    "queryIds": ["q-unavailable-litigation"],
+    "explanation": "Unavailable content has no indexed text; keyword strategies cannot retrieve it and the gap is recorded rather than hidden."
+  },
+  "usage": {
+    "providerCalls": 0,
+    "cost": null
+  },
+  "latencyMs": null,
+  "latencyReason": "No timing observation recorded; elapsed time is environment-dependent and excluded from deterministic replay."
+}
