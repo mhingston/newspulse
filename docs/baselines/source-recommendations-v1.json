@@ -1,25 +1,34 @@
 {
-  "generator": "source-recommendation-evaluation-v1",
-  "algorithmVersion": "source-suggestions-v1",
+  "generator": "source-recommendation-evaluation-v2",
+  "algorithmVersion": "source-suggestions-v2",
   "corpus": {
-    "id": "source-recommendation-corpus-v1",
-    "version": 1,
+    "id": "source-recommendation-corpus-v2",
+    "version": 2,
     "asOf": 1797000000000,
-    "items": 30,
-    "hash": "0f12e9e0b30d738da87f7b1b5439a8d86abbd3e5c19795990f9b495e55bbf613"
+    "items": 36,
+    "heldoutItems": 6,
+    "hash": "c422507ab051154ac359502c86efbb22dcfd9a2431abf735e9986dc55607c14d"
   },
   "config": {
     "windowDays": 60,
     "minItems": 3,
     "minUseful": 1,
-    "proposeThreshold": 30,
-    "suggestionLimit": 10
+    "proposeThreshold": 30
   },
   "baseline": {
     "subscribedDomains": ["subscribe.example"],
-    "relevantItems": 2,
-    "distinctDomainsOfRelevantItems": 1,
-    "developmentsCovered": ["robotics benchmarks", "supply-chain attestations"]
+    "relevantItems": 10,
+    "distinctDomainsOfRelevantItems": 5,
+    "developmentsCovered": [
+      "agent eval harness",
+      "build tooling",
+      "hardware bring-up",
+      "linter supply chain",
+      "post-quantum rollouts",
+      "reproducible CI",
+      "robotics benchmarks",
+      "supply-chain attestations"
+    ]
   },
   "metrics": {
     "proposedSuggestions": 3,
@@ -38,38 +47,31 @@
     ],
     "developmentRecall": {
       "baseline": {
-        "numerator": 2,
-        "denominator": 8,
-        "value": 0.25
+        "numerator": 8,
+        "denominator": 11,
+        "value": 0.7272727272727273
       },
       "withSuggestions": {
-        "numerator": 8,
-        "denominator": 8,
-        "value": 1
+        "numerator": 10,
+        "denominator": 11,
+        "value": 0.9090909090909091
       },
       "lift": {
-        "numerator": 6,
-        "denominator": 8,
-        "value": 0.75
+        "numerator": 2,
+        "denominator": 11,
+        "value": 0.18181818181818177
       },
-      "newlyCovered": [
-        "agent eval harness",
-        "build tooling",
-        "hardware bring-up",
-        "linter supply chain",
-        "post-quantum rollouts",
-        "reproducible CI"
-      ],
-      "stillUncovered": []
+      "newlyCovered": ["coverage-guided fuzzing", "flaky-test triage"],
+      "stillUncovered": ["celebrity gossip"]
     },
     "novelty": {
-      "newlyCoveredDevelopments": 6,
-      "totalDevelopments": 8,
-      "value": 0.75
+      "newlyCoveredDevelopments": 2,
+      "totalDevelopments": 11,
+      "value": 0.18181818181818182
     },
     "diversity": {
-      "baselineDistinctDomains": 1,
-      "withSuggestionsDistinctDomains": 4
+      "baselineDistinctDomains": 5,
+      "withSuggestionsDistinctDomains": 5
     }
   },
   "cost": {
@@ -82,16 +84,17 @@
       "suggestionLift>0:true",
       "falsePositives<proposedSuggestions:true"
     ],
-    "evidence": "Measured lift 1.000 - 0.250 is positive on the labeled fixture, with 1 recorded false-positive proposal(s) listed for review; supports adopting the opt-in suggestion slice with explicit accept/dismiss/mute."
+    "evidence": "Measured held-out incremental development recall 0.727 -> 0.909 (lift +0.182) on the labeled fixture, with 1 recorded false-positive proposal(s) listed for review; supports adopting the opt-in suggestion slice with explicit accept/dismiss/mute."
   },
   "limitations": [
     "The corpus is synthetic and small; metrics are regression evidence, not a real-world quality estimate.",
+    "The baseline arm includes all labeled developments already reachable via subscriptions and recorded discoveries; only genuinely incremental held-out coverage counts toward the lift.",
     "Only explicitly labeled domains and items are measured; unknown labels are reported, never treated as negative.",
-    "Suggestion generation spends no budget: it reads rows already recorded by existing discovery runs.",
+    "Suggestion generation spends no budget: it reads rows already recorded by existing discovery runs and extraction fetches.",
     "Real-world suggestion usefulness against the live baseline is unknown."
   ],
   "run": {
-    "algorithmVersion": "source-suggestions-v1",
+    "algorithmVersion": "source-suggestions-v2",
     "generatedAt": 1797000000000,
     "scanned": {
       "discoveryResults": 40,
@@ -104,7 +107,7 @@
         "id": "domain:signal-press.example",
         "kind": "domain",
         "domain": "signal-press.example",
-        "url": "https://signal-press.example/feed.xml",
+        "url": "https://signal-press.example/feeds/index.rss",
         "title": "signal-press.example",
         "score": 73,
         "stats": {
@@ -147,24 +150,16 @@
         ],
         "feedCandidates": [
           {
-            "url": "https://signal-press.example/feed.xml",
+            "url": "https://signal-press.example/feeds/index.rss",
             "provenance": "link-element"
-          },
-          {
-            "url": "https://signal-press.example/feed/",
-            "provenance": "url-pattern"
-          },
-          {
-            "url": "https://signal-press.example/feed",
-            "provenance": "url-pattern"
           }
         ],
         "limitations": [
           "Coverage is limited to what recorded discovery runs already retrieved; no claim of full publisher coverage.",
-          "Some feed URLs are conservative pattern guesses; they were never fetched and are re-validated at accept time.",
+          "Feed URLs come from link elements captured during recorded extraction; they were not fetched here and are re-validated at accept time.",
           "Suggestions never subscribe: accepting is an explicit operator action through existing source management."
         ],
-        "algorithmVersion": "source-suggestions-v1"
+        "algorithmVersion": "source-suggestions-v2"
       },
       {
         "id": "domain:field-notes.example",
@@ -230,7 +225,7 @@
           "Some feed URLs are conservative pattern guesses; they were never fetched and are re-validated at accept time.",
           "Suggestions never subscribe: accepting is an explicit operator action through existing source management."
         ],
-        "algorithmVersion": "source-suggestions-v1"
+        "algorithmVersion": "source-suggestions-v2"
       },
       {
         "id": "domain:mixed-review.example",
@@ -296,9 +291,12 @@
           "Some feed URLs are conservative pattern guesses; they were never fetched and are re-validated at accept time.",
           "Suggestions never subscribe: accepting is an explicit operator action through existing source management."
         ],
-        "algorithmVersion": "source-suggestions-v1"
+        "algorithmVersion": "source-suggestions-v2"
       }
     ],
+    "suppressed": [],
+    "expired": [],
+    "pendingBeyondLimit": [],
     "skipped": [
       {
         "domain": "chatter-mill.example",

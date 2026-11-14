@@ -2,7 +2,12 @@ import type { Database } from "bun:sqlite";
 import type { SourceSuggestion } from "../source-suggestions";
 
 export type SourceSuggestionState =
-  "proposed" | "accepted" | "dismissed" | "muted";
+  | "proposed"
+  | "accepted"
+  | "dismissed"
+  | "muted"
+  /** System-managed: previously proposed, no longer qualifying on refresh. */
+  | "expired";
 
 export interface SourceSuggestionRecord extends SourceSuggestion {
   state: SourceSuggestionState;
@@ -23,9 +28,10 @@ const states: ReadonlySet<string> = new Set([
   "accepted",
   "dismissed",
   "muted",
+  "expired",
 ]);
 
-function parseExploration(explanation: string): SourceSuggestion {
+function parseExplanation(explanation: string): SourceSuggestion {
   return JSON.parse(explanation) as SourceSuggestion;
 }
 
@@ -37,7 +43,12 @@ function parseExploration(explanation: string): SourceSuggestion {
 export class SourceSuggestionStore {
   constructor(private readonly db: Database) {}
 
-  /** Insert or refresh suggestions; ordered deterministically by caller. */
+  /**
+   * Insert or refresh suggestions, ordered deterministically by caller.
+   * Election of proposed/terminal states is untouched: terminal operator
+   * decisions are preserved, and `expired` rows are renewed to `proposed`
+   * only by refreshSourceSuggestions.
+   */
   upsert(
     suggestions: readonly SourceSuggestion[],
     now: number,
@@ -75,7 +86,7 @@ export class SourceSuggestionStore {
           now,
         );
         if (previous) {
-          const before = parseExploration(previous.explanation);
+          const before = parseExplanation(previous.explanation);
           // Evidence refresh is only a change when content actually moved,
           // so regeneration replay stays idempotent end to end.
           if (JSON.stringify(before) !== JSON.stringify(suggestion))
@@ -111,62 +122,86 @@ export class SourceSuggestionStore {
   }
 
   /**
-   * Apply an explicit state decision. Transitions are idempotent: repeating
-   * the current decision changes nothing and records no extra event. Accepting
-   * a dismissed suggestion is allowed; a muted suggestion must be unmuted
-   * explicitly so a muted suggestion can never be silently followed.
+   * Apply an explicit state decision. The read, the guards and the
+   * state/audit writes run in one immediate transaction, so concurrent
+   * commands serialize on the write lock: a replay of the current decision
+   * changes nothing and records no event, and a stale command re-reads the
+   * committed state inside the transaction instead of overwriting a newer
+   * decision. Allowed transitions:
+   * - proposed → accepted | dismissed | muted
+   * - accepted → muted (only; the source link is cleared)
+   * - dismissed → proposed | accepted | muted
+   * - muted → proposed | dismissed
+   * - expired → proposed | dismissed | muted
+   * Note: renewal out of `expired` is a system action taken by
+   * refreshSourceSuggestions; every transition stays audited.
    */
   setState(
     id: string,
-    to: Exclude<SourceSuggestionState, "proposed"> | "proposed",
+    to: SourceSuggestionState,
     now: number,
     acceptedSourceId?: string,
   ): StateChange {
-    const current = this.get(id);
-    if (!current) throw new Error("Unknown source suggestion");
-    if (!states.has(to)) throw new Error("Invalid suggestion state");
-    if (current.state === to) {
-      if (
-        to === "accepted" &&
-        acceptedSourceId &&
-        current.acceptedSourceId !== acceptedSourceId
-      )
-        throw new Error("Accepted suggestion cannot change sources");
-      return {
-        state: current.state,
-        changed: false,
-        acceptedSourceId: current.acceptedSourceId,
-      };
-    }
-    if (current.state === "accepted" && to !== "muted")
-      throw new Error(
-        "Accepted suggestion cannot be re-decided except to mute",
-      );
-    if (current.state === "muted" && to === "accepted")
-      throw new Error("Muted suggestion cannot be accepted");
-    this.db.transaction(() => {
-      const from = current.state;
-      this.db
-        .query(
-          "UPDATE source_suggestions SET state=?, accepted_source_id=?, updated_at=? WHERE id=?",
-        )
-        .run(
-          to,
-          to === "accepted" ? (acceptedSourceId ?? null) : null,
-          now,
-          id,
-        );
-      this.db
-        .query(
-          "INSERT INTO source_suggestion_events(suggestion_id,from_state,to_state,at) VALUES(?,?,?,?)",
-        )
-        .run(id, from, to, now);
-    })();
-    return {
-      state: to,
-      changed: true,
-      acceptedSourceId: to === "accepted" ? (acceptedSourceId ?? null) : null,
-    };
+    return this.db
+      .transaction((): StateChange => {
+        const current = this.get(id);
+        if (!current) throw new Error("Unknown source suggestion");
+        if (!states.has(to)) throw new Error("Invalid suggestion state");
+        if (current.state === to) {
+          if (
+            to === "accepted" &&
+            acceptedSourceId &&
+            current.acceptedSourceId !== acceptedSourceId
+          )
+            throw new Error("Accepted suggestion cannot change sources");
+          return {
+            state: current.state,
+            changed: false,
+            acceptedSourceId: current.acceptedSourceId,
+          };
+        }
+        if (current.state === "accepted")
+          throw new Error(
+            "Accepted suggestion cannot be re-decided except to mute",
+          );
+        if (current.state === "muted" && to === "accepted")
+          throw new Error("Muted suggestion cannot be accepted");
+        if (current.state === "expired" && to === "accepted")
+          throw new Error(
+            "Expired suggestion cannot be accepted; regenerate suggestions first",
+          );
+        this.db
+          .query(
+            "UPDATE source_suggestions SET state=?, accepted_source_id=?, updated_at=? WHERE id=?",
+          )
+          .run(
+            to,
+            to === "accepted" ? (acceptedSourceId ?? null) : null,
+            now,
+            id,
+          );
+        this.db
+          .query(
+            "INSERT INTO source_suggestion_events(suggestion_id,from_state,to_state,at) VALUES(?,?,?,?)",
+          )
+          .run(id, current.state, to, now);
+        return {
+          state: to,
+          changed: true,
+          acceptedSourceId:
+            to === "accepted" ? (acceptedSourceId ?? null) : null,
+        };
+      })
+      .immediate();
+  }
+
+  /**
+   * System-managed reconciliation: mark a proposed suggestion expired when it
+   * no longer qualifies, or renew an expired one with fresh evidence. Unlike
+   * an operator dismissal this is reversible and audited.
+   */
+  reconcile(id: string, to: "proposed" | "expired", now: number): StateChange {
+    return this.setState(id, to, now);
   }
 }
 
@@ -187,7 +222,7 @@ interface Row {
 function hydrate(row: Row): SourceSuggestionRecord {
   if (!states.has(row.state)) throw new Error("Corrupt suggestion state");
   return {
-    ...parseExploration(row.explanation),
+    ...parseExplanation(row.explanation),
     // Persisted columns win over stale captured JSON.
     id: row.id,
     kind: row.kind as SourceSuggestion["kind"],

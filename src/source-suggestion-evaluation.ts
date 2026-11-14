@@ -3,19 +3,21 @@ import { z } from "zod";
 import { Store } from "./db/store";
 import {
   SOURCE_SUGGESTION_ALGORITHM_VERSION,
-  generateSourceSuggestions,
+  refreshSourceSuggestions,
   type SuggestionRun,
 } from "./source-suggestions";
 
 /**
- * Offline evaluation of source-suggestion quality versus the item-level
+ * Offline evaluation of source-suggestion usefulness versus the item-level
  * discovery baseline (issue #33). The corpus is a synthetic regression
- * fixture: it exercises the shipped aggregation pipeline over a throwaway
- * database populated from recorded-provenance shapes, never contacts a
- * provider, and reports unknown values as unknown, never zero.
+ * fixture: recorded provenance (subscriptions plus prior discoveries) forms
+ * the baseline arm; labeled held-out subsequent items from candidate
+ * publishers measure incremental coverage. The shipped aggregation pipeline
+ * runs unchanged over a throwaway database — no provider calls — and
+ * unknown values are reported as unknown, never zero.
  */
 export const SOURCE_RECOMMENDATION_EVALUATION_VERSION =
-  "source-recommendation-evaluation-v1";
+  "source-recommendation-evaluation-v2";
 
 const itemSchema = z.strictObject({
   id: z.string().min(1).max(200),
@@ -28,10 +30,16 @@ const itemSchema = z.strictObject({
   unavailable: z.boolean().optional(),
   feedback: z.enum(["useful", "not_useful"]).optional(),
   feedbackAt: z.number().int().safe().optional(),
-  feedHtml: z.string().max(20_000).optional(),
+  /** Feed links recorded by extraction job results (captured at fetch time). */
+  extractionFeedLinks: z.array(z.string().min(1).max(8192)).max(20).optional(),
   discovered: z.boolean().optional(),
   repeatedResults: z.number().int().min(1).max(50).optional(),
   subscribed: z.boolean().optional(),
+  /**
+   * A held-out subsequent item: only reachable through the suggested source,
+   * not part of recorded provenance, so never in the baseline arm.
+   */
+  heldout: z.boolean().optional(),
 });
 
 export const sourceRecommendationCorpusSchema = z
@@ -66,83 +74,13 @@ export type SourceRecommendationCorpus = z.infer<
   typeof sourceRecommendationCorpusSchema
 >;
 
-export interface SourceRecommendationReport {
-  generator: string;
-  algorithmVersion: string;
-  corpus: {
-    id: string;
-    version: number;
-    asOf: number;
-    items: number;
-    hash: string;
-  };
-  config: {
-    windowDays: number;
-    minItems: number;
-    minUseful: number;
-    proposeThreshold: number;
-    suggestionLimit: number;
-  };
-  baseline: {
-    subscribedDomains: string[];
-    relevantItems: number;
-    distinctDomainsOfRelevantItems: number;
-    developmentsCovered: string[];
-  };
-  metrics: {
-    proposedSuggestions: number;
-    labeledProposals: number;
-    unknownLabelProposals: number;
-    suggestionPrecision: {
-      numerator: number;
-      denominator: number;
-      value: number | null;
-    };
-    falsePositives: { domain: string; label: string }[];
-    developmentRecall: {
-      baseline: {
-        numerator: number;
-        denominator: number;
-        value: number | null;
-      };
-      withSuggestions: {
-        numerator: number;
-        denominator: number;
-        value: number | null;
-      };
-      lift: { numerator: number; denominator: number; value: number | null };
-      newlyCovered: string[];
-      stillUncovered: string[];
-    };
-    novelty: {
-      newlyCoveredDevelopments: number;
-      totalDevelopments: number;
-      value: number | null;
-    };
-    diversity: {
-      baselineDistinctDomains: number;
-      withSuggestionsDistinctDomains: number;
-    };
-  };
-  cost: {
-    /** Deterministic generation reads recorded rows only; no provider calls. */
-    suggestionCostMicros: number;
-    recordedDiscoveryCostMicros: number;
-    realWorldCost: "unknown";
-  };
-  decisions: {
-    gate: string[];
-    evidence: string;
-  };
-  limitations: string[];
-  run: SuggestionRun;
-}
-
 /** Populate a throwaway database with the corpus's recorded provenance shape. */
 export function createSourceSuggestionDatabase(
   corpus: SourceRecommendationCorpus,
+  /** Optional on-disk path; defaults to a throwaway in-memory database. */
+  path: string = ":memory:",
 ): Store {
-  const store = new Store(":memory:");
+  const store = new Store(path);
   const db = store.sqlite;
   db.transaction(() => {
     db.query(
@@ -164,8 +102,8 @@ export function createSourceSuggestionDatabase(
     const insertUnavailable = db.query(
       "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,attempts,available_at,queued_at,created_at) VALUES(?,?,'extract',1,'done','unavailable',0,?,?,?)",
     );
-    const insertContent = db.query(
-      "INSERT INTO content(item_id,text) VALUES(?,?)",
+    const insertExtracted = db.query(
+      "INSERT INTO processing_jobs(id,item_id,stage,generation,status,outcome,attempts,available_at,queued_at,created_at,result) VALUES(?,?,'extract',1,'done','extracted',0,?,?,?,?)",
     );
 
     db.query(
@@ -177,7 +115,6 @@ export function createSourceSuggestionDatabase(
 
     for (const item of corpus.items) {
       const ingestedAt = item.ingestedAt ?? item.publishedAt;
-      const domainKind = item.subscribed ? "subscribed" : `eval:${item.id}`;
       const sourceId = item.subscribed
         ? "src-subscribed"
         : `manual:eval${item.id.replace(/-/g, "").slice(0, 10)}`;
@@ -223,7 +160,20 @@ export function createSourceSuggestionDatabase(
           item.publishedAt,
           item.publishedAt,
         );
-      if (item.feedHtml) insertContent.run(item.id, item.feedHtml);
+      if (item.extractionFeedLinks)
+        insertExtracted.run(
+          `job-${item.id}`,
+          item.id,
+          item.publishedAt,
+          item.publishedAt,
+          item.publishedAt,
+          JSON.stringify({
+            status: "extracted",
+            text: "",
+            method: "http",
+            feedLinks: item.extractionFeedLinks,
+          }),
+        );
     }
   })();
   return store;
@@ -251,26 +201,99 @@ function corpusHash(corpus: SourceRecommendationCorpus): string {
   return createHash("sha256").update(JSON.stringify(corpus)).digest("hex");
 }
 
+export interface SourceRecommendationReport {
+  generator: string;
+  algorithmVersion: string;
+  corpus: {
+    id: string;
+    version: number;
+    asOf: number;
+    items: number;
+    heldoutItems: number;
+    hash: string;
+  };
+  config: {
+    windowDays: number;
+    minItems: number;
+    minUseful: number;
+    proposeThreshold: number;
+  };
+  baseline: {
+    subscribedDomains: string[];
+    relevantItems: number;
+    distinctDomainsOfRelevantItems: number;
+    developmentsCovered: string[];
+  };
+  metrics: {
+    proposedSuggestions: number;
+    labeledProposals: number;
+    unknownLabelProposals: number;
+    suggestionPrecision: {
+      numerator: number;
+      denominator: number;
+      value: number | null;
+    };
+    falsePositives: { domain: string; label: string; reason?: string }[];
+    developmentRecall: {
+      baseline: {
+        numerator: number;
+        denominator: number;
+        value: number | null;
+      };
+      withSuggestions: {
+        numerator: number;
+        denominator: number;
+        value: number | null;
+      };
+      lift: { numerator: number; denominator: number; value: number | null };
+      newlyCovered: string[];
+      stillUncovered: string[];
+    };
+    novelty: {
+      newlyCoveredDevelopments: number;
+      totalDevelopments: number;
+      value: number | null;
+    };
+    diversity: {
+      baselineDistinctDomains: number;
+      withSuggestionsDistinctDomains: number;
+    };
+  };
+  cost: {
+    /** Deterministic generation reads recorded rows only; no provider calls. */
+    suggestionCostMicros: number;
+    recordedDiscoveryCostMicros: number;
+    realWorldCost: "unknown";
+  };
+  decisions: {
+    gate: string[];
+    evidence: string;
+  };
+  limitations: string[];
+  run: SuggestionRun;
+}
+
 export function evaluateSourceRecommendations(
   corpusInput: unknown,
   options: {
     minItems?: number;
     minUseful?: number;
     proposeThreshold?: number;
-    suggestionLimit?: number;
   } = {},
 ): SourceRecommendationReport {
   const corpus = sourceRecommendationCorpusSchema.parse(corpusInput);
   const windowDays = corpus.windowDays ?? 60;
   const store = createSourceSuggestionDatabase(corpus);
   try {
-    const run = generateSourceSuggestions(store, {
+    // The replay runs the shipped refresh path (persistence, suppression and
+    // eligibility reconciliation included) against the throwaway database.
+    const run = refreshSourceSuggestions(store, {
       now: corpus.asOf,
       windowDays,
       minItems: options.minItems ?? 3,
       minUseful: options.minUseful ?? 1,
       proposeThreshold: options.proposeThreshold ?? 30,
-      limit: options.suggestionLimit ?? 10,
+      limit: corpus.items.length,
     });
     return summarizeRecommendations(corpus, run, windowDays, options);
   } finally {
@@ -286,68 +309,76 @@ function summarizeRecommendations(
     minItems?: number;
     minUseful?: number;
     proposeThreshold?: number;
-    suggestionLimit?: number;
   },
 ): SourceRecommendationReport {
   const labels = new Map(corpus.domainLabels.map((l) => [l.host, l.label]));
-  const domainDuplicates = new Map<string, { label: string; reason: string }>();
+  const currentProposals = run.suggestions.map((s) => s.domain);
+  const proposedDomains = new Set(
+    [
+      ...currentProposals,
+      ...run.suppressed.map((s) => s.suggestion.domain),
+    ].map((domain) => domain),
+  );
+  const domainDuplicates = new Map<string, { reason: string }>();
   for (const skip of run.skipped) {
-    const host = skip.domain;
-    const label = labels.get(host);
-    if (label) domainDuplicates.set(host, { label, reason: skip.reason });
+    if (labels.has(skip.domain))
+      domainDuplicates.set(skip.domain, { reason: skip.reason });
   }
 
-  const proposedDomains = run.suggestions.map((s) => s.domain);
-  const labeledProposals = proposedDomains.filter((d) => labels.has(d));
+  const labeledProposals = currentProposals.filter((d) => labels.has(d));
   const unknownLabelProposals =
-    proposedDomains.length - labeledProposals.length;
+    currentProposals.length - labeledProposals.length;
   const truePositives = labeledProposals.filter(
     (d) => labels.get(d) === "suggest",
   );
-  const falsePositives = proposedDomains
-    .filter((d) => labels.get(d) !== undefined && labels.get(d) !== "suggest")
+  const falsePositives = currentProposals
+    .filter((d) => labels.has(d) && labels.get(d) !== "suggest")
     .map((d) => ({
       domain: d,
       label: labels.get(d)!,
       ...(domainDuplicates.get(d) ?? {}),
     }));
 
-  // Development coverage: the baseline is item-level discovery alone (here,
-  // the followed subscription). Suggestions are evaluated as accepted sets.
+  // The baseline arm is item-level discovery alone: every labeled relevant
+  // development already available through subscriptions or recorded
+  // discoveries. Suggestions are measured on the incremental development
+  // coverage they add through labeled held-out subsequent items.
+  const recorded = corpus.items.filter((item) => !item.heldout);
+  const heldout = corpus.items.filter((item) => item.heldout);
   const allDevelopments = [
     ...new Set(
       corpus.items
-        .filter((item) => item.development)
+        .filter((i) => i.development)
         .map((item) => item.development!),
     ),
   ].sort();
   const baselineRelevant = new Set(
-    corpus.items
-      .filter((item) => item.subscribed && item.relevance === "relevant")
+    recorded
+      .filter((item) => item.relevance === "relevant")
       .map((item) => item.id),
   );
   const baselineDevelopments = new Set(
-    corpus.items
-      .filter((item) => baselineRelevant.has(item.id) && item.development)
+    recorded
+      .filter((item) => item.relevance === "relevant" && item.development)
       .map((item) => item.development!),
   );
-  const withSuggestionItems = new Set(baselineRelevant);
-  const suggestedRelevantDomains = new Set<string>();
-  for (const item of corpus.items) {
-    const host = new URL(item.url).hostname;
-    const suggested = run.suggestions.some(
-      (s) => s.domain === host.replace(/^www\./, ""),
-    );
-    if (suggested) {
-      suggestedRelevantDomains.add(host.replace(/^www\./, ""));
-      if (item.relevance === "relevant") withSuggestionItems.add(item.id);
-    }
+
+  const newCoveredItems = new Set<string>();
+  const newCoveredDomains = new Set<string>();
+  for (const item of heldout) {
+    const host = new URL(item.url).hostname.replace(/^www\./, "");
+    if (!proposedDomains.has(host)) continue;
+    newCoveredDomains.add(host);
+    if (item.relevance === "relevant") newCoveredItems.add(item.id);
   }
+  const newDevelopments = new Set(
+    corpus.items
+      .filter((item) => newCoveredItems.has(item.id) && item.development)
+      .map((item) => item.development!),
+  );
   const withSuggestionsDevelopments = new Set([
     ...baselineDevelopments,
-    ...corpus.items
-      .filter((item) => withSuggestionItems.has(item.id) && item.development)
-      .map((item) => item.development!),
+    ...newDevelopments,
   ]);
   const newlyCovered = allDevelopments.filter(
     (development) =>
@@ -366,10 +397,14 @@ function summarizeRecommendations(
   const gate: string[] = [];
   gate.push(`suggestionLift>0:${(lift > 0).toString()}`);
   gate.push(
-    `falsePositives<proposedSuggestions:${(falsePositiveCount < run.suggestions.length).toString()}`,
+    `falsePositives<proposedSuggestions:${(falsePositiveCount < currentProposals.length).toString()}`,
   );
-  const adopted = lift > 0 && falsePositiveCount < run.suggestions.length;
+  const adopted = lift > 0 && falsePositiveCount < currentProposals.length;
 
+  const withSuggestionItems = new Set([
+    ...baselineRelevant,
+    ...newCoveredItems,
+  ]);
   const report: SourceRecommendationReport = {
     generator: SOURCE_RECOMMENDATION_EVALUATION_VERSION,
     algorithmVersion: SOURCE_SUGGESTION_ALGORITHM_VERSION,
@@ -378,6 +413,7 @@ function summarizeRecommendations(
       version: corpus.version,
       asOf: corpus.asOf,
       items: corpus.items.length,
+      heldoutItems: heldout.length,
       hash: corpusHash(corpus),
     },
     config: {
@@ -385,7 +421,6 @@ function summarizeRecommendations(
       minItems: options.minItems ?? 3,
       minUseful: options.minUseful ?? 1,
       proposeThreshold: options.proposeThreshold ?? 30,
-      suggestionLimit: options.suggestionLimit ?? 10,
     },
     baseline: {
       subscribedDomains: [new URL(corpus.subscription.url).hostname],
@@ -397,7 +432,7 @@ function summarizeRecommendations(
       developmentsCovered: [...baselineDevelopments].sort(),
     },
     metrics: {
-      proposedSuggestions: run.suggestions.length,
+      proposedSuggestions: currentProposals.length,
       labeledProposals: labeledProposals.length,
       unknownLabelProposals,
       suggestionPrecision: {
@@ -446,13 +481,14 @@ function summarizeRecommendations(
     decisions: {
       gate,
       evidence: adopted
-        ? `Measured lift ${withRecall.toFixed(3)} - ${baselineRecall.toFixed(3)} is positive on the labeled fixture, with ${falsePositiveCount} recorded false-positive proposal(s) listed for review; supports adopting the opt-in suggestion slice with explicit accept/dismiss/mute.`
+        ? `Measured held-out incremental development recall ${baselineRecall.toFixed(3)} -> ${withRecall.toFixed(3)} (lift +${lift.toFixed(3)}) on the labeled fixture, with ${falsePositiveCount} recorded false-positive proposal(s) listed for review; supports adopting the opt-in suggestion slice with explicit accept/dismiss/mute.`
         : "Measured evidence does not support adoption; a justified non-adoption must be recorded.",
     },
     limitations: [
       "The corpus is synthetic and small; metrics are regression evidence, not a real-world quality estimate.",
+      "The baseline arm includes all labeled developments already reachable via subscriptions and recorded discoveries; only genuinely incremental held-out coverage counts toward the lift.",
       "Only explicitly labeled domains and items are measured; unknown labels are reported, never treated as negative.",
-      "Suggestion generation spends no budget: it reads rows already recorded by existing discovery runs.",
+      "Suggestion generation spends no budget: it reads rows already recorded by existing discovery runs and extraction fetches.",
       "Real-world suggestion usefulness against the live baseline is unknown.",
     ],
     run,

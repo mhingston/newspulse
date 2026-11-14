@@ -7,16 +7,16 @@ import { validateManualUrl } from "./manual";
 
 /**
  * Opt-in source-suggestion identification (issue #33). Everything here is
- * deterministic, read-only aggregation of already-recorded discovery
- * provenance, explicit item feedback and extraction outcomes. Nothing here
+ * deterministic read-only aggregation of already-recorded discovery
+ * provenance, explicit item feedback, extraction outcomes and feed-link
+ * metadata captured during existing extraction fetches. Nothing here
  * subscribes, fetches, crawls or spends: the only external-boundary action is
  * an explicit operator accept, which routes through the existing
- * source-management path (`Store.addSource`).
+ * source-management path (`Store.addSource`) in one atomic transaction.
  */
-export const SOURCE_SUGGESTION_ALGORITHM_VERSION = "source-suggestions-v1";
+export const SOURCE_SUGGESTION_ALGORITHM_VERSION = "source-suggestions-v2";
 
-const UNAVAILABLE_STAGES = "('extract','score')";
-const FEED_TYPES = /rss\+xml|atom\+xml/i;
+const FEED_TYPES = /(?:rss|atom)\+xml/i;
 const KNOWN_FEED_PATTERNS = [
   "/feed/",
   "/feed",
@@ -25,7 +25,8 @@ const KNOWN_FEED_PATTERNS = [
   "/index.xml",
   "/feeds/posts/default",
 ];
-const maxFeedLinksPerItem = 20;
+const maxFeedLinksPerItem = 10;
+const maxFeedLinkChars = 2048;
 const maxContentScanChars = 512_000;
 const maxTitleChars = 1000;
 
@@ -50,6 +51,7 @@ export interface SourceSuggestionStats {
   usefulItems: number;
   notUsefulItems: number;
   usefulOutsideWindow: number;
+  /** Distinct mirrored items; used with unavailable to exclude from value. */
   duplicateItems: number;
   unavailableItems: number;
   distinctPublishDays: number;
@@ -89,7 +91,18 @@ export interface SuggestionRun {
     domainsWithFeedback: number;
     unavailableItems: number;
   };
+  /**
+   * Actionable proposed suggestions: qualifying candidates minus operator-
+   * suppressed records, after the refresh display limit. Every qualifying
+   * candidate is persisted even beyond this slice (`pendingBeyondLimit`).
+   */
   suggestions: SourceSuggestion[];
+  /** Qualifying candidates carrying an existing dismissed/muted/accepted decision. */
+  suppressed: { suggestion: SourceSuggestion; state: SourceSuggestionState }[];
+  /** Previously proposed rows that no longer qualify; persist state is `expired`. */
+  expired: string[];
+  /** Qualifying candidates persisted beyond the refresh display limit. */
+  pendingBeyondLimit: string[];
   skipped: SkippedCandidate[];
   limitations: string[];
 }
@@ -101,7 +114,6 @@ export interface SuggestionOptions {
   minItems?: number;
   minUseful?: number;
   proposeThreshold?: number;
-  limit?: number;
   maxFeedCandidates?: number;
   maxEvidenceItems?: number;
 }
@@ -144,7 +156,8 @@ function dayOf(timestamp: number | null): string | null {
  * `<link rel=alternate type=...>` declarations and anchors carrying an
  * explicit RSS/Atom type are recognized. URLs resolve against the recorded
  * page's own host, are validated without fetching, and only ever become
- * suggestions.
+ * suggestions. Extraction captures the same shape while fetching pages, so
+ * suggestion generation never needs additional requests.
  */
 export function extractFeedLinks(html: string, base: string): FeedCandidate[] {
   if (html.length > maxContentScanChars)
@@ -210,7 +223,13 @@ interface ProvenanceRow {
   ingestedAt: number;
 }
 
-/** Build suggestion candidates from recorded provenance. Read-only. */
+/**
+ * Build suggestion candidates from recorded provenance. Read-only: no
+ * subscription, budget reservation, provider call or crawl happens here.
+ * Qualifying candidates are returned complete (never limit-sliced); the
+ * actionable display slice, operator-suppression and eligibility
+ * reconciliation are applied by `refreshSourceSuggestions`.
+ */
 export function generateSourceSuggestions(
   store: Store,
   options: SuggestionOptions,
@@ -221,7 +240,6 @@ export function generateSourceSuggestions(
     minItems = 3,
     minUseful = 1,
     proposeThreshold = 30,
-    limit = 10,
     maxFeedCandidates = 3,
     maxEvidenceItems = 3,
   } = options;
@@ -237,7 +255,10 @@ export function generateSourceSuggestions(
     )
     .all();
 
-  // Latest explicit feedback per item; deterministic by timestamp then id.
+  // Latest explicit feedback per item, matching the shipped readers:
+  // created_at descending with rowid breaking same-millisecond ties by
+  // insertion order (item_feedback.id is a random UUID and must not be
+  // mistaken for an ordering key).
   interface FeedbackRow {
     item_id: string;
     useful: number;
@@ -246,16 +267,23 @@ export function generateSourceSuggestions(
   const latestFeedback = new Map<string, FeedbackRow>();
   for (const row of store.sqlite
     .query<FeedbackRow, []>(
-      "SELECT item_id,useful,created_at FROM item_feedback ORDER BY created_at DESC, id DESC",
+      "SELECT item_id,useful,created_at FROM item_feedback ORDER BY created_at DESC, rowid DESC",
     )
     .all())
     if (!latestFeedback.has(row.item_id)) latestFeedback.set(row.item_id, row);
 
+  // Unavailability is measured against the item's current extraction
+  // generation: a later successful extraction or score proves recovery, so a
+  // historical unavailable outcome never permanently suppresses a publisher.
+  // This mirrors the shipped processing readers (Store.completeProcessing and
+  // the digest readiness query).
   const unavailableItems = new Set(
     store.sqlite
       .query<{ item_id: string }, []>(
-        `SELECT DISTINCT item_id FROM processing_jobs
-         WHERE status='done' AND outcome='unavailable' AND stage IN ${UNAVAILABLE_STAGES}`,
+        `SELECT DISTINCT pj.item_id FROM processing_jobs pj
+        WHERE pj.status='done' AND pj.outcome='unavailable'
+          AND ( (pj.stage='extract' AND pj.generation=(SELECT max(generation) FROM processing_jobs x WHERE x.item_id=pj.item_id AND x.stage='extract'))
+             OR (pj.stage='score' AND pj.generation=(SELECT max(generation) FROM processing_jobs x WHERE x.item_id=pj.item_id AND x.stage='extract')) )`,
       )
       .all()
       .map((row) => row.item_id),
@@ -270,67 +298,67 @@ export function generateSourceSuggestions(
   }
 
   // Duplicate mirrors: an identical normalized title published at the same
-  // time on a different domain is recorded duplicate coverage. The row
-  // ingested first on the deterministic first domain counts as the original;
-  // later copies are the duplicated rows.
-  const duplicateKeys = new Map<
-    string,
-    { hosts: Set<string>; minIngest: number; minDomain: string }
-  >();
+  // time on a different domain is recorded duplicate coverage. Groups are
+  // built in a single pass tracking the earliest ingestion time and domain,
+  // so no per-group history rescan; the row ingested first on the
+  // deterministic first domain is the original, later copies are mirrors.
+  interface DuplicateGroup {
+    hosts: Set<string>;
+    minIngest: number;
+    minDomain: string;
+  }
+  const duplicateGroups = new Map<string, DuplicateGroup>();
   for (const row of rows) {
     const domain = domainOf(row.url);
     if (!domain || row.publishedAt === null) continue;
     const key = `${normalizeTitle(row.title)}\u0000${row.publishedAt}`;
-    const group = duplicateKeys.get(key);
-    if (!group)
-      duplicateKeys.set(key, {
+    const group = duplicateGroups.get(key);
+    if (!group) {
+      duplicateGroups.set(key, {
         hosts: new Set([domain]),
         minIngest: row.ingestedAt,
         minDomain: domain,
       });
-    else group.hosts.add(domain);
-  }
-  for (const [key, group] of duplicateKeys) {
-    if (group.hosts.size < 2) {
-      duplicateKeys.delete(key);
       continue;
     }
-    for (const row of rows) {
-      const domain = domainOf(row.url);
-      if (!domain || row.publishedAt === null) continue;
-      const rowKey = `${normalizeTitle(row.title)}\u0000${row.publishedAt}`;
-      if (rowKey !== key) continue;
-      if (
-        row.ingestedAt < group.minIngest ||
-        (row.ingestedAt === group.minIngest && domain < group.minDomain)
-      ) {
-        group.minIngest = row.ingestedAt;
-        group.minDomain = domain;
-      }
+    group.hosts.add(domain);
+    if (
+      row.ingestedAt < group.minIngest ||
+      (row.ingestedAt === group.minIngest && domain < group.minDomain)
+    ) {
+      group.minIngest = row.ingestedAt;
+      group.minDomain = domain;
     }
   }
   const isMirror = (row: ProvenanceRow, domain: string): boolean => {
     if (row.publishedAt === null) return false;
     const key = `${normalizeTitle(row.title)}\u0000${row.publishedAt}`;
-    const group = duplicateKeys.get(key);
-    if (!group) return false;
+    const group = duplicateGroups.get(key);
+    if (!group || group.hosts.size < 2) return false;
     return (
       row.ingestedAt > group.minIngest ||
       (row.ingestedAt === group.minIngest && domain !== group.minDomain)
     );
   };
+  // A mirrored item keeps counting as unavailable/unusable: both penalized
+  // populations union so one item is never discounted twice.
+  const isMirrorItem = (row: ProvenanceRow, domain: string): boolean =>
+    isMirror(row, domain);
 
   interface DomainState {
     rows: ProvenanceRow[];
-    duplicateCount: number;
+    mirrorItemIds: Set<string>;
   }
   const domains = new Map<string, DomainState>();
   for (const row of rows) {
     const domain = domainOf(row.url);
     if (!domain) continue;
-    const state = domains.get(domain) ?? { rows: [], duplicateCount: 0 };
+    const state = domains.get(domain) ?? {
+      rows: [],
+      mirrorItemIds: new Set<string>(),
+    };
     state.rows.push(row);
-    if (isMirror(row, domain)) state.duplicateCount++;
+    if (isMirrorItem(row, domain)) state.mirrorItemIds.add(row.itemId);
     domains.set(domain, state);
   }
 
@@ -356,17 +384,13 @@ export function generateSourceSuggestions(
     }
 
     const distinctItems = items.size;
-    const duplicateItems = state.duplicateCount;
-    let unavailableCount = 0;
+    const duplicateItems = state.mirrorItemIds.size;
+    const unavailableIds = new Set<string>();
     for (const itemId of items.keys())
-      if (unavailableItems.has(itemId)) unavailableCount++;
-    const meaningful = Math.max(
-      0,
-      distinctItems - duplicateItems - unavailableCount,
-    );
+      if (unavailableItems.has(itemId)) unavailableIds.add(itemId);
+    const meaningful =
+      distinctItems - new Set([...state.mirrorItemIds, ...unavailableIds]).size;
 
-    // Explicit feedback drives value: useful must be recent, negative always
-    // counts, and stale usefulness never substitutes for current quality.
     let usefulItems = 0;
     let notUsefulItems = 0;
     let usefulOutsideWindow = 0;
@@ -401,7 +425,7 @@ export function generateSourceSuggestions(
     if (meaningful < minItems) {
       skipped.push({
         domain,
-        reason: `only ${meaningful} meaningful distinct items (minimum ${minItems})`,
+        reason: `only ${Math.max(0, meaningful)} meaningful distinct items (minimum ${minItems})`,
       });
       continue;
     }
@@ -434,7 +458,10 @@ export function generateSourceSuggestions(
           (3 * usefulItems +
             Math.max(0, meaningful - usefulItems) -
             2 * notUsefulItems)) /
-          Math.max(1, 3 * results + 2 * duplicateItems + 3 * unavailableCount),
+          Math.max(
+            1,
+            3 * results + 2 * duplicateItems + 3 * unavailableIds.size,
+          ),
       ),
     );
     const repetitive = repetitionRatio > 4;
@@ -447,32 +474,57 @@ export function generateSourceSuggestions(
       continue;
     }
 
-    // Feed candidates: recorded link elements first, then validated URL
-    // patterns. Both are validated without fetching.
+    // Feed candidates: RSS/Atom link elements captured during existing
+    // extraction fetches first, then validated URL patterns only when no
+    // recorded declaration exists. All candidates are validated without
+    // fetching; accepted URLs are re-validated through source management.
     const candidates: FeedCandidate[] = [];
     const seen = new Set<string>();
+    const pushCandidate = (candidate: FeedCandidate) => {
+      if (candidates.length >= maxFeedCandidates) return;
+      if (seen.has(candidate.url)) return;
+      seen.add(candidate.url);
+      candidates.push(candidate);
+    };
     for (const itemId of [...items.keys()].sort()) {
-      const content = store.sqlite
-        .query<{ text: string; url: string | null }, [string]>(
-          "SELECT c.text AS text, it.url AS url FROM content c JOIN items it ON it.id=c.item_id WHERE c.item_id=? AND c.purged_at IS NULL AND length(c.text)>0",
+      const job = store.sqlite
+        .query<{ result: string | null }, [string]>(
+          `SELECT pj.result AS result FROM processing_jobs pj
+          WHERE pj.item_id=? AND pj.stage='extract' AND pj.status='done'
+            AND pj.generation=(SELECT max(generation) FROM processing_jobs x WHERE x.item_id=pj.item_id AND x.stage='extract')`,
         )
         .get(itemId);
-      if (!content) continue;
-      const html = content.text.slice(0, maxContentScanChars);
-      if (!/<link\b|<a\b/i.test(html)) continue;
-      for (const candidate of extractFeedLinks(
-        html,
-        content.url ?? `https://${domain}`,
-      ))
-        if (!seen.has(candidate.url)) {
-          seen.add(candidate.url);
-          candidates.push(candidate);
+      const resultText = job?.result;
+      if (!resultText) continue;
+      let extractionResult: { feedLinks?: unknown } | null = null;
+      try {
+        extractionResult = JSON.parse(resultText) as {
+          feedLinks?: unknown;
+        } | null;
+      } catch {
+        continue;
+      }
+      const links = extractionResult?.feedLinks;
+      if (!Array.isArray(links)) continue;
+      const itemUrl = items.get(itemId)!.url;
+      for (const raw of links) {
+        if (typeof raw !== "string" || raw.length > maxFeedLinkChars) continue;
+        try {
+          const url = validateManualUrl(new URL(raw, itemUrl).href);
+          if (domainOf(url) !== domain) continue;
+          pushCandidate({ url, provenance: "link-element" });
+        } catch {
+          // Malformed, credential-bearing or private destinations are skipped.
         }
+      }
     }
-    // Known legitimate feed URL patterns, annotated as unverified guesses.
-    const baseUrl = items.values().next().value?.url ?? `https://${domain}`;
-    for (const candidate of patternCandidates(domain, baseUrl, seen))
-      candidates.push(candidate);
+    if (candidates.length === 0) {
+      // Known legitimate feed URL patterns, annotated as unverified guesses;
+      // only used when extraction recorded no explicit feed declaration.
+      const baseUrl = items.values().next().value?.url ?? `https://${domain}`;
+      for (const candidate of patternCandidates(domain, baseUrl, seen))
+        candidates.push(candidate);
+    }
     const bounded = candidates.slice(0, maxFeedCandidates);
 
     const explanation = [
@@ -513,7 +565,7 @@ export function generateSourceSuggestions(
         notUsefulItems,
         usefulOutsideWindow,
         duplicateItems,
-        unavailableItems: unavailableCount,
+        unavailableItems: unavailableIds.size,
         distinctPublishDays: publishDays.size,
         repetitionRatio,
         duplicateRate,
@@ -530,7 +582,7 @@ export function generateSourceSuggestions(
         "Coverage is limited to what recorded discovery runs already retrieved; no claim of full publisher coverage.",
         bounded.some((candidate) => candidate.provenance === "url-pattern")
           ? "Some feed URLs are conservative pattern guesses; they were never fetched and are re-validated at accept time."
-          : "Feed URLs come from recorded link elements; they were not fetched and are re-validated at accept time.",
+          : "Feed URLs come from link elements captured during recorded extraction; they were not fetched here and are re-validated at accept time.",
         "Suggestions never subscribe: accepting is an explicit operator action through existing source management.",
       ],
       algorithmVersion: SOURCE_SUGGESTION_ALGORITHM_VERSION,
@@ -547,7 +599,10 @@ export function generateSourceSuggestions(
       domainsWithFeedback,
       unavailableItems: unavailableItems.size,
     },
-    suggestions: suggestions.slice(0, limit),
+    suggestions,
+    suppressed: [],
+    expired: [],
+    pendingBeyondLimit: [],
     skipped: skipped.sort((a, b) => a.domain.localeCompare(b.domain)),
     limitations: [
       "Suggestions come only from recorded provenance; no external request, subscription or crawl happens during generation.",
@@ -555,6 +610,15 @@ export function generateSourceSuggestions(
       "Value for sources without recorded feedback is unknown, not zero.",
     ],
   };
+}
+
+export interface RefreshOptions extends SuggestionOptions {
+  /**
+   * Display limit for actionable proposals. Every qualifying candidate is
+   * persisted regardless of this limit; operator-suppressed (dismissed,
+   * muted, accepted) candidates never consume it.
+   */
+  limit?: number;
 }
 
 export interface AcceptOptions {
@@ -572,9 +636,83 @@ export interface AcceptOutcome {
 }
 
 /**
+ * Regenerate and persist suggestions, then reconcile persisted state:
+ * - operator-suppressed candidates (dismissed/muted/accepted) keep their
+ *   decision and are excluded from the actionable slice and its limit;
+ * - previously proposed candidates that no longer qualify are marked
+ *   `expired` (audited, reversible) so acceptance cannot silently follow a
+ *   suggestion that lost its evidence; renewal happens when it qualifies
+ *   again;
+ * - every qualifying candidate is persisted even beyond the display limit.
+ * Deterministic and idempotent: an unchanged replay refreshes nothing.
+ */
+export function refreshSourceSuggestions(
+  store: Store,
+  options: RefreshOptions,
+): SuggestionRun {
+  const { limit = 10, ...generation } = options;
+  const all = generateSourceSuggestions(store, generation);
+  const suggestions = new SourceSuggestionStore(store.sqlite);
+  const persisted = new Map(suggestions.list().map((row) => [row.id, row]));
+  const qualifying = new Set(all.suggestions.map((s) => s.id));
+
+  const suppressed: {
+    suggestion: SourceSuggestion;
+    state: SourceSuggestionState;
+  }[] = [];
+  const actionable: SourceSuggestion[] = [];
+  for (const suggestion of all.suggestions) {
+    const existing = persisted.get(suggestion.id);
+    if (
+      existing &&
+      existing.state !== "proposed" &&
+      existing.state !== "expired"
+    ) {
+      // Keep the operator decision and refresh the evidence in place.
+      suggestions.upsert([suggestion], options.now);
+      suppressed.push({ suggestion, state: existing.state });
+      continue;
+    }
+    if (existing && existing.state === "expired")
+      suggestions.reconcile(suggestion.id, "proposed", options.now);
+    suggestions.upsert([suggestion], options.now);
+    actionable.push(suggestion);
+  }
+
+  const expired: string[] = [];
+  for (const row of persisted.values()) {
+    if (row.state !== "proposed" || qualifying.has(row.id)) continue;
+    suggestions.reconcile(row.id, "expired", options.now);
+    expired.push(row.id);
+  }
+
+  expired.sort();
+  const visible = actionable.slice(0, limit);
+  const pendingBeyondLimit = actionable
+    .slice(limit)
+    .map((s) => s.id)
+    .sort();
+  return {
+    ...all,
+    suggestions: visible,
+    suppressed: suppressed.sort((a, b) =>
+      a.suggestion.id.localeCompare(b.suggestion.id),
+    ),
+    expired,
+    pendingBeyondLimit,
+  };
+}
+
+/**
  * Accept a suggestion by subscribing through the existing source-management
- * path. This is the only function here that changes subscriptions, and it must
- * be invoked explicitly by an operator; nothing in discovery calls it.
+ * path. The state read, guard checks, source write and audit event run in
+ * one immediate transaction on the same connection, so acceptance either
+ * commits completely or changes nothing: a concurrent mute cannot leave an
+ * accepted subscription behind, and a crash cannot leave a subscription
+ * without its accepted-state record. This is the only function here that
+ * changes subscriptions, and it must be invoked explicitly by an operator;
+ * nothing in discovery calls it. The validation performed before or inside
+ * the transaction is local only (URL/shape checks; never network I/O).
  */
 export function acceptSourceSuggestion(
   store: Store,
@@ -582,34 +720,43 @@ export function acceptSourceSuggestion(
   options: AcceptOptions,
 ): AcceptOutcome {
   const suggestions = new SourceSuggestionStore(store.sqlite);
-  const record = suggestions.get(suggestionId);
-  if (!record) throw new Error("Unknown source suggestion");
-  if (record.state === "muted")
-    throw new Error("Muted suggestion cannot be accepted; unmute it first");
-  if (record.state === "accepted" && record.acceptedSourceId) {
-    // Idempotent replay: the source already exists; change nothing.
-    return {
-      suggestionId,
-      sourceId: record.acceptedSourceId,
-      url: record.url,
-      state: record.state,
-      changed: false,
-    };
-  }
-  const url = validateManualUrl(record.url);
-  const source = store.addSource(
-    url,
-    record.title || record.domain,
-    options.pollSeconds ?? 1800,
-  );
-  suggestions.setState(suggestionId, "accepted", options.now, source.id);
-  return {
-    suggestionId,
-    sourceId: source.id,
-    url: source.url,
-    state: "accepted",
-    changed: true,
-  };
+  const outcome = store.sqlite
+    .transaction((): AcceptOutcome => {
+      const record = suggestions.get(suggestionId);
+      if (!record) throw new Error("Unknown source suggestion");
+      if (record.state === "muted")
+        throw new Error("Muted suggestion cannot be accepted; unmute it first");
+      if (record.state === "expired")
+        throw new Error(
+          "Expired suggestion cannot be accepted; regenerate suggestions first",
+        );
+      if (record.state === "accepted" && record.acceptedSourceId) {
+        // Idempotent replay: the source already exists; change nothing.
+        return {
+          suggestionId,
+          sourceId: record.acceptedSourceId,
+          url: record.url,
+          state: record.state,
+          changed: false,
+        };
+      }
+      const url = validateManualUrl(record.url);
+      const source = store.addSource(
+        url,
+        record.title || record.domain,
+        options.pollSeconds ?? 1800,
+      );
+      suggestions.setState(suggestionId, "accepted", options.now, source.id);
+      return {
+        suggestionId,
+        sourceId: source.id,
+        url: source.url,
+        state: "accepted",
+        changed: true,
+      };
+    })
+    .immediate();
+  return outcome;
 }
 
 export function dismissSourceSuggestion(
@@ -647,20 +794,6 @@ export function unmuteSourceSuggestion(
     "proposed",
     now,
   );
-}
-
-/**
- * Regenerate and persist suggestions. Deterministic and idempotent: running
- * twice with unchanged data refreshes nothing and never resets operator
- * decisions on dismissed, muted or accepted rows.
- */
-export function refreshSourceSuggestions(
-  store: Store,
-  options: SuggestionOptions,
-): SuggestionRun {
-  const run = generateSourceSuggestions(store, options);
-  new SourceSuggestionStore(store.sqlite).upsert(run.suggestions, options.now);
-  return run;
 }
 
 export {

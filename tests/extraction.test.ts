@@ -628,3 +628,46 @@ test("HTML meta charset is recognized and BOM overrides conflicting headers", as
   }));
   expect((await bom.extract("https://example.com")).text).toBe("café");
 });
+
+test("captures bounded RSS/Atom feed declarations from the fetched HTML head", async () => {
+  const extractor = new HttpContentExtractor(
+    async () => ["93.184.216.34"],
+    async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: [
+        "<html><head>",
+        '<link rel="alternate" type="application/rss+xml" href="/feeds/index.rss">',
+        '<link rel="alternate" type="application/atom+xml" href="atom/current.xml">',
+        '<link rel="stylesheet" type="application/rss+xml" href="/not-a-feed.css">',
+        '<link rel="alternate" type="application/rss+xml" href="https://cdn.example/foreign.xml">',
+        '<link rel="alternate" type="application/rss+xml" href="/feeds/index.rss">',
+        '<link href="/no-type.xml">',
+        "</head><article><p>Article body</p></article></html>",
+      ].join(""),
+    }),
+  );
+  const result = await extractor.extract("https://example.com/a");
+  expect(result.status).toBe("extracted");
+  // Declaration capture is resolution-only and stores raw absolute hrefs;
+  // host/label filtering happens later in suggestion generation.
+  expect(result.feedLinks).toEqual([
+    "https://example.com/feeds/index.rss",
+    "https://example.com/atom/current.xml",
+    "https://cdn.example/foreign.xml",
+  ]);
+});
+
+test("plain-text pages record no feed links", async () => {
+  const extractor = new HttpContentExtractor(
+    async () => ["93.184.216.34"],
+    async () => ({
+      status: 200,
+      headers: { "content-type": "text/plain" },
+      body: "plain body",
+    }),
+  );
+  const result = await extractor.extract("https://example.com/a");
+  expect(result.status).toBe("extracted");
+  expect(result.feedLinks).toBeUndefined();
+});

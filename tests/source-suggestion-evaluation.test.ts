@@ -3,7 +3,7 @@ import {
   evaluateSourceRecommendations,
   type SourceRecommendationReport,
 } from "../src/source-suggestion-evaluation";
-import corpusJson from "./fixtures/source-recommendation-corpus-v1.json";
+import corpusJson from "./fixtures/source-recommendation-corpus-v2.json";
 import baselineJson from "../docs/baselines/source-recommendations-v1.json";
 
 const corpus = corpusJson;
@@ -16,10 +16,10 @@ test("the recorded baseline replay is reproduced exactly, offline", () => {
     string,
     unknown
   >;
-  const baselineCore = { ...baseline, run: undefined } as unknown as Record<
-    string,
-    unknown
-  >;
+  const baselineCore = {
+    ...baseline,
+    run: undefined,
+  } as unknown as Record<string, unknown>;
   // Metrics, cost and decision evidence must match the recorded baseline
   // byte-for-byte; the embedded run is compared separately.
   expect(JSON.stringify(freshCore)).toBe(JSON.stringify(baselineCore));
@@ -31,19 +31,43 @@ test("the recorded baseline replay is reproduced exactly, offline", () => {
   );
 });
 
-test("metrics measure suggestion quality against the item-level baseline, with unknowns explicit", () => {
+test("the baseline arm includes recorded discoveries; the lift is genuinely incremental", () => {
+  const report = evaluateSourceRecommendations(corpus);
+  // Baseline: labeled developments already available through subscriptions
+  // or recorded item-level discoveries (8 of 11).
+  expect(report.metrics.developmentRecall.baseline.value).toBeCloseTo(8 / 11);
+  expect(report.baseline.developmentsCovered).toContain("agent eval harness");
+  expect(report.baseline.developmentsCovered).toContain("build tooling");
+  // With suggestions only the held-out subsequent coverage is added.
+  expect(report.metrics.developmentRecall.withSuggestions.value).toBeCloseTo(
+    10 / 11,
+  );
+  expect(report.metrics.developmentRecall.lift.value).toBeCloseTo(2 / 11);
+  expect(report.metrics.developmentRecall.newlyCovered).toEqual([
+    "coverage-guided fuzzing",
+    "flaky-test triage",
+  ]);
+  // The false-positive publisher's gossip development stays uncovered and
+  // the irrelevant held-out item on it is not credited as useful coverage.
+  expect(report.metrics.developmentRecall.stillUncovered).toEqual([
+    "celebrity gossip",
+  ]);
+  expect(report.metrics.novelty).toEqual({
+    newlyCoveredDevelopments: 2,
+    totalDevelopments: 11,
+    value: 2 / 11,
+  });
+});
+
+test("metrics measure suggestion quality, with unknowns explicit and FPs recorded", () => {
   const report = evaluateSourceRecommendations(corpus);
   expect(report.metrics.suggestionPrecision.value).toBeCloseTo(2 / 3);
   expect(report.metrics.falsePositives.map((f) => f.domain)).toEqual([
     "mixed-review.example",
   ]);
-  expect(report.metrics.developmentRecall.baseline.value).toBeCloseTo(0.25);
-  expect(report.metrics.developmentRecall.withSuggestions.value).toBe(1);
-  expect(report.metrics.developmentRecall.lift.value).toBeCloseTo(0.75);
-  expect(report.metrics.novelty.value).toBeCloseTo(0.75);
   expect(
     report.metrics.diversity.withSuggestionsDistinctDomains,
-  ).toBeGreaterThan(report.metrics.diversity.baselineDistinctDomains);
+  ).toBeGreaterThanOrEqual(report.metrics.diversity.baselineDistinctDomains);
   // Suggestion generation spends nothing beyond recorded discovery.
   expect(report.cost.suggestionCostMicros).toBe(0);
   expect(report.cost.realWorldCost).toBe("unknown");
@@ -52,8 +76,8 @@ test("metrics measure suggestion quality against the item-level baseline, with u
 });
 
 test("changed evidence changes the measured outcome (quality-shift regression coverage)", () => {
-  // Drop all useful feedback outside the window only: removing the recent
-  // negative feedback must keep the quality-declining source disqualified.
+  // Remove the stale useful feedback only: the quality-declining source must
+  // stay disqualified, now failing the recency requirement.
   const mutated = {
     ...corpus,
     items: corpus.items.map((item: Record<string, unknown>) =>
@@ -63,9 +87,9 @@ test("changed evidence changes the measured outcome (quality-shift regression co
     ),
   };
   const report = evaluateSourceRecommendations(mutated);
-  const skipped = new Map(report.run.skipped.map((s) => [s.domain, s.reason]));
-  // Without stale useful feedback the domain fails the recency requirement
-  // rather than the quality-decline reason.
+  const skipped = new Map(
+    report.run.skipped.map((s) => [s.domain as string, s.reason]),
+  );
   expect(skipped.get("fading-quarterly.example")).toContain("window");
   expect(
     report.run.suggestions.some((s) => s.domain === "fading-quarterly.example"),

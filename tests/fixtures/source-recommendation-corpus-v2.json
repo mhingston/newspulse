@@ -1,6 +1,6 @@
 {
-  "version": 1,
-  "id": "source-recommendation-corpus-v1",
+  "version": 2,
+  "id": "source-recommendation-corpus-v2",
   "asOf": 1797000000000,
   "windowDays": 60,
   "subscription": {
@@ -86,7 +86,7 @@
       "development": "linter supply chain",
       "feedback": "useful",
       "feedbackAt": 1796222400000,
-      "feedHtml": "<!doctype html><html><head><link rel=\"alternate\" type=\"application/rss+xml\" title=\"RSS\" href=\"/feed.xml\"></head><body><p>Article text.</p></body></html>"
+      "extractionFeedLinks": ["https://signal-press.example/feeds/index.rss"]
     },
     {
       "id": "sp-quantum",
@@ -313,6 +313,63 @@
       "publishedAt": 1796827200000,
       "relevance": "irrelevant",
       "discovered": true
+    },
+    {
+      "id": "sp-hold-fuzzing",
+      "url": "https://signal-press.example/fuzzing-coverage",
+      "title": "Fuzzing coverage guides",
+      "publishedAt": 1796740800000,
+      "relevance": "relevant",
+      "development": "coverage-guided fuzzing",
+      "heldout": true,
+      "discovered": false
+    },
+    {
+      "id": "sp-hold-sparse",
+      "url": "https://signal-press.example/sparse-newsletter",
+      "title": "Sparse notes update",
+      "publishedAt": 1796740800000,
+      "relevance": null,
+      "heldout": true,
+      "discovered": false
+    },
+    {
+      "id": "fn-hold-flaky",
+      "url": "https://field-notes.example/flaky-tests",
+      "title": "Flaky test triage logs",
+      "publishedAt": 1796654400000,
+      "relevance": "relevant",
+      "development": "flaky-test triage",
+      "heldout": true,
+      "discovered": false
+    },
+    {
+      "id": "fn-hold-minor",
+      "url": "https://field-notes.example/minor",
+      "title": "Minor maintenance note",
+      "publishedAt": 1796654400000,
+      "relevance": "irrelevant",
+      "heldout": true,
+      "discovered": false
+    },
+    {
+      "id": "mr-hold-gossip",
+      "url": "https://mixed-review.example/gossip-roundup",
+      "title": "Gossip roundup continues",
+      "publishedAt": 1796740800000,
+      "relevance": "irrelevant",
+      "development": "celebrity gossip",
+      "heldout": true,
+      "discovered": false
+    },
+    {
+      "id": "dark-hold-dead",
+      "url": "https://dark-press.example/still-dead",
+      "title": "Still dead notes",
+      "publishedAt": 1796740800000,
+      "relevance": "irrelevant",
+      "heldout": true,
+      "discovered": false
     }
   ]
 }
