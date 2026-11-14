@@ -33,6 +33,7 @@ import {
   type Candidate,
   type PollResult,
 } from "../domain";
+import { boundedTermDiff, recordChangeEvent } from "../dev-changes";
 export interface Source {
   id: string;
   kind: string;
@@ -1211,6 +1212,11 @@ export class Store {
         "UPDATE story_memberships SET item_id=?,original_item_id=coalesce(original_item_id,?) WHERE item_id=?",
       )
       .run(winner, loser, loser);
+    // Change evidence is historical fact; repoint it with the rest of the
+    // item's history so citations keep resolving after a merge.
+    this.sqlite
+      .query("UPDATE story_change_events SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
     this.sqlite
       .query("UPDATE item_redirects SET item_id=? WHERE item_id=?")
       .run(winner, loser);
@@ -1425,6 +1431,24 @@ export class Store {
           );
       }
       if (changed) {
+        // Append-only change evidence for the development comparison read.
+        recordChangeEvent(this.sqlite, {
+          itemId: prior.item_id,
+          kind: "content_change",
+          reportedAt: candidate.publishedAt ?? null,
+          eventAt: candidate.eventAt ?? null,
+          observedAt: now,
+          sourceId,
+          nativeId: candidate.nativeId,
+          evidence: {
+            titleChanged: previous?.title !== candidate.title,
+            bodyChanged,
+            urlChanged: previous?.url !== originalUrl,
+            ...boundedTermDiff(previous?.text ?? "", candidate.text),
+          },
+        });
+      }
+      if (changed) {
         this.sqlite
           .query(
             "UPDATE item_sources SET url=? WHERE source_id=? AND native_id=?",
@@ -1517,6 +1541,18 @@ export class Store {
         candidate.sourceUrl ?? candidate.url ?? null,
         now,
       );
+    // Append-only new-coverage evidence: first observation of this item by
+    // this source, kept even when retention later expires the content.
+    recordChangeEvent(this.sqlite, {
+      itemId: item.id,
+      kind: "new_coverage",
+      reportedAt: candidate.publishedAt ?? null,
+      eventAt: candidate.eventAt ?? null,
+      observedAt: now,
+      sourceId,
+      nativeId: candidate.nativeId,
+      evidence: { reason: "new_coverage" },
+    });
     // Digest candidates can arrive before a feed supplies the actual body.
     if (candidate.text) {
       this.sqlite

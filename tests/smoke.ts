@@ -77,6 +77,7 @@ export async function smoke() {
           [
             "add_source",
             "explain_ranking",
+            "get_development_changes",
             "get_digest",
             "get_discoveries",
             "get_feedback",

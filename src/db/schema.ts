@@ -400,6 +400,41 @@ export const storyGroupingEvents = sqliteTable(
   (t) => [index("story_grouping_events_time").on(t.eventAt, t.id)],
 );
 
+/**
+ * Append-only development change evidence (issue #26). Rows are never updated
+ * or deleted, including by retention: expired content degrades to citations
+ * with explicit missing-detail markers while the recorded change evidence
+ * survives. Each event separates three distinct clocks — the source's
+ * declared report date (`reported_at`, null when the source gave none), a
+ * declared event time (`event_at`, null unless a source adapter explicitly
+ * declares one; no shipped adapter does today) and the local observation
+ * time (`observed_at`, always present). Missing dates are never substituted
+ * with another clock, so chronology is never invented.
+ */
+export const storyChangeEvents = sqliteTable(
+  "story_change_events",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    /** The development the change was recorded against, when known at record time. */
+    groupId: text("group_id").references(() => storyGroups.id),
+    kind: text().notNull(),
+    sourceId: text("source_id"),
+    nativeId: text("native_id"),
+    reportedAt: integer("reported_at"),
+    eventAt: integer("event_at"),
+    observedAt: integer("observed_at").notNull(),
+    evidence: text().notNull(),
+  },
+  (t) => [
+    index("story_change_events_group").on(t.groupId, t.observedAt, t.id),
+    index("story_change_events_item").on(t.itemId, t.observedAt),
+    index("story_change_events_recent").on(t.observedAt, t.id),
+  ],
+);
+
 /** Frozen content is historical evidence, not proof of delivery. */
 export const digests = sqliteTable("digests", {
   id: text().primaryKey(),

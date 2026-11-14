@@ -24,6 +24,7 @@ import {
 } from "./mutations";
 import { ConfirmationError } from "./confirmations";
 import { latestFeedback } from "./feedback";
+import { developmentChanges } from "./dev-changes";
 import { listDiscoveries } from "./discovery-reads";
 import { ProfileStore } from "./profiles";
 import { enabledProcessingStages } from "./analysis-config";
@@ -178,6 +179,42 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
       return group
         ? response(group)
         : { ...response({ error: "Story group not found" }), isError: true };
+    },
+  );
+  server.registerTool(
+    "get_development_changes",
+    {
+      description:
+        "Retrieve recorded change evidence for a specific development (story group) or item since a time window: new coverage, content changes (retracted or updated claims) and grouping corrections, each with source citations, the source-declared report date, an unknown-when-undeclared event time and the observation time. Evidence is a deterministic observation of retained source content — it never establishes that a claim is true — and expired content is cited with detail marked unavailable. Use it to explain what changed between editions; the connecting client does the narrative reasoning.",
+      inputSchema: {
+        group_id: z.string().optional(),
+        item_id: z.string().optional(),
+        since: z.number().int().nonnegative().optional(),
+        until: z.number().int().nonnegative().optional(),
+        limit: z.number().int().min(1).max(100).default(50),
+      },
+      annotations,
+    },
+    async ({ group_id, item_id, since, until, limit }) => {
+      try {
+        const changes = developmentChanges(store, {
+          groupId: group_id,
+          itemId: item_id,
+          since,
+          until,
+          limit,
+        });
+        return changes
+          ? response(changes)
+          : { ...response({ error: "Development not found" }), isError: true };
+      } catch (error) {
+        return {
+          ...response({
+            error: error instanceof Error ? error.message : "Invalid request",
+          }),
+          isError: true,
+        };
+      }
     },
   );
   server.registerTool(

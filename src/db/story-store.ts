@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import { invalidateScores } from "./score-queue";
+import { recordChangeEvent } from "../dev-changes";
 import {
   planStories,
   STORY_RULE_VERSION,
@@ -150,12 +151,31 @@ export class StoryStore {
             next.groupId !== row.group_id ||
             next.evidence !== row.evidence ||
             next.version !== row.rule_version
-          )
+          ) {
             this.sqlite
               .query(
                 "UPDATE story_memberships SET ended_at=? WHERE item_id=? AND ended_at IS NULL",
               )
               .run(now, row.item_id);
+            // Reversible grouping correction: append-only evidence that the
+            // item no longer belongs to this development. Published/frozen
+            // history is never rewritten; the ended membership remains.
+            recordChangeEvent(this.sqlite, {
+              itemId: row.item_id,
+              kind: "grouping_corrected",
+              groupId: row.group_id,
+              reportedAt: null,
+              eventAt: null,
+              observedAt: now,
+              sourceId: null,
+              nativeId: null,
+              evidence: {
+                reason: "membership_corrected",
+                ruleVersion: plan.version,
+                movedToGroupId: next?.groupId ?? null,
+              },
+            });
+          }
         }
         const unchanged = new Set(
           current
