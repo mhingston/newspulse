@@ -9,6 +9,7 @@ import {
   adaptationHistorySchema,
   ADAPTATION_ARMS,
   evaluateInterestAdaptation,
+  FLAT_USEFUL_STEP,
   latestFeedbackFor,
   type AdaptationHistory,
   type InterestAdaptationReport,
@@ -140,6 +141,62 @@ test("reweighting and boosting never touch items without recorded events, and si
   expect(baselineRow.total).toBe(58);
   expect(boostRow.total).toBe(60);
 });
+
+test("overlapping interests cannot exceed the cumulative per-item boost bound", () => {
+  // Three clones of the same interest, all qualified by the same useful
+  // judgments and all matching the same items. An uncapped per-interest
+  // boost would stack three steps onto one item and reverse an explicit
+  // not_useful penalty's net effect.
+  const clones = [2, 3, 4].map((version) => ({
+    ...corpus.profiles[0]!,
+    id: `synthetic-robotics-clone-${version}`,
+    version,
+  }));
+  const multi: EvaluationCorpus = {
+    ...corpus,
+    profiles: [...corpus.profiles, ...clones],
+  };
+  expect(multi.profiles).toHaveLength(4);
+  const report = evaluateInterestAdaptation(multi, history);
+  const boost = report.arms.find(
+    (arm) => arm.arm === "expiring-feedback-boost",
+  )!;
+  const baseline = report.arms.find((arm) => arm.arm === "baseline")!;
+  // Every boost-qualified interest records its temporary boost: the original
+  // plus three clones.
+  expect(boost.changes.temporaryBoosts).toHaveLength(4);
+  for (const baselineRow of baseline.ranking) {
+    const boostRow = boost.ranking.find((row) => row.id === baselineRow.id)!;
+    expect(boostRow.total).toBeGreaterThanOrEqual(baselineRow.total);
+    // The cumulative per-item boost is capped at the flat useful step,
+    // relative to the baseline arm's adjusted score.
+    expect(boostRow.total).toBeLessThanOrEqual(
+      baselineRow.total + FLAT_USEFUL_STEP,
+    );
+  }
+  // The explicitly not_useful duplicate stays below its no-feedback standing
+  // even with every clone boost live: the explicit penalty is never
+  // reversed by stacking overlapping interest boosts.
+  const boostRow = boost.ranking.find((row) => row.id === "atlas-duplicate")!;
+  expect(boost.ranking.find((row) => row.id === "atlas-release")).toBeDefined();
+  const noFeedbackTotal = baselineRowNoFeedbackTotal("atlas-duplicate");
+  expect(boostRow.total).toBeLessThan(noFeedbackTotal);
+});
+
+// The baseline arm's recorded total for an item with no feedback feedback
+// history, used as the standing an explicitly not_useful item must never be
+// boosted above.
+function baselineRowNoFeedbackTotal(id: string): number {
+  const noFeedback: AdaptationHistory = {
+    ...history,
+    version: 99,
+    events: history.events.filter((event) => event.itemId !== id),
+  };
+  const report = evaluateInterestAdaptation(corpus, noFeedback, {
+    arms: ["baseline"],
+  });
+  return report.arms[0]!.ranking.find((row) => row.id === id)!.total;
+}
 
 test("expiring boosts expire by clock: an expired window restores baseline behavior", () => {
   const expired = {

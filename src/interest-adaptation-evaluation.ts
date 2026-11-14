@@ -808,6 +808,7 @@ export function evaluateInterestAdaptation(
   // Candidate two: expiring feedback boost. A temporary, bounded,
   // interest-shaped boost that expires by clock after the last useful event.
   const boostScores = new Map(baselineScores);
+  const boostByItem = new Map<string, number>();
   const temporaryBoosts: AdaptationChange[] = [];
   if (arms.includes("expiring-feedback-boost")) {
     for (const profile of active) {
@@ -838,7 +839,11 @@ export function evaluateInterestAdaptation(
       // Applied to everything the interest matched under the baseline, so
       // the boost is interest-shaped. It adds on top of the flat explicit
       // judgment adjustment — an explicit not_useful penalty stays applied,
-      // adaptation never overrides or erases it.
+      // adaptation never overrides or erases it. An item matching several
+      // boosted interests still gains at most FLAT_USEFUL_STEP relative to
+      // its baseline score: the cumulative per-item boost is capped so
+      // overlapping interests cannot push an explicitly not_useful item
+      // above its no-feedback standing or exceed the documented bound.
       const matchedIds = [...baselineScores.entries()]
         .filter(
           ([id, score]) =>
@@ -847,16 +852,21 @@ export function evaluateInterestAdaptation(
         )
         .map(([id]) => id);
       for (const id of matchedIds) {
+        const applied = boostByItem.get(id) ?? 0;
+        const remainingCap = FLAT_USEFUL_STEP - applied;
+        if (remainingCap <= 0) continue;
+        const appliedStep = Math.min(step, remainingCap);
         const score = boostScores.get(id)!;
         boostScores.set(
           id,
           applyAdjustment(
             score,
             score.components.relevance,
-            step,
-            `adaptation:temporary-boost:interest=${profile.id}@${profile.version}:expiry=${expiry}:adj=${step}`,
+            appliedStep,
+            `adaptation:temporary-boost:interest=${profile.id}@${profile.version}:expiry=${expiry}:adj=${appliedStep}:cumulative=${applied + appliedStep}`,
           ),
         );
+        boostByItem.set(id, applied + appliedStep);
       }
       temporaryBoosts.push({
         interestId: profile.id,
