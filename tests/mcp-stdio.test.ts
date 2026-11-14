@@ -2,6 +2,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import type { Transport } from "@modelcontextprotocol/sdk/shared/transport.js";
+import type { JSONRPCMessage } from "@modelcontextprotocol/sdk/types.js";
+import { PendingRequests } from "../src/mcp-stdio";
 import { Store } from "../src/db/store";
 import { RssAdapter } from "../src/adapters/rss";
 import { Worker } from "../src/worker";
@@ -105,8 +107,64 @@ async function exited(pid: number, timeoutMs = 15000): Promise<boolean> {
   return false;
 }
 
+const request = (id: number): JSONRPCMessage =>
+  ({ jsonrpc: "2.0", id, method: "tools/call", params: {} }) as JSONRPCMessage;
+const result = (id: number): JSONRPCMessage =>
+  ({ jsonrpc: "2.0", id, result: {} }) as JSONRPCMessage;
+const errorResponse = (id: number): JSONRPCMessage =>
+  ({
+    jsonrpc: "2.0",
+    id,
+    error: { code: -32603, message: "boom" },
+  }) as JSONRPCMessage;
+
+test("PendingRequests drains only after every in-flight tool handler's response settles (issue #30 review finding 1)", async () => {
+  const pending = new PendingRequests();
+  // Notifications must never block a drain.
+  pending.add({
+    jsonrpc: "2.0",
+    method: "notifications/initialized",
+  } as JSONRPCMessage);
+  expect(pending.size).toBe(0);
+  pending.add(request(1));
+  pending.add(request(2));
+  expect(pending.size).toBe(2);
+  const drained = pending.drain();
+  let resolved = false;
+  void drained.then(() => {
+    resolved = true;
+  });
+  await Bun.sleep(5);
+  expect(resolved).toBe(false);
+  // A handler still holding its id keeps the database open (no drain).
+  pending.settle(result(1));
+  expect(pending.size).toBe(1);
+  await Bun.sleep(5);
+  expect(resolved).toBe(false);
+  // A handler that FAILED also settles (its error response is its settle).
+  pending.settle(errorResponse(2));
+  expect(pending.size).toBe(0);
+  await drained;
+  expect(await pending.drain()).toBeUndefined();
+});
+
+test("PendingRequests.clear settles an interrupted session so shutdown cannot hang", async () => {
+  const pending = new PendingRequests();
+  pending.add(request(7));
+  const drained = pending.drain();
+  pending.clear();
+  expect(pending.size).toBe(0);
+  await drained;
+});
+
 test("official SDK client over stdio initializes, lists the same tool contract, calls read tools and closes without leaks", async () => {
   const { client, transport } = stdioSession();
+  // The ordered shutdown is observable: draining runs before the process
+  // exits, so a settled handler never races the caller's store close.
+  const stderrChunks: string[] = [];
+  transport.stderr?.on("data", (chunk: Buffer) =>
+    stderrChunks.push(chunk.toString("utf8")),
+  );
   const errors: unknown[] = [];
   transport.onerror = (error) => errors.push(error);
   expect(transport.pid).toBeNull();
@@ -135,10 +193,21 @@ test("official SDK client over stdio initializes, lists the same tool contract, 
   });
   const listed = JSON.parse((sources.content as { text: string }[])[0]!.text);
   expect(listed.sources.length).toBe(1);
-  // A clean client close ends stdin; the server must exit on its own instead
-  // of leaking a process or its DB handle.
+  // A clean client close ends stdin; the server drains (nothing in flight
+  // here) and exits on its own instead of leaking a process or its DB handle.
   await client.close();
   expect(await exited(pid)).toBe(true);
+  const events = stderrChunks
+    .join("")
+    .split("\n")
+    .filter((line) => line.trim().startsWith("{"))
+    .map((line) => JSON.parse(line));
+  expect(events.some((event) => event.event === "mcp_stdio_draining")).toBe(
+    true,
+  );
+  expect(events.some((event) => event.event === "mcp_stdio_stopped")).toBe(
+    true,
+  );
   expect(errors).toEqual([]);
 });
 
@@ -188,6 +257,20 @@ test("malformed line on stdin does not corrupt the protocol: the next valid requ
       stderr: "pipe",
     },
   );
+  const stderrChunks: string[] = [];
+  void (async () => {
+    const reader = proc.stderr!.getReader();
+    const decoder = new TextDecoder();
+    while (true) {
+      try {
+        const { done, value } = await reader.read();
+        if (done) break;
+        stderrChunks.push(decoder.decode(value, { stream: true }));
+      } catch {
+        break;
+      }
+    }
+  })();
   proc.stdin!.write(
     `${JSON.stringify({
       jsonrpc: "2.0",
@@ -234,7 +317,24 @@ test("malformed line on stdin does not corrupt the protocol: the next valid requ
   expect(
     messages[1].result.tools.map((tool: { name: string }) => tool.name),
   ).toEqual(expect.arrayContaining(expectedToolNames));
-  // The malformed line did not end the session.
+  // The malformed line did not end the session, and it produced the promised
+  // stderr diagnostic (issue #30 review finding 2): neither the entry point
+  // nor createMcp left the SDK error callback uninstalled. The error message
+  // text comes from the runtime's JSON parser, so the contract here is that a
+  // diagnostic event exists and carries a message.
+  await Bun.sleep(100);
+  const stderr = stderrChunks.join("");
+  expect(stderr).toContain("mcp_stdio_protocol_error");
+  const errorEvents = stderr
+    .split("\n")
+    .filter((line) => line.includes("mcp_stdio_protocol_error"))
+    .map((line) => JSON.parse(line));
+  expect(errorEvents.length).toBeGreaterThan(0);
+  expect(
+    errorEvents.every(
+      (event) => typeof event.error === "string" && event.error.length > 0,
+    ),
+  ).toBe(true);
   expect(proc.exitCode).toBeNull();
   proc.stdin!.end();
   proc.kill();
