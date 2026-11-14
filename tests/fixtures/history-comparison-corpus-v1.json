@@ -1,0 +1,163 @@
+{
+  "version": 1,
+  "id": "history-comparison-v1",
+  "asOf": 1794808800000,
+  "windowDays": 7,
+  "notes": "Synthetic multi-week regression fixture for issue #26 (evaluated, never real user data). Two recorded source waves across ten days: week one establishes prior coverage; week two brings a retracted benchmark claim, an unchanged verbatim re-publication, a broad-topic decoy, a genuinely new development, an undated discussion item, and a widened product recall whose retained content has expired under the recorded retention policy. Every published_at/observed_at pair is recorded; the discussion item deliberately declares no report date.",
+  "sources": [
+    {
+      "id": "src-techwire",
+      "url": "https://techwire.example/feed.xml",
+      "title": "TechWire"
+    },
+    {
+      "id": "src-wire",
+      "url": "https://wire.example/feed.xml",
+      "title": "The Wire"
+    }
+  ],
+  "items": [
+    {
+      "id": "atlas-2",
+      "url": "https://techwire.example/atlas-2",
+      "sourceId": "src-techwire",
+      "nativeId": "atlas-techwire-1",
+      "development": "atlas-benchmark",
+      "publishedAt": 1793944800000,
+      "expectation": "meaningful_update",
+      "observations": [
+        {
+          "observedAt": 1793944800000,
+          "title": "Acme releases Atlas 2 robotics model",
+          "text": "The Atlas 2 robotics platform ships with a 98.2 composite benchmark result, a reproducible evaluation harness, released weights and licensing details published in the announcement.",
+          "publishedAt": 1793944800000
+        },
+        {
+          "observedAt": 1794780000000,
+          "title": "Acme releases Atlas 2 robotics model",
+          "text": "Acme retracts the Atlas 2 composite benchmark claim in a published correction notice; the earlier figures were wrong, the released weights remain available, and a corrected number is pending a fresh evaluation.",
+          "publishedAt": 1794780000000
+        }
+      ]
+    },
+    {
+      "id": "atlas-2-expired",
+      "url": "https://techwire.example/atlas-recall",
+      "sourceId": "src-techwire",
+      "nativeId": "atlas-techwire-2",
+      "development": "atlas-recall",
+      "publishedAt": 1793944800000,
+      "expectation": "meaningful_update",
+      "expiredDetail": true,
+      "observations": [
+        {
+          "observedAt": 1793944800000,
+          "title": "Acme recalls Atlas 2 units over battery defect",
+          "text": "Acme recalls Atlas 2 robotics units over a battery defect affecting three production lots; owners are told to stop charging and await replacement instructions.",
+          "publishedAt": 1793944800000
+        },
+        {
+          "observedAt": 1794780000000,
+          "title": "Acme recalls Atlas 2 units over battery defect",
+          "text": "Acme expands the Atlas 2 battery recall to seven additional lots across two regions after further defect reports and reissues replacement instructions.",
+          "publishedAt": 1794780000000
+        }
+      ]
+    },
+    {
+      "id": "atlas-wire",
+      "url": "https://wire.example/atlas-correction",
+      "sourceId": "src-wire",
+      "nativeId": "wire-1",
+      "development": "atlas-benchmark",
+      "publishedAt": 1794780000000,
+      "expectation": "no_update",
+      "observations": [
+        {
+          "observedAt": 1794780000000,
+          "title": "Independent report on the model correction",
+          "text": "Acme retracts the Atlas 2 composite benchmark claim in a published correction notice; the earlier figures were wrong, the released weights remain available, and a corrected number is pending a fresh evaluation.",
+          "publishedAt": 1794780000000
+        }
+      ]
+    },
+    {
+      "id": "atlas-methods",
+      "url": "https://wire.example/discussion",
+      "sourceId": "src-wire",
+      "nativeId": "wire-2",
+      "development": "atlas-methods",
+      "publishedAt": null,
+      "missingReportDate": true,
+      "expectation": "new_coverage",
+      "observations": [
+        {
+          "observedAt": 1794780000000,
+          "title": "Discussion re-examines the Atlas 2 evaluation methodology",
+          "text": "A practitioner thread re-examines the Atlas 2 evaluation methodology, the harness design and what a corrected benchmark protocol should measure.",
+          "publishedAt": null
+        }
+      ]
+    },
+    {
+      "id": "industry-note",
+      "url": "https://techwire.example/industry-note",
+      "sourceId": "src-techwire",
+      "nativeId": "atlas-techwire-3",
+      "development": null,
+      "publishedAt": 1794780000000,
+      "expectation": "decoy",
+      "observations": [
+        {
+          "observedAt": 1794780000000,
+          "title": "Weekly industry robotics digest",
+          "text": "Atlas and rival robotics models dominated industry updates this week as three vendors shipped toolkits, announced funding rounds and published platform releases.",
+          "publishedAt": 1794780000000
+        }
+      ]
+    },
+    {
+      "id": "orion-4",
+      "url": "https://techwire.example/orion-4",
+      "sourceId": "src-techwire",
+      "nativeId": "atlas-techwire-4",
+      "development": "orion-preview",
+      "publishedAt": 1794780000000,
+      "expectation": "new_coverage",
+      "observations": [
+        {
+          "observedAt": 1794780000000,
+          "title": "Acme launches Orion 4 research preview",
+          "text": "Acme launches the Orion 4 research preview with an open evaluation harness, reproducible published results and a staged invitation schedule.",
+          "publishedAt": 1794780000000
+        }
+      ]
+    }
+  ],
+  "queries": [
+    {
+      "id": "q-atlas-benchmark",
+      "terms": "atlas benchmark",
+      "development": "atlas-benchmark",
+      "anchorItemId": "atlas-2"
+    },
+    {
+      "id": "q-atlas-recall",
+      "terms": "recall battery lots",
+      "development": "atlas-recall",
+      "anchorItemId": "atlas-2-expired"
+    },
+    {
+      "id": "q-orion-preview",
+      "terms": "orion research preview",
+      "development": "orion-preview",
+      "anchorItemId": "orion-4"
+    },
+    {
+      "id": "q-atlas-methods",
+      "terms": "evaluation methodology harness",
+      "development": "atlas-methods",
+      "anchorItemId": "atlas-methods"
+    }
+  ]
+}
