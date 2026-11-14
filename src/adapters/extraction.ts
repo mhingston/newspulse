@@ -13,6 +13,12 @@ export type Extraction = {
   reason?: string;
   retryable?: boolean;
   method?: string;
+  /**
+   * Raw RSS/Atom feed declarations (`<link>` hrefs) captured from the fetched
+   * HTML head, bounded in size and resolution-free. Source suggestions read
+   * these recorded links instead of re-fetching the page.
+   */
+  feedLinks?: string[];
 };
 export interface ContentExtractor {
   extract(
@@ -148,6 +154,34 @@ function decodeBody(
   }
 }
 class RetryableExtractionError extends Error {}
+/** Bounded capture of declared RSS/Atom feed links from an HTML head. */
+const MAX_FEED_LINKS = 10;
+const MAX_FEED_LINK_HREF_CHARS = 2048;
+function captureFeedLinks(document: Document, base: string): string[] {
+  const links: string[] = [];
+  const seen = new Set<string>();
+  for (const node of document.querySelectorAll(
+    "link[rel], link[type], link[href]",
+  )) {
+    if (links.length >= MAX_FEED_LINKS) break;
+    const element = node as Element;
+    const type = element.getAttribute("type") ?? "";
+    const rel = element.getAttribute("rel") ?? "";
+    const href = element.getAttribute("href");
+    if (!href || !/(?:rss|atom)\+xml/i.test(type)) continue;
+    if (rel && !/\balternate\b/i.test(rel)) continue;
+    if (href.length > MAX_FEED_LINK_HREF_CHARS) continue;
+    try {
+      const absolute = new URL(href, base).href;
+      if (seen.has(absolute)) continue;
+      seen.add(absolute);
+      links.push(absolute);
+    } catch {
+      // Unresolvable href is skipped; nothing is fetched here.
+    }
+  }
+  return links;
+}
 export class HttpContentExtractor implements ContentExtractor {
   // One in-flight lookup per hostname, shared by concurrent callers. A second
   // caller for the same host awaits the same result instead of failing.
@@ -232,9 +266,12 @@ export class HttpContentExtractor implements ContentExtractor {
           response.headers["content-type"] ?? "",
           type === "text/html",
         );
+        let feedLinks: string[] | undefined;
         let interstitial = false;
         if (type === "text/html") {
           const { document } = parseHTML(text);
+          // Record feed declarations before any node removal mutates the tree.
+          feedLinks = captureFeedLinks(document, url.href);
           const article = document.querySelector("article,main");
           const originalText = document.body?.textContent ?? "";
           interstitial =
@@ -278,6 +315,7 @@ export class HttpContentExtractor implements ContentExtractor {
           text,
           resolvedUrl: url.href,
           method: "http",
+          ...(feedLinks && feedLinks.length > 0 ? { feedLinks } : {}),
         };
       }
       throw new Error("Too many redirects");

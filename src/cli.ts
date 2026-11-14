@@ -93,7 +93,27 @@ import {
   type EvaluationReport,
   type Gate,
 } from "./evaluation";
+import {
+  acceptSourceSuggestion,
+  dismissSourceSuggestion,
+  muteSourceSuggestion,
+  refreshSourceSuggestions,
+  unmuteSourceSuggestion,
+  SourceSuggestionStore,
+  type SourceSuggestionRecord,
+  type SourceSuggestionState,
+} from "./source-suggestions";
+import {
+  evaluateSourceRecommendations,
+  sourceRecommendationCorpusSchema,
+} from "./source-suggestion-evaluation";
 const [command, ...args] = process.argv.slice(2);
+const suggestionStateNames: ReadonlySet<string> = new Set([
+  "proposed",
+  "accepted",
+  "dismissed",
+  "muted",
+]);
 const path = process.env.DB_PATH ?? "./data/newspulse.sqlite";
 function required(index: number, name: string): string {
   const arg = args[index];
@@ -196,6 +216,103 @@ async function main() {
         );
     } finally {
       rmSync(dir, { recursive: true, force: true });
+    }
+    return;
+  }
+  if (command === "evaluate-source-recommendations") {
+    const input: unknown = JSON.parse(
+      await Bun.file(
+        required(0, "source recommendation corpus JSON path"),
+      ).text(),
+    );
+    const start = performance.now();
+    const report = evaluateSourceRecommendations(input);
+    const elapsed = performance.now() - start;
+    console.log(JSON.stringify(report, null, 2));
+    if (args.includes("--timing"))
+      console.error(
+        JSON.stringify({
+          elapsedMs: elapsed,
+          scope: "offline in-process replay",
+          deterministic: false,
+        }),
+      );
+    return;
+  }
+  if (command === "suggest-sources") {
+    const store = new Store(path);
+    try {
+      const run = refreshSourceSuggestions(store, { now: Date.now() });
+      console.log(JSON.stringify(run, null, 2));
+    } finally {
+      store.close();
+    }
+    return;
+  }
+  if (command === "list-source-suggestions") {
+    const stateArg = args[0];
+    const state = stateArg
+      ? suggestionStateNames.has(stateArg)
+        ? stateArg
+        : null
+      : undefined;
+    if (state === null) throw new Error("Invalid suggestion state");
+    const store = new Store(path);
+    try {
+      const suggestions = new SourceSuggestionStore(store.sqlite).list(
+        state as SourceSuggestionState | undefined,
+      );
+      console.log(JSON.stringify(suggestions, null, 2));
+    } finally {
+      store.close();
+    }
+    return;
+  }
+  if (command === "accept-source-suggestion") {
+    const store = new Store(path);
+    try {
+      const outcome = acceptSourceSuggestion(
+        store,
+        required(0, "suggestion ID"),
+        {
+          now: Date.now(),
+          pollSeconds: args[1] ? Number(args[1]) : undefined,
+        },
+      );
+      console.log(JSON.stringify(outcome, null, 2));
+    } finally {
+      store.close();
+    }
+    return;
+  }
+  if (
+    command === "dismiss-source-suggestion" ||
+    command === "mute-source-suggestion" ||
+    command === "unmute-source-suggestion"
+  ) {
+    const store = new Store(path);
+    try {
+      const change =
+        command === "dismiss-source-suggestion"
+          ? dismissSourceSuggestion(
+              store,
+              required(0, "suggestion ID"),
+              Date.now(),
+            )
+          : command === "mute-source-suggestion"
+            ? muteSourceSuggestion(
+                store,
+                required(0, "suggestion ID"),
+                Date.now(),
+              )
+            : unmuteSourceSuggestion(
+                store,
+                required(0, "suggestion ID"),
+                Date.now(),
+              );
+      console.log(JSON.stringify(change, null, 2));
+    } finally {
+      store.close();
     }
     return;
   }
@@ -982,7 +1099,7 @@ async function main() {
       }
       default:
         throw new Error(
-          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|retention-preview|retention-apply|verify-backup|delivery-list|delivery-suppress-preview EDITION_DATE RECIPIENT PROVIDER_ID|delivery-suppress-confirm EDITION_DATE RECIPIENT PROVIDER_ID AS_OF HASH|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-retrieval CORPUS QUERIES [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|serve-mcp-stdio|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
+          "Usage: bun run cli <discover QUERY|discover-github QUERY|discover-hn QUERY|ingest-url URL [ORIGIN] [SUBMISSION_ID]|submission ITEM_ID|add-source-preview URL [TITLE] [POLL_SECONDS]|add-source-confirm TOKEN|remove-source-preview SOURCE_ID|remove-source-confirm TOKEN|interest-preview JSON|interest-confirm TOKEN|feedback-preview ITEM_ID useful|not-useful [EDITION_DATE]|feedback-confirm TOKEN|discovery-trigger-preview QUERY|discovery-trigger-confirm TOKEN|github-discovery-plan AS_OF|hn-discovery-plan AS_OF|discovery-plan AS_OF|discovery-schedule|discovery-feedback QUERY useful|not-useful|discovery-item-feedback ITEM_ID useful|not-useful|discovery-runs|discovery-pages|discovery-reconcile-preview PAGE_ID|discovery-reconcile PAGE_ID AS_OF HASH|discovery-run-reconcile-preview RUN_ID|discovery-run-reconcile RUN_ID AS_OF HASH|delivery-restore-preview|delivery-restore-confirm AS_OF HASH|retention-preview|retention-apply|verify-backup|delivery-list|delivery-suppress-preview EDITION_DATE RECIPIENT PROVIDER_ID|delivery-suppress-confirm EDITION_DATE RECIPIENT PROVIDER_ID AS_OF HASH|delivery-reconcile-preview ID accepted|not_sent PROVIDER_ID|-|delivery-reconcile ID accepted|not_sent PROVIDER_ID|- AS_OF HASH|digest-preview DATE|digest-freeze DATE AS_OF HASH|evaluate CORPUS [K] [--timing]|evaluate-retrieval CORPUS QUERIES [K] [--timing]|evaluate-compare BASELINE CURRENT [GATES]|evaluate-source-recommendations CORPUS|suggest-sources|list-source-suggestions [proposed|accepted|dismissed|muted|expired]|accept-source-suggestion ID [POLL_SECONDS]|dismiss-source-suggestion ID|mute-source-suggestion ID|unmute-source-suggestion ID|serve-mcp-stdio|init|analysis-reservations|analysis-reconcile KEY|analysis-acknowledge-envelope|analysis-retry ITEM_ID|analysis-reanalyse ITEM_ID|import-profiles FILE|export-profiles|list-profiles|add-source URL [TITLE] [POLL_SECONDS]|list-sources|update-source ID option=value...|enable-source ID|disable-source ID|remove-source ID|import-opml FILE|export-opml|poll [--force]|search QUERY|status|backup FILE|restore FILE>",
         );
     }
   } finally {
