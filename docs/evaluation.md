@@ -189,3 +189,26 @@ Measurement is per labeled alert-worthy event observation: the first recorded co
 Interpretation preserved in decision [D19](decisions.md): the digest cadence is the measured gap — everything observed between two editions waits for the next 06:00 publication, and three of the four labeled alert-worthy events exceeded their recorded horizons on the baseline. The candidate closes most of that gap without noise — triggers are only the recorded `story_change_events` surface from issue #26, so a high-scoring article with no recorded change evidence never alerts, URL-only edits record no new facts (bodies or headlines changed) and are suppressed as cosmetic, verbatim republication is suppressed as repeat coverage through membership-history attribution (first coverage is recorded before grouping resolves, with no group assigned yet), and slow news stays below the fixed priority threshold — but the quiet-hours discipline and a tight usefulness horizon genuinely conflict: an urgent update observed at 22:30 cannot deliver before 07:00, so quake#2 missed its horizon. Under the threshold fixed before the replay, that honest miss records as a non-adoption at the recorded settings. Every alert and every suppression persists why it fired or stayed silent (decision snapshot with the recorded evidence, thresholds, score reference and suppression reason per local day); scores must be current in exactly the same sense the digest requires (a pending or refreshing score defers the batch and retires nothing), and a regrouped development's pending alert is cancelled atomically at the shared claim/send boundary before any provider contact.
 
 Not measured here and recorded as unknown: alert usefulness on live sources (the corpus is synthetic), monetary send cost per alert (the replay contacts no provider — cost is recorded as unknown, not zero), and real-client behavior of the opt-in destination. Alert delivery reuses the shipped outbox rules, so crash-after-send, idempotency-expiry, cancellation and default-disabled contracts are covered by focused deterministic tests in `tests/alerts.test.ts` rather than the replay corpus. Normal ingestion availability is unaffected by construction: evaluation reads already-recorded rows in short per-event transactions and runs on the same scheduler stage boundary as polling, never holding a transaction across network work.
+
+## Newsletter replies replay (issue #28)
+
+Issue #28 requires evaluating the "reply to the newsletter" conversational entry point before adoption. The replay (`evaluateNewsletterReplies` in `src/replies-evaluation.ts`) drives the shipped signed-verified inbound path, newsletter indexing, frozen-edition reads and the retention purge on a throwaway production-schema database — no provider, no send path, no AI call:
+
+```sh
+bun run cli evaluate-newsletter-replies tests/fixtures/newsletter-replies-corpus-v1.json
+```
+
+The [newsletter-replies-v1](baselines/newsletter-replies-v1.json) baseline records the replay deterministically (a test re-verifies byte-exact reproduction, including a poisoned-`fetch` run asserting the shipped path makes no network call).
+
+| Scenario                                | Shipped behavior (measured)                                                                              | Verdict                             |
+| --------------------------------------- | -------------------------------------------------------------------------------------------------------- | ----------------------------------- |
+| Valid reply from the recorded recipient | Indexed as an inbound newsletter original attributed to whatever the From header claims                  | `indexed_without_verified_sender`   |
+| Spoofed sender                          | Indexed identically to the genuine reply; no recorded field distinguishes the spoof                      | `indexed_without_verified_sender`   |
+| Forwarded thread                        | Attributed to the forwarder only; quoted original identity unrecorded                                    | `attributed_to_forwarder_only`      |
+| Duplicate provider event                | Deduplicated by recorded provider identity: one row, no second claim                                     | `deduplicated_by_provider_identity` |
+| Auto-responder loop                     | No shipped outbound capability; zero loop risk today — adoption would create the surface                 | `no_outbound_capability`            |
+| Missing/unknown edition                 | No recorded delivery matches; correlation unresolvable                                                   | `correlation_unresolvable`          |
+| Expired reply context                   | Citation survives, frozen edition bytes unchanged, extracted text purged                                 | `citations_survive_context_expired` |
+| Same question over MCP                  | Authenticated `get_digest`/`search_items`/`get_item` answer with source-linked citations and uncertainty | `answered_with_citations_over_mcp`  |
+
+Decision recorded in [D20](decisions.md): the adoption threshold (fixed in code as `ADOPTION_THRESHOLD`) fails on sender verification and edition correlation, and the MCP-equivalence arm shows the client can already reach the same scoped knowledge. Non-adoption recorded with revisit triggers; no reply channel code ships.

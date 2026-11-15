@@ -1,0 +1,76 @@
+{
+  "evaluationVersion": "newsletter-replies-evaluation-v1",
+  "editionDate": "2026-11-10",
+  "scenarios": [
+    {
+      "scenarioId": "valid-reply",
+      "shipped": "signed-verified through the shipped webhook path, retrieved through the shipped worker, and indexed as an inbound newsletter original attributed to whatever the From header claims",
+      "verdict": "indexed_without_verified_sender",
+      "verifiableSender": false,
+      "recordedEditionKey": false
+    },
+    {
+      "scenarioId": "spoofed-sender",
+      "shipped": "indexed identically to the genuine reply (signed webhook accepted, message indexed, From recorded as the claimed recipient address reader@example.test); no recorded field distinguishes this spoof",
+      "verdict": "indexed_without_verified_sender",
+      "verifiableSender": false,
+      "recordedEditionKey": false
+    },
+    {
+      "scenarioId": "forwarded-thread",
+      "shipped": "indexed attributed to the forwarder's address only; the quoted original's identity is not recorded",
+      "verdict": "attributed_to_forwarder_only",
+      "verifiableSender": false,
+      "recordedEditionKey": false
+    },
+    {
+      "scenarioId": "duplicate-event",
+      "shipped": "the duplicate signed event was deduplicated by recorded provider identity: exactly one message row and no second claimable delivery",
+      "verdict": "deduplicated_by_provider_identity",
+      "verifiableSender": false,
+      "recordedEditionKey": false
+    },
+    {
+      "scenarioId": "auto-responder-loop",
+      "shipped": "the shipped inbound path (real signed webhook verification, retrieval worker, newsletter indexing) performs no outbound send and holds no outbound identity, so a reply can never trigger a reply storm today; adopting a reply channel creates that loop surface and would need an explicit guard",
+      "verdict": "no_outbound_capability",
+      "verifiableSender": false,
+      "recordedEditionKey": false
+    },
+    {
+      "scenarioId": "missing-edition",
+      "shipped": "no recorded delivery exists for the referenced edition; correlation is unresolvable from recorded evidence alone",
+      "verdict": "correlation_unresolvable",
+      "verifiableSender": false,
+      "recordedEditionKey": false
+    },
+    {
+      "scenarioId": "expired-context",
+      "shipped": "after the shipped retention purge the missing-detail marker is recorded and the citation survives (item resolvable, frozen edition bytes unchanged) while the reply-needed extracted text is gone; a reply channel would answer with missing detail or not at all",
+      "verdict": "citations_survive_context_expired",
+      "verifiableSender": false,
+      "recordedEditionKey": false
+    },
+    {
+      "scenarioId": "mcp-equivalence",
+      "shipped": "an authenticated client asks the same scoped question over get_digest (the immutable sealed edition), search_items and get_item and receives the recorded development with its source-linked citation and analysis provenance, over the private authenticated surface, with no new trust boundary",
+      "verdict": "answered_with_citations_over_mcp",
+      "verifiableSender": false,
+      "recordedEditionKey": false
+    }
+  ],
+  "gates": {
+    "recordedVerifiableSenderField": false,
+    "recordedReplyEditionCorrelationKey": false,
+    "forwardAttribution": "forwarder_only",
+    "autoResponderLoopRisk": "created_by_adoption",
+    "replySendBudgetSurface": "absent",
+    "shippedReplySends": 0,
+    "duplicateInboundDeduplication": true,
+    "mcpScopedKnowledgeEquivalence": true
+  },
+  "adoption": {
+    "adopt": false,
+    "threshold": "Adopt an opt-in reply channel only when the verified inbound payload records a sender-authorization result, a recorded delivery/edition key correlates a reply to one frozen edition, forwarded and spoofed mail are attributable, and the shipped authenticated MCP surface cannot answer the same scoped question. Otherwise record a justified non-adoption."
+  }
+}
