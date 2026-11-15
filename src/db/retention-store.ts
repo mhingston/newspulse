@@ -367,6 +367,23 @@ function purgeFeedText(db: Database, itemId: string, now: number) {
   ).run(itemId, cycle, now);
 }
 
+/**
+ * Runs the shipped feed-text purge path for exactly one settled item
+ * (fingerprint, tombstones, audit row, FTS rebuild). Used by the retention
+ * pass and exported so offline evaluation can replay real retention behavior
+ * for one labeled item without depending on wall-clock age windows.
+ */
+export function purgeItemFeedText(db: Database, itemId: string, now: number) {
+  db.transaction(() => {
+    if (
+      !fingerprintBeforePurge(db, itemId, { versions: 512, bytes: 8_388_608 })
+    )
+      throw new Error("Tombstone fingerprint budget exhausted");
+    purgeFeedText(db, itemId, now);
+    rebuildItemSearch(db, itemId);
+  }).immediate();
+}
+
 /** Rebuilds one item's FTS row with the same composition as the search triggers. */
 function rebuildItemSearch(db: Database, itemId: string) {
   db.query(

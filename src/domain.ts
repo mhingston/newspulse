@@ -5,7 +5,18 @@ export interface Candidate {
   sourceUrl?: string;
   title: string;
   text: string;
+  /**
+   * The source's declared report/publication time. Left unset when the source
+   * gives none; it is never substituted with another clock.
+   */
   publishedAt?: number;
+  /**
+   * A source-declared event time, only when an adapter can distinguish the
+   * event itself from the report about it. No shipped adapter provides this
+   * today, so change evidence reports an unknown event time (null) rather
+   * than inventing one from the report date or ingestion time.
+   */
+  eventAt?: number;
   children?: { url: string; sourceUrl?: string; title: string }[];
 }
 export interface PollState {

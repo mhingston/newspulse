@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import { invalidateScores } from "./score-queue";
+import { recordChangeEvent } from "../dev-changes";
 import {
   planStories,
   STORY_RULE_VERSION,
@@ -150,12 +151,53 @@ export class StoryStore {
             next.groupId !== row.group_id ||
             next.evidence !== row.evidence ||
             next.version !== row.rule_version
-          )
+          ) {
             this.sqlite
               .query(
                 "UPDATE story_memberships SET ended_at=? WHERE item_id=? AND ended_at IS NULL",
               )
               .run(now, row.item_id);
+            // Reversible grouping corrections: append-only evidence that the
+            // item's development association changed. Published/frozen
+            // history is never rewritten; the ended membership remains. The
+            // correction is recorded on both sides of a move — against the
+            // old group (the correction) and the new group (the assignment) —
+            // so neither the earlier coverage nor the triggering update is
+            // hidden from either development's read.
+            recordChangeEvent(this.sqlite, {
+              itemId: row.item_id,
+              kind: "grouping_corrected",
+              groupId: row.group_id,
+              reportedAt: null,
+              eventAt: null,
+              observedAt: now,
+              sourceId: null,
+              nativeId: null,
+              versionId: null,
+              evidence: {
+                reason: "membership_corrected",
+                ruleVersion: plan.version,
+                movedToGroupId: next?.groupId ?? null,
+              },
+            });
+            if (next && next.groupId !== row.group_id)
+              recordChangeEvent(this.sqlite, {
+                itemId: row.item_id,
+                kind: "grouping_corrected",
+                groupId: next.groupId,
+                reportedAt: null,
+                eventAt: null,
+                observedAt: now,
+                sourceId: null,
+                nativeId: null,
+                versionId: null,
+                evidence: {
+                  reason: "membership_assigned",
+                  ruleVersion: plan.version,
+                  movedFromGroupId: row.group_id,
+                },
+              });
+          }
         }
         const unchanged = new Set(
           current
@@ -381,6 +423,12 @@ export class StoryStore {
       current_memberships: this.sqlite
         .query<{ count: number }, []>(
           "SELECT count(*) AS count FROM story_memberships WHERE ended_at IS NULL",
+        )
+        .get()!.count,
+      // Append-only change evidence (issue #26); count-only diagnostic.
+      recorded_change_events: this.sqlite
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM story_change_events",
         )
         .get()!.count,
       rule_version: STORY_RULE_VERSION,

@@ -1,0 +1,343 @@
+{
+  "evaluation": {
+    "id": "history-comparison-v1",
+    "version": "history-comparison-evaluation-v1"
+  },
+  "corpus": {
+    "id": "history-comparison-v1",
+    "version": 1,
+    "asOf": 1794808800000,
+    "items": 6,
+    "hash": "2f0f2cfe1cfd4411c71130a8051cc4534f61f1e871cd2d34e7c7fa689b1d1c3c"
+  },
+  "config": {
+    "windowDays": 7,
+    "window": {
+      "since": 1794204000000,
+      "until": 1794808800000
+    },
+    "groupingVersion": "specific-development-v1",
+    "changeEvidenceVersion": "development-change-v1",
+    "labelledDevelopments": [
+      "atlas-benchmark",
+      "atlas-methods",
+      "atlas-recall",
+      "orion-preview"
+    ]
+  },
+  "arms": {
+    "baseline": {
+      "description": "Today's baseline capability: windowed search_items (ingested_at window) plus per-hit story/get_item reads; no shipped surface classifies claimed updates, separates report/event/ingestion times per observation, or survives content expiry with change evidence.",
+      "methodology": "For each recorded query: store.search(terms, since, until), then store.getItem for every hit. Stored report dates are preserved exactly as the shipped reads return them — a missing date stays null and is flagged displayedDateUnknown, never substituted with ingestion time, so no baseline chronology invention is inferred (review finding 8); the ingested_at window semantics of the shipped search are a separate, explicitly attributed limitation. Change classification is unavailable.",
+      "perQuery": [
+        {
+          "queryId": "q-atlas-benchmark",
+          "development": "atlas-benchmark",
+          "hits": [
+            {
+              "itemId": "atlas-methods",
+              "ingestedAt": 1794780001000,
+              "displayedTimelineDate": null,
+              "displayedDateUnknown": true,
+              "groupId": "story:3c840c85a4b9be11ba20f611",
+              "evidenceClassification": "unavailable",
+              "detailAvailable": true
+            },
+            {
+              "itemId": "atlas-wire",
+              "ingestedAt": 1794780001000,
+              "displayedTimelineDate": 1794780000000,
+              "displayedDateUnknown": false,
+              "groupId": "story:2ae0d3ad8282325d6047ab7b",
+              "evidenceClassification": "unavailable",
+              "detailAvailable": true
+            }
+          ]
+        },
+        {
+          "queryId": "q-atlas-recall",
+          "development": "atlas-recall",
+          "hits": []
+        },
+        {
+          "queryId": "q-orion-preview",
+          "development": "orion-preview",
+          "hits": [
+            {
+              "itemId": "orion-4",
+              "ingestedAt": 1794780001000,
+              "displayedTimelineDate": 1794780000000,
+              "displayedDateUnknown": false,
+              "groupId": "story:0c00976ea73b4f504497a395",
+              "evidenceClassification": "unavailable",
+              "detailAvailable": true
+            }
+          ]
+        },
+        {
+          "queryId": "q-atlas-methods",
+          "development": "atlas-methods",
+          "hits": [
+            {
+              "itemId": "atlas-methods",
+              "ingestedAt": 1794780001000,
+              "displayedTimelineDate": null,
+              "displayedDateUnknown": true,
+              "groupId": "story:3c840c85a4b9be11ba20f611",
+              "evidenceClassification": "unavailable",
+              "detailAvailable": true
+            }
+          ]
+        }
+      ],
+      "metrics": {
+        "updateRecall": {
+          "numerator": 0,
+          "denominator": 2,
+          "value": 0
+        },
+        "presentedWithoutEvidence": 2,
+        "inventedChronology": [],
+        "expiredUpdatesRetrievable": {
+          "numerator": 0,
+          "denominator": 1,
+          "value": 0
+        },
+        "coverageRecall": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1
+        }
+      }
+    },
+    "adopted": {
+      "description": "Recorded change evidence (issue #26 slice): per development, get_development_changes reads the append-only story_change_events written at ingestion and grouping-correction time, with citations that survive content expiry and explicit unknown report/event times.",
+      "methodology": "For each recorded query: resolve the anchor item's development, then developmentChanges({groupId, since, until}); classify events by kind; unknown dates stay null.",
+      "perQuery": [
+        {
+          "queryId": "q-atlas-benchmark",
+          "development": "atlas-benchmark",
+          "groupId": "story:2ae0d3ad8282325d6047ab7b",
+          "events": [
+            {
+              "id": 7,
+              "kind": "new_coverage",
+              "itemId": "atlas-wire",
+              "reportedAt": 1794780000000,
+              "eventAt": null,
+              "observedAt": 1794780001000,
+              "detailAvailable": true,
+              "detailUnavailableReason": null,
+              "citationUrl": "https://wire.example/atlas-correction",
+              "citationNativeId": "wire-1",
+              "classifiedAs": "new_coverage",
+              "evidence": {
+                "version": "development-change-v1",
+                "reason": "new_coverage"
+              }
+            },
+            {
+              "id": 3,
+              "kind": "content_change",
+              "itemId": "atlas-2",
+              "reportedAt": 1794780000000,
+              "eventAt": null,
+              "observedAt": 1794780001000,
+              "detailAvailable": true,
+              "detailUnavailableReason": null,
+              "citationUrl": "https://techwire.example/atlas-2",
+              "citationNativeId": "atlas-techwire-1",
+              "classifiedAs": "claimed_update",
+              "evidence": {
+                "version": "development-change-v1",
+                "titleChanged": false,
+                "bodyChanged": true,
+                "urlChanged": false,
+                "addedTerms": [
+                  "acme",
+                  "available",
+                  "claim",
+                  "corrected",
+                  "correction",
+                  "earlier",
+                  "figures",
+                  "fresh",
+                  "notice",
+                  "number",
+                  "pending",
+                  "remain",
+                  "retracts",
+                  "were",
+                  "wrong"
+                ],
+                "removedTerms": [
+                  "announcement",
+                  "details",
+                  "harness",
+                  "licensing",
+                  "platform",
+                  "reproducible",
+                  "result",
+                  "robotics",
+                  "ships",
+                  "with"
+                ]
+              }
+            }
+          ],
+          "coverage": {
+            "currentMembers": 2,
+            "membersWithoutChangeEvidence": 1
+          }
+        },
+        {
+          "queryId": "q-atlas-recall",
+          "development": "atlas-recall",
+          "groupId": "story:4c4a8ad2f85c1b260670ed95",
+          "events": [
+            {
+              "id": 4,
+              "kind": "content_change",
+              "itemId": "atlas-2-expired",
+              "reportedAt": 1794780000000,
+              "eventAt": null,
+              "observedAt": 1794780001000,
+              "detailAvailable": false,
+              "detailUnavailableReason": "content_expired_retention_citation_retained",
+              "citationUrl": "https://techwire.example/atlas-recall",
+              "citationNativeId": "atlas-techwire-2",
+              "classifiedAs": "claimed_update",
+              "evidence": {
+                "version": "development-change-v1",
+                "titleChanged": false,
+                "bodyChanged": true,
+                "urlChanged": false,
+                "addedTerms": [
+                  "across",
+                  "additional",
+                  "after",
+                  "expands",
+                  "further",
+                  "recall",
+                  "regions",
+                  "reissues",
+                  "reports",
+                  "seven"
+                ],
+                "removedTerms": [
+                  "affecting",
+                  "await",
+                  "charging",
+                  "over",
+                  "owners",
+                  "production",
+                  "recalls",
+                  "robotics",
+                  "stop",
+                  "three",
+                  "told",
+                  "units"
+                ]
+              }
+            }
+          ],
+          "coverage": {
+            "currentMembers": 1,
+            "membersWithoutChangeEvidence": 0
+          }
+        },
+        {
+          "queryId": "q-orion-preview",
+          "development": "orion-preview",
+          "groupId": "story:0c00976ea73b4f504497a395",
+          "events": [
+            {
+              "id": 6,
+              "kind": "new_coverage",
+              "itemId": "orion-4",
+              "reportedAt": 1794780000000,
+              "eventAt": null,
+              "observedAt": 1794780001000,
+              "detailAvailable": true,
+              "detailUnavailableReason": null,
+              "citationUrl": "https://techwire.example/orion-4",
+              "citationNativeId": "atlas-techwire-4",
+              "classifiedAs": "new_coverage",
+              "evidence": {
+                "version": "development-change-v1",
+                "reason": "new_coverage"
+              }
+            }
+          ],
+          "coverage": {
+            "currentMembers": 1,
+            "membersWithoutChangeEvidence": 1
+          }
+        },
+        {
+          "queryId": "q-atlas-methods",
+          "development": "atlas-methods",
+          "groupId": "story:3c840c85a4b9be11ba20f611",
+          "events": [
+            {
+              "id": 8,
+              "kind": "new_coverage",
+              "itemId": "atlas-methods",
+              "reportedAt": null,
+              "eventAt": null,
+              "observedAt": 1794780001000,
+              "detailAvailable": true,
+              "detailUnavailableReason": null,
+              "citationUrl": "https://wire.example/discussion",
+              "citationNativeId": "wire-2",
+              "classifiedAs": "new_coverage",
+              "evidence": {
+                "version": "development-change-v1",
+                "reason": "new_coverage"
+              }
+            }
+          ],
+          "coverage": {
+            "currentMembers": 1,
+            "membersWithoutChangeEvidence": 1
+          }
+        }
+      ],
+      "metrics": {
+        "updateRecall": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1
+        },
+        "updateFalsePositives": [],
+        "inventedChronology": [],
+        "expiredUpdatesRetrievable": {
+          "numerator": 1,
+          "denominator": 1,
+          "value": 1
+        },
+        "coverageRecall": {
+          "numerator": 2,
+          "denominator": 2,
+          "value": 1
+        }
+      }
+    }
+  },
+  "adoption": {
+    "adopted": true,
+    "threshold": "Adopt the recorded change-evidence slice only when, on the same labeled multi-week corpus, instant and query set: the baseline leaves at least one labeled meaningful update unretrievable through documented windowed reads; the adopted read retrieves every labeled meaningful update (recall 1.0) without classifying any labeled unchanged repeat or broad-topic decoy as a claimed update; labeled unknown report dates remain unknown (no invented chronology); expired content stays citable with detail marked unavailable; labeled coverage recall does not fall below the baseline; and the replay provider call count is zero. Otherwise record a justified non-adoption.",
+    "reason": "gap confirmed and closed: the recorded evidence read retrieves every labeled meaningful update, classifies unchanged repeats and decoys correctly, keeps unknown dates unknown, retains citations for expired content, and loses no labeled coverage",
+    "summary": "Baseline update recall 0/2 versus adopted 2/2; adopted claimed-update false positives 0; invented chronology 0; expired updates citable 1/1."
+  },
+  "usage": {
+    "providerCalls": 0,
+    "cost": null,
+    "costPerUpdate": {
+      "value": null,
+      "note": "Recorded evidence writes are local; replay provider calls are zero and monetary cost stays unknown, not zero."
+    }
+  },
+  "latencyMs": null,
+  "latencyReason": "No timing observation recorded; elapsed time is environment-dependent and excluded from deterministic replay."
+}

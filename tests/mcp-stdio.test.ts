@@ -28,6 +28,7 @@ const expectedToolNames = [
   "get_digest",
   "get_discoveries",
   "get_feedback",
+  "get_development_changes",
   "get_interests",
   "get_item",
   "get_sources",
