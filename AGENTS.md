@@ -2,9 +2,9 @@
 
 ## Start here
 
-Read [README.md](README.md), [product and architecture decisions](docs/decisions.md), [implementation roadmap](docs/roadmap.md), and the issue being implemented. [The original handoff](docs/handoff.md) is preserved in full. [Architecture notes](docs/architecture.md) describe the M1 implementation and reference-project review.
+Read [README.md](README.md), [product and architecture decisions](docs/decisions.md), [implementation roadmap](docs/roadmap.md), and the issue being implemented. [Architecture notes](docs/architecture.md) describe the M1 implementation and reference-project review. [Operations](docs/operations.md) is the operator reference: interfaces, settings, sources, processing, delivery, retention and recovery.
 
-The original handoff's “implement M1 only” instruction scoped the initial build in PR #1. It is not a permanent ban on later milestones: a subsequent user request or selected implementation issue authorizes its stated slice. Creating the backlog does not authorize implementing every issue in one session. Respect issue dependencies and keep changes incremental.
+The original “implement M1 only” instruction scoped the initial build in PR #1. It is not a permanent ban on later milestones: a subsequent user request or selected implementation issue authorizes its stated slice. Creating the backlog does not authorize implementing every issue in one session. Respect issue dependencies and keep changes incremental.
 
 Recheck the default branch, issue state, dependent PRs and relevant code before starting. Roadmap snapshots can become stale; GitHub issues own execution state, and merged code/tests own claims about implemented behavior. Do not label planned tables or tools as already available. Update docs when behavior changes.
 
