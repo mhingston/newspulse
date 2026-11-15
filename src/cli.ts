@@ -306,7 +306,7 @@ async function main() {
       await Bun.file(required(0, "evaluation corpus JSON path")).text(),
     );
     const start = performance.now();
-    const report = evaluateNewsletterReplies(corpusInput);
+    const report = await evaluateNewsletterReplies(corpusInput);
     const elapsed = performance.now() - start;
     console.log(JSON.stringify(report, null, 2));
     if (args.includes("--timing"))

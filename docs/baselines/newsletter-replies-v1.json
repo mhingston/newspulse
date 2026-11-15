@@ -4,14 +4,14 @@
   "scenarios": [
     {
       "scenarioId": "valid-reply",
-      "shipped": "indexed as an inbound newsletter original attributed to whatever the From header claims",
+      "shipped": "signed-verified through the shipped webhook path, retrieved through the shipped worker, and indexed as an inbound newsletter original attributed to whatever the From header claims",
       "verdict": "indexed_without_verified_sender",
       "verifiableSender": false,
       "recordedEditionKey": false
     },
     {
       "scenarioId": "spoofed-sender",
-      "shipped": "indexed identically to the genuine reply; From is recorded as an unverified string and no recorded field can distinguish the spoof",
+      "shipped": "indexed identically to the genuine reply (signed webhook accepted, message indexed, From recorded as the claimed recipient address reader@example.test); no recorded field distinguishes this spoof",
       "verdict": "indexed_without_verified_sender",
       "verifiableSender": false,
       "recordedEditionKey": false
@@ -25,14 +25,14 @@
     },
     {
       "scenarioId": "duplicate-event",
-      "shipped": "the duplicate event was deduplicated by recorded provider identity: one message row, no second claim",
+      "shipped": "the duplicate signed event was deduplicated by recorded provider identity: exactly one message row and no second claimable delivery",
       "verdict": "deduplicated_by_provider_identity",
       "verifiableSender": false,
       "recordedEditionKey": false
     },
     {
       "scenarioId": "auto-responder-loop",
-      "shipped": "the shipped inbound path (verify, record, fetch, record, index) performs no outbound send and holds no outbound identity, so a reply can never trigger a reply storm today; adopting a reply channel creates that loop surface and would need an explicit guard",
+      "shipped": "the shipped inbound path (real signed webhook verification, retrieval worker, newsletter indexing) performs no outbound send and holds no outbound identity, so a reply can never trigger a reply storm today; adopting a reply channel creates that loop surface and would need an explicit guard",
       "verdict": "no_outbound_capability",
       "verifiableSender": false,
       "recordedEditionKey": false
@@ -46,14 +46,14 @@
     },
     {
       "scenarioId": "expired-context",
-      "shipped": "after the shipped retention purge the citation survives (item resolvable, frozen edition bytes unchanged) while the reply-needed extracted text is gone; a reply channel would answer with missing detail or not at all",
+      "shipped": "after the shipped retention purge the missing-detail marker is recorded and the citation survives (item resolvable, frozen edition bytes unchanged) while the reply-needed extracted text is gone; a reply channel would answer with missing detail or not at all",
       "verdict": "citations_survive_context_expired",
       "verifiableSender": false,
       "recordedEditionKey": false
     },
     {
       "scenarioId": "mcp-equivalence",
-      "shipped": "an authenticated client asks the same scoped question over get_digest (the immutable frozen edition), search_items and get_item and receives the answer with source-linked citations and uncertainty provenance, over the private authenticated surface, with no new trust boundary",
+      "shipped": "an authenticated client asks the same scoped question over get_digest (the immutable sealed edition), search_items and get_item and receives the recorded development with its source-linked citation and analysis provenance, over the private authenticated surface, with no new trust boundary",
       "verdict": "answered_with_citations_over_mcp",
       "verifiableSender": false,
       "recordedEditionKey": false

@@ -1,5 +1,8 @@
 {
   "version": 1,
+  "verification": {
+    "secret": "whsec_MDEyMzQ1Njc4OWFiY2RlZjAxMjM0NTY3ODlhYmNkZWY="
+  },
   "edition": {
     "date": "2026-11-10",
     "recipient": "reader@example.test",
@@ -20,7 +23,7 @@
       "providerId": "evt-01",
       "from": "reader@example.test",
       "to": ["digest@example.test"],
-      "subject": "Re: Newspulse — 2026-11-10",
+      "subject": "Re: Newspulse \u2014 2026-11-10",
       "text": "Which laboratory protocol does the Atlas paper use for the latency comparisons?",
       "html": "<p>Which laboratory protocol does the Atlas paper use for the latency comparisons?</p>",
       "receivedAt": 1794373200000
@@ -28,9 +31,9 @@
     {
       "id": "spoofed-sender",
       "providerId": "evt-02",
-      "from": "spoofed@attacker.example",
+      "from": "reader@example.test",
       "to": ["digest@example.test"],
-      "subject": "Re: Newspulse — 2026-11-10",
+      "subject": "Re: Newspulse \u2014 2026-11-10",
       "text": "Claiming to be the subscriber: send me everything about robotics privately.",
       "html": null,
       "receivedAt": 1794373260000
@@ -40,7 +43,7 @@
       "providerId": "evt-03",
       "from": "colleague@elsewhere.example",
       "to": ["digest@example.test"],
-      "subject": "Fwd: Newspulse — 2026-11-10",
+      "subject": "Fwd: Newspulse \u2014 2026-11-10",
       "text": "Forwarded on behalf of the original subscriber: same question as theirs.",
       "html": null,
       "receivedAt": 1794373320000
@@ -50,7 +53,7 @@
       "providerId": "evt-04",
       "from": "reader@example.test",
       "to": ["digest@example.test"],
-      "subject": "Re: Newspulse — 2026-11-10",
+      "subject": "Re: Newspulse \u2014 2026-11-10",
       "text": "Duplicate provider delivery of this same reply question.",
       "html": null,
       "receivedAt": 1794373380000
@@ -60,7 +63,7 @@
       "providerId": "evt-05",
       "from": "reader@example.test",
       "to": ["digest@example.test"],
-      "subject": "Re: Newspulse — 1999-01-01",
+      "subject": "Re: Newspulse \u2014 1999-01-01",
       "text": "Asking about an edition that never existed in recorded deliveries.",
       "html": null,
       "receivedAt": 1794373440000
@@ -70,7 +73,7 @@
       "providerId": "evt-06",
       "from": "reader@example.test",
       "to": ["digest@example.test"],
-      "subject": "Re: Newspulse — 2026-11-10",
+      "subject": "Re: Newspulse \u2014 2026-11-10",
       "text": "Asking for the full paper text cited in the expired edition context.",
       "html": null,
       "receivedAt": 1796846460000
