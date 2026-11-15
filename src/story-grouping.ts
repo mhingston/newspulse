@@ -208,12 +208,35 @@ function contentHash(item: StoryInput): string | null {
     ? sha(normalized)
     : null;
 }
+/**
+ * Per-item features are pure functions of one item, but pair comparison asks
+ * for them O(n·k) times. Memoising them per input object keeps planning linear
+ * in the feature work while leaving every comparison result unchanged.
+ */
+const features = new WeakMap<
+  StoryInput,
+  { hash: string | null; action: string | null; terms: string[] }
+>();
+function featuresOf(item: StoryInput) {
+  let cached = features.get(item);
+  if (!cached) {
+    cached = {
+      hash: contentHash(item),
+      action: actionOf(item.title),
+      terms: terms(item.title),
+    };
+    features.set(item, cached);
+  }
+  return cached;
+}
 function sameDevelopment(
   left: StoryInput,
   right: StoryInput,
 ): StoryEvidence | null {
-  const leftHash = contentHash(left);
-  const rightHash = contentHash(right);
+  const leftFeatures = featuresOf(left);
+  const rightFeatures = featuresOf(right);
+  const leftHash = leftFeatures.hash;
+  const rightHash = rightFeatures.hash;
   if (leftHash && leftHash === rightHash) {
     return {
       reason: "syndicated_content",
@@ -224,10 +247,10 @@ function sameDevelopment(
   }
   const gap = Math.abs(at(left) - at(right));
   if (gap > 72 * HOUR) return null;
-  const action = actionOf(left.title);
-  if (!action || action !== actionOf(right.title)) return null;
-  const leftTerms = terms(left.title);
-  const rightTerms = terms(right.title);
+  const action = leftFeatures.action;
+  if (!action || action !== rightFeatures.action) return null;
+  const leftTerms = leftFeatures.terms;
+  const rightTerms = rightFeatures.terms;
   const shared = common(leftTerms, rightTerms);
   if (!versionsAgree(left.title, right.title)) return null;
   if (!namedSubjectsAgree(left.title, right.title)) return null;
