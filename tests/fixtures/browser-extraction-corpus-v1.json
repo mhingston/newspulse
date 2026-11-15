@@ -1,7 +1,7 @@
 {
   "version": 1,
   "id": "browser-extraction-corpus-v1",
-  "notes": "Issue #24 recorded corpus of permitted HTTP-only extraction outcomes and Reddit use cases. Record shapes follow the issue scope: an ordinary permitted static page (HTTP baseline), a genuinely HTTP-inaccessible but permitted-to-render JavaScript-only page (the capability probe the issue requires), a blocked Reddit discussion reached only through the #17 snippet/submission paths, and an anti-abuse interstitial. Every HTTP response is a recorded fixture; no live fetch, no browser launch. Browser renders, declared costs and refusals are recorded so the replay is deterministic.",
+  "notes": "Issue #24 recorded corpus of permitted HTTP-only extraction outcomes and Reddit use cases. Record shapes follow the issue scope: an ordinary permitted static page (HTTP baseline), a genuinely HTTP-inaccessible but permitted-to-render JavaScript-only page (the capability probe the issue requires), a readable JavaScript shell that only holds a loading placeholder (partial coverage exercise for the recorded completeness check), a blocked Reddit discussion reached only through the #17 snippet/submission paths, and an anti-abuse interstitial. Every HTTP response is a recorded fixture; no live fetch, no browser launch. Browser renders, declared costs, refusals and expected-content completeness markers are recorded so the replay is deterministic.",
   "asOf": 1794297600000,
   "budgets": {
     "perRenderTimeoutMs": 20000,
@@ -21,14 +21,17 @@
       "snippet": "Firefly Docking Review — an independent engineering review of the Firefly docking firmware and its bench-test coverage.",
       "http": {
         "status": 200,
-        "headers": { "content-type": "text/html; charset=utf-8" },
+        "headers": {
+          "content-type": "text/html; charset=utf-8"
+        },
         "body": "<html><head><title>Firefly Docking Review</title></head><body><nav>Menu Subscribe</nav><article><h1>Firefly Docking Review</h1><p>The independent review examined the Firefly docking firmware under repeated capture trials and found the contact-sensor latencies stable across 400 cycles.</p><h2>Findings</h2><p>Bench-test coverage tracked the published procedure with two deviations, both recorded in the appendix with reproducible fixture setups.</p></article><footer>Copyright notice</footer></body></html>"
       },
       "browser": {
         "renderedBody": "<html><body><article><h1>Firefly Docking Review</h1><p>The independent review examined the Firefly docking firmware under repeated capture trials and found the contact-sensor latencies stable across 400 cycles.</p><h2>Findings</h2><p>Bench-test coverage tracked the published procedure with two deviations, both recorded in the appendix with reproducible fixture setups.</p></article></body></html>",
         "declaredRenderMs": 3800,
         "declaredMemoryMb": 512
-      }
+      },
+      "expectedHttpContent": ["docking firmware", "Bench-test coverage"]
     },
     {
       "id": "js-only-app-report",
@@ -40,7 +43,9 @@
       "permittedBasis": "Publicly reachable page for ordinary readers: no authentication wall, no robots exclusion or terms prohibition recorded for reading the report with a browser; rendering recovers exactly what a human reader sees.",
       "http": {
         "status": 200,
-        "headers": { "content-type": "text/html; charset=utf-8" },
+        "headers": {
+          "content-type": "text/html; charset=utf-8"
+        },
         "body": "<html><head><title>Atlas-9 Maintenance Report</title><script src=\"/static/app.js\"></script></head><body><header>Insights app chrome</header><div id=\"root\"></div><script>renderReport('atlas-9-maintenance');</script></body></html>"
       },
       "browser": {
@@ -60,7 +65,9 @@
       "snippet": "Atlas-9 maintenance thread — weekly reliability discussion, 47 comments, latest calibration notes and bench teardown photos.",
       "http": {
         "status": 403,
-        "headers": { "content-type": "text/html; charset=utf-8" },
+        "headers": {
+          "content-type": "text/html; charset=utf-8"
+        },
         "body": "<html><body><p>You appear to be making requests too quickly.</p></body></html>"
       },
       "browser": {
@@ -80,13 +87,38 @@
       "snippet": "Gait-controller recall analysis — teardown of the recalled firmware revision and its failure modes.",
       "http": {
         "status": 200,
-        "headers": { "content-type": "text/html; charset=utf-8" },
+        "headers": {
+          "content-type": "text/html; charset=utf-8"
+        },
         "body": "<html><head><title>One more step</title></head><body><p>Please complete the captcha to continue reading this analysis.</p></body></html>"
       },
       "browser": {
         "refusalBasis": "Refused: the page's gate is an anti-abuse challenge control. A browser render that resolves or bypasses it circumvents an access restriction, so no render is measured or recorded; the page stays unavailable with its snippet-level provenance.",
         "declaredRenderMs": 0,
         "declaredMemoryMb": 0
+      }
+    },
+    {
+      "id": "js-shell-loading-placeholder",
+      "useCase": "A readable JavaScript shell that only renders a loading placeholder: the shipped HTTP extractor succeeds on the placeholder text, so the recorded completeness markers decide whether HTTP coverage was complete or partial and whether the browser arm is consulted.",
+      "url": "https://insights.example.org/insights/atlas-8-teardown",
+      "grounding": "capability-probe",
+      "groundingNote": "No unavailable extraction or submitted-but-unreadable URL in the recorded deployment evidence is attributable to a permitted partially readable JavaScript shell; the record exists so the replay models partial HTTP coverage through the recorded completeness markers rather than treating any extracted body as complete coverage. It is a capability probe, not an observed pipeline loss.",
+      "permitted": true,
+      "permittedBasis": "Publicly reachable page for ordinary readers: no authentication wall, no robots exclusion or terms prohibition recorded for reading the report with a browser; rendering recovers exactly what a human reader sees.",
+      "snippet": "Atlas-8 teardown — supplement to the maintenance report, with the revised calibration procedure.",
+      "expectedHttpContent": ["gait-controller calibration", "teardown photos"],
+      "http": {
+        "status": 200,
+        "headers": {
+          "content-type": "text/html; charset=utf-8"
+        },
+        "body": "<html><head><title>Atlas-8 Teardown</title><script src=\"/static/app.js\"></script></head><body><article><p>Loading report...</p></article><script>hydrate('atlas-8-teardown');</script></body></html>"
+      },
+      "browser": {
+        "renderedBody": "<html><body><main><h1>Atlas-8 Teardown</h1><p>The teardown confirms the gait-controller calibration revision matches the maintenance window's recorded procedure, and the teardown photos file the repositioned harness mounts against the revised stance-damping profile.</p></main></body></html>",
+        "declaredRenderMs": 4500,
+        "declaredMemoryMb": 512
       }
     }
   ]

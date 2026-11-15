@@ -4,7 +4,7 @@
     "id": "browser-extraction-corpus-v1",
     "version": 1,
     "asOf": 1794297600000,
-    "hash": "4fdc3d6c1af07fee439981c4089e207338884bdf7ed7f369a0c289edf35dfa0a"
+    "hash": "ee0870f8521106b621aca078ce9ad1a14441a40b413ea140bd2e1aaf843ac5ac"
   },
   "replayShippedSurfaces": {
     "httpExtraction": "HttpContentExtractor (src/adapters/extraction.ts, issue #3) over recorded fake DNS + transport, driven through the shipped extract processing path in the src/main.ts wiring",
@@ -24,6 +24,7 @@
       "http": {
         "method": "http",
         "status": "extracted",
+        "coverage": "complete",
         "reason": null,
         "retryable": false,
         "textChars": 327
@@ -43,10 +44,10 @@
       "httpInaccessible": false,
       "browserRenderPermitted": true,
       "affordable": false,
-      "affordabilityReason": "HTTP-only extraction succeeded; no browser render was needed or attempted",
+      "affordabilityReason": "HTTP-only extraction recorded complete coverage; no browser render was needed or attempted",
       "observedDeploymentGap": false,
       "qualifying": false,
-      "rejectionReason": "Record static-press-article does not qualify: (a) HTTP-only extraction succeeded, so no content was lost to recover; (c) affordability was not established inside the explicit budgets; (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss Baseline coverage record: ordinary static permitted pages already extract through the shipped HTTP-only interface, and issue #3 measured extraction lift over feed text. Recorded as the bounded HTTP baseline arm of this evaluation."
+      "rejectionReason": "Record static-press-article does not qualify: (a) HTTP-only extraction recorded complete coverage, so no content was lost to recover; (c) affordability was not established inside the explicit budgets; (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss Baseline coverage record: ordinary static permitted pages already extract through the shipped HTTP-only interface, and issue #3 measured extraction lift over feed text. Recorded as the bounded HTTP baseline arm of this evaluation."
     },
     {
       "id": "js-only-app-report",
@@ -60,6 +61,7 @@
       "http": {
         "method": "http",
         "status": "unavailable",
+        "coverage": "absent",
         "reason": "Page unavailable",
         "retryable": false,
         "textChars": 0
@@ -96,6 +98,7 @@
       "http": {
         "method": "http",
         "status": "unavailable",
+        "coverage": "absent",
         "reason": "HTTP 403",
         "retryable": false,
         "textChars": 0
@@ -132,6 +135,7 @@
       "http": {
         "method": "http",
         "status": "unavailable",
+        "coverage": "absent",
         "reason": "Page unavailable",
         "retryable": false,
         "textChars": 0
@@ -155,31 +159,81 @@
       "observedDeploymentGap": false,
       "qualifying": false,
       "rejectionReason": "Record captcha-interstitial-page does not qualify: (b) a browser render is not permitted: the page sits behind an authentication, platform/anti-abuse or robots/terms restriction, and rendering it would circumvent that control; (c) affordability was not established inside the explicit budgets; (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss Interstitial anti-abuse controls are common where operators do not want automated reading; the shipped extractor already records these pages unavailable rather than attempting a bypass. Recorded to pin the boundary: a browser render that resolves or dodges the challenge is circumvention and stays unrecoverable."
+    },
+    {
+      "id": "js-shell-loading-placeholder",
+      "useCase": "A readable JavaScript shell that only renders a loading placeholder: the shipped HTTP extractor succeeds on the placeholder text, so the recorded completeness markers decide whether HTTP coverage was complete or partial and whether the browser arm is consulted.",
+      "url": "https://insights.example.org/insights/atlas-8-teardown",
+      "canonicalUrl": "https://insights.example.org/insights/atlas-8-teardown",
+      "grounding": "capability-probe",
+      "groundingNote": "No unavailable extraction or submitted-but-unreadable URL in the recorded deployment evidence is attributable to a permitted partially readable JavaScript shell; the record exists so the replay models partial HTTP coverage through the recorded completeness markers rather than treating any extracted body as complete coverage. It is a capability probe, not an observed pipeline loss.",
+      "permitted": true,
+      "permittedBasis": "Publicly reachable page for ordinary readers: no authentication wall, no robots exclusion or terms prohibition recorded for reading the report with a browser; rendering recovers exactly what a human reader sees.",
+      "http": {
+        "method": "http",
+        "status": "extracted",
+        "coverage": "partial",
+        "reason": null,
+        "retryable": false,
+        "textChars": 17
+      },
+      "browser": {
+        "attempted": true,
+        "outcome": "rendered",
+        "reason": null,
+        "textChars": 236,
+        "renderedMs": 4500,
+        "memoryMb": 512,
+        "sandboxed": true,
+        "secretFree": true,
+        "provenance": "browser-simulated recorded render; the simulated method, resolved URL and source URL are recorded with the text and stay separable from http-method extraction"
+      },
+      "browserLift": 219,
+      "httpInaccessible": true,
+      "browserRenderPermitted": true,
+      "affordable": true,
+      "affordabilityReason": "Rendered within the recorded budgets: declared 4500ms <= 20000ms timeout and 512MB <= 1024MB memory; sandboxed, secret-free and provenance-preserving by adapter construction",
+      "observedDeploymentGap": false,
+      "qualifying": false,
+      "rejectionReason": "Record js-shell-loading-placeholder does not qualify: (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss No unavailable extraction or submitted-but-unreadable URL in the recorded deployment evidence is attributable to a permitted partially readable JavaScript shell; the record exists so the replay models partial HTTP coverage through the recorded completeness markers rather than treating any extracted body as complete coverage. It is a capability probe, not an observed pipeline loss."
     }
   ],
   "gates": {
-    "recordsTotal": 4,
-    "httpBaselineExtracted": 1,
+    "recordsTotal": 5,
+    "httpBaselineExtracted": 2,
     "httpBaselineUnavailable": 3,
-    "browserArmAttempts": 3,
-    "browserRendersPerformed": 1,
+    "browserArmAttempts": 4,
+    "browserRendersPerformed": 2,
     "browserRefusals": 2,
     "browserUnavailableOutcomes": 0,
     "recordsHttpInaccessible": [
       "js-only-app-report",
       "reddit-blocked-discussion",
-      "captcha-interstitial-page"
+      "captcha-interstitial-page",
+      "js-shell-loading-placeholder"
     ],
-    "recordsPermittedToRender": ["static-press-article", "js-only-app-report"],
-    "recordsWithinBudgets": ["js-only-app-report"],
+    "partialHttpCoverageRecords": ["js-shell-loading-placeholder"],
+    "recordsPermittedToRender": [
+      "static-press-article",
+      "js-only-app-report",
+      "js-shell-loading-placeholder"
+    ],
+    "recordsWithinBudgets": [
+      "js-only-app-report",
+      "js-shell-loading-placeholder"
+    ],
     "observedDeploymentGapRecords": ["reddit-blocked-discussion"],
-    "recordsQualifyingOnAccessPermittedAffordability": ["js-only-app-report"],
+    "recordsQualifyingOnAccessPermittedAffordability": [
+      "js-only-app-report",
+      "js-shell-loading-placeholder"
+    ],
     "qualifyingLiftRecords": [],
     "recordedRejectionReasons": {
-      "static-press-article": "Record static-press-article does not qualify: (a) HTTP-only extraction succeeded, so no content was lost to recover; (c) affordability was not established inside the explicit budgets; (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss Baseline coverage record: ordinary static permitted pages already extract through the shipped HTTP-only interface, and issue #3 measured extraction lift over feed text. Recorded as the bounded HTTP baseline arm of this evaluation.",
+      "static-press-article": "Record static-press-article does not qualify: (a) HTTP-only extraction recorded complete coverage, so no content was lost to recover; (c) affordability was not established inside the explicit budgets; (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss Baseline coverage record: ordinary static permitted pages already extract through the shipped HTTP-only interface, and issue #3 measured extraction lift over feed text. Recorded as the bounded HTTP baseline arm of this evaluation.",
       "js-only-app-report": "Record js-only-app-report does not qualify: (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss No unavailable extraction result or submitted-but-unreadable URL in the recorded deployment evidence is attributable to a permitted JavaScript-only page: recorded unavailable outcomes are access-restricted pages and no-public-URL items. This record measures the capability envelope the issue asks about; it does not evidence an observed pipeline loss.",
       "reddit-blocked-discussion": "Record reddit-blocked-discussion does not qualify: (b) a browser render is not permitted: the page sits behind an authentication, platform/anti-abuse or robots/terms restriction, and rendering it would circumvent that control; (c) affordability was not established inside the explicit budgets Issue #17 recorded the permitted Reddit discovery paths: search-snippet discovery and manual submissions with snippet-level provenance, with post-ID identity merging search results, notification emails and submissions into one canonical item. The blocked body stays unavailable with its snippet provenance; Reddit access is never recovered by browser rendering.",
-      "captcha-interstitial-page": "Record captcha-interstitial-page does not qualify: (b) a browser render is not permitted: the page sits behind an authentication, platform/anti-abuse or robots/terms restriction, and rendering it would circumvent that control; (c) affordability was not established inside the explicit budgets; (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss Interstitial anti-abuse controls are common where operators do not want automated reading; the shipped extractor already records these pages unavailable rather than attempting a bypass. Recorded to pin the boundary: a browser render that resolves or dodges the challenge is circumvention and stays unrecoverable."
+      "captcha-interstitial-page": "Record captcha-interstitial-page does not qualify: (b) a browser render is not permitted: the page sits behind an authentication, platform/anti-abuse or robots/terms restriction, and rendering it would circumvent that control; (c) affordability was not established inside the explicit budgets; (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss Interstitial anti-abuse controls are common where operators do not want automated reading; the shipped extractor already records these pages unavailable rather than attempting a bypass. Recorded to pin the boundary: a browser render that resolves or dodges the challenge is circumvention and stays unrecoverable.",
+      "js-shell-loading-placeholder": "Record js-shell-loading-placeholder does not qualify: (a-grounding) no deployment-recorded outcome (an unavailable extraction, or a submitted URL whose content could not be retrieved) demonstrates this limitation; the record is a capability probe, not observed pipeline loss No unavailable extraction or submitted-but-unreadable URL in the recorded deployment evidence is attributable to a permitted partially readable JavaScript shell; the record exists so the replay models partial HTTP coverage through the recorded completeness markers rather than treating any extracted body as complete coverage. It is a capability probe, not an observed pipeline loss."
     },
     "blockedRedditResponseStaysUnavailable": true,
     "circumventionAttempts": 0,
@@ -190,7 +244,7 @@
       "maxConcurrentRenders": 1,
       "maxRendersPerDay": 10
     },
-    "dailyRendersUsed": 1,
+    "dailyRendersUsed": 2,
     "dailyRenderBudgetExhausted": false,
     "newTrustBoundariesAdoptionWouldCreate": [
       "a long-lived networked browser/rendering subprocess executing untrusted page scripts inside the single-user monolith, with its own sandbox profile, binary installation and CVE maintenance cadence",

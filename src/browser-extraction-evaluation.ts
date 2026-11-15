@@ -63,6 +63,16 @@ export const browserRecordSchema = z
     permittedBasis: z.string().min(1).max(2000),
     /** Recorded snippet-level provenance (retained on blocked records). */
     snippet: z.string().max(10_000).optional(),
+    /**
+     * Recorded content markers whose presence in the extracted HTTP text is
+     * required for the HTTP outcome to count as complete coverage. When any
+     * marker is missing from an "extracted" HTTP body (for example a
+     * readable JavaScript shell that only holds a loading placeholder), the
+     * HTTP arm records partial coverage and the browser arm is consulted;
+     * absent markers must be absent for a reason recorded in the grounding
+     * note, never invented.
+     */
+    expectedHttpContent: z.array(z.string().min(1).max(200)).max(10).optional(),
     http: z.strictObject({
       status: z.number().int().min(0).max(599),
       headers: z.record(z.string(), z.string()),
@@ -104,6 +114,11 @@ export const browserRecordSchema = z
       context.addIssue({
         code: "custom",
         message: `Record ${record.id}: a Reddit discussion must never carry a recorded browser render — a blocked response stays unavailable`,
+      });
+    if (!record.permitted && record.browser.refusalBasis === undefined)
+      context.addIssue({
+        code: "custom",
+        message: `Record ${record.id}: permission is denied (permitted: false), so the only recorded browser arm is refusalBasis — a render would circumvent the recorded restriction`,
       });
   });
 
@@ -150,6 +165,7 @@ export class RecordedBrowserAdapter {
   destinationRefusals = 0;
   permissionRefusals = 0;
   budgetRejections = 0;
+  dailyBudgetRejections = 0;
   concurrencyViolations = 0;
   crashesIsolated = 0;
   private active = 0;
@@ -196,6 +212,7 @@ export class RecordedBrowserAdapter {
       }
       if (this.rendersUsed >= this.budgets.maxRendersPerDay) {
         this.budgetRejections += 1;
+        this.dailyBudgetRejections += 1;
         return {
           kind: "refused",
           reason: `Daily render budget exhausted (${this.budgets.maxRendersPerDay}/day)`,
@@ -260,6 +277,13 @@ export interface BrowserRecordReport {
   http: {
     method: "http";
     status: "extracted" | "unavailable";
+    /**
+     * Coverage against the recorded expected content markers: "absent"
+     * (extraction failed), "partial" (extracted text misses recorded
+     * markers, e.g. a readable JS shell with only a loading placeholder)
+     * or "complete".
+     */
+    coverage: "complete" | "partial" | "absent";
     reason: string | null;
     retryable: boolean;
     textChars: number;
@@ -307,6 +331,7 @@ export interface BrowserExtractionEvaluationReport {
     browserRefusals: number;
     browserUnavailableOutcomes: number;
     recordsHttpInaccessible: string[];
+    partialHttpCoverageRecords: string[];
     recordsPermittedToRender: string[];
     recordsWithinBudgets: string[];
     observedDeploymentGapRecords: string[];
@@ -319,14 +344,15 @@ export interface BrowserExtractionEvaluationReport {
     redditSubmissionProvenancePreserved: boolean;
     budgets: BrowserBudgets;
     dailyRendersUsed: number;
-    dailyRenderBudgetExhausted: false;
+    /** Derived from the adapter's daily-budget state, never a constant. */
+    dailyRenderBudgetExhausted: boolean;
     newTrustBoundariesAdoptionWouldCreate: string[];
     coreIngestionBrowserDependentRequirements: 0;
     liveBrowserUsedInReplay: false;
     liveProviderOrNetworkEgress: 0;
     liveMeasurement: { status: "recorded-out-of-band"; note: string };
   };
-  adoption: { adopt: false; threshold: string };
+  adoption: { adopt: boolean; threshold: string };
 }
 
 interface RecordedExtraction {
@@ -347,7 +373,7 @@ function affordabilityAssessment(
     return {
       affordable: false,
       reason:
-        "HTTP-only extraction succeeded; no browser render was needed or attempted",
+        "HTTP-only extraction recorded complete coverage; no browser render was needed or attempted",
     };
   if (outcome === "rendered")
     return {
@@ -375,7 +401,7 @@ function rejectionReason(
   const unmet: string[] = [];
   if (!conditions.httpInaccessible)
     unmet.push(
-      "(a) HTTP-only extraction succeeded, so no content was lost to recover",
+      "(a) HTTP-only extraction recorded complete coverage, so no content was lost to recover",
     );
   if (!conditions.browserRenderPermitted)
     unmet.push(
@@ -481,17 +507,16 @@ export async function evaluateBrowserExtraction(
       try {
         handled = await handler(job, AbortSignal.timeout(15_000));
       } catch (error) {
-        // A retryable failure throws through the shipped handler contract; it
-        // is recorded as an unavailable extraction via the shipped job
-        // completion path. Nothing is fabricated.
-        handled = {
-          status: "unavailable",
-          result: JSON.stringify({
-            status: "unavailable",
-            reason: (error as Error).message,
-            method: "http",
-          }),
-        };
+        // A retryable failure throws through the shipped handler contract;
+        // the shipped worker records such attempts for retry via the shipped
+        // failProcessing path, and this replay does exactly that. Because the
+        // replay models no retries, it refuses to emit a decision from an
+        // incomplete HTTP attempt — a transient 429/503 is neither terminal
+        // unavailability nor a browser-arm trigger.
+        store.failProcessing(job, (error as Error).message, now + 2);
+        throw new Error(
+          `Incomplete browser-extraction replay: shipped HTTP extraction for record ${record.id} remains retryable (${(error as Error).message}); the replay models no retries, so it refuses to record a transient attempt as terminal HTTP coverage`,
+        );
       }
       if (handled.status !== "extracted" && handled.status !== "unavailable")
         throw new Error(
@@ -521,7 +546,20 @@ export async function evaluateBrowserExtraction(
       const httpStatus: BrowserRecordReport["http"]["status"] =
         extraction.status === "extracted" ? "extracted" : "unavailable";
       const httpTextChars = extraction.text?.length ?? 0;
-      const httpInaccessible = httpStatus === "unavailable";
+      // Recorded completeness check: an "extracted" body only counts as
+      // complete coverage when it contains every recorded expected marker —
+      // a readable JavaScript shell that merely shows a loading placeholder
+      // is partial coverage, and the browser arm is consulted for it.
+      const missingMarkers = (record.expectedHttpContent ?? []).filter(
+        (marker) => !(extraction.text ?? "").includes(marker),
+      );
+      const httpCoverage: BrowserRecordReport["http"]["coverage"] =
+        httpStatus === "unavailable"
+          ? "absent"
+          : missingMarkers.length > 0
+            ? "partial"
+            : "complete";
+      const httpInaccessible = httpCoverage !== "complete";
 
       // The browser arm is consulted only when HTTP-only extraction failed.
       let attempted = false;
@@ -585,6 +623,7 @@ export async function evaluateBrowserExtraction(
         http: {
           method: "http",
           status: httpStatus,
+          coverage: httpCoverage,
           reason: extraction.reason ?? null,
           retryable: extraction.retryable === true,
           textChars: httpTextChars,
@@ -692,6 +731,9 @@ export async function evaluateBrowserExtraction(
         recordsHttpInaccessible: records
           .filter((record) => record.httpInaccessible)
           .map((record) => record.id),
+        partialHttpCoverageRecords: records
+          .filter((record) => record.http.coverage === "partial")
+          .map((record) => record.id),
         recordsPermittedToRender: records
           .filter((record) => record.browserRenderPermitted)
           .map((record) => record.id),
@@ -710,7 +752,7 @@ export async function evaluateBrowserExtraction(
         redditSubmissionProvenancePreserved: redditProvenancePreserved,
         budgets: corpus.budgets,
         dailyRendersUsed: adapter.rendersUsed,
-        dailyRenderBudgetExhausted: false,
+        dailyRenderBudgetExhausted: adapter.dailyBudgetRejections > 0,
         newTrustBoundariesAdoptionWouldCreate: [
           "a long-lived networked browser/rendering subprocess executing untrusted page scripts inside the single-user monolith, with its own sandbox profile, binary installation and CVE maintenance cadence",
           "a budget ledger for per-render timeout/memory, concurrency and daily render counts that core HTTP ingestion does not need",
@@ -724,7 +766,10 @@ export async function evaluateBrowserExtraction(
           note: "This replay launches no browser and fetches nothing: both arms are recorded/simulated, and the recorded decision rests on the deterministic replay plus the documented terms/cost analysis. A bounded live capability probe (agent-browser CLI against a localhost-only page; no external egress; no third-party or Reddit navigation) was performed out-of-band while recording this evaluation; its environment-specific observations are documented in docs/evaluation.md and deliberately excluded from this byte-reproducible baseline.",
         },
       },
-      adoption: { adopt: false, threshold: ADOPTION_THRESHOLD },
+      adoption: {
+        adopt: qualifyingLiftRecords.length > 0,
+        threshold: ADOPTION_THRESHOLD,
+      },
     };
   } finally {
     store.close();

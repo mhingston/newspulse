@@ -79,6 +79,29 @@ test("the corpus validates browser arms and Reddit identity before any store is 
       records: [redditRendered],
     }),
   ).toThrow("blocked response stays unavailable");
+  // A permission-denied record must carry the refusal arm: a renderedBody
+  // (or crash arm) behind permitted:false is rejected before the replay.
+  const deniedRender = structuredClone(parsedCorpus.records[0]!);
+  deniedRender.permitted = false;
+  expect(() =>
+    browserExtractionCorpusSchema.parse({
+      ...corpusJson,
+      records: [deniedRender],
+    }),
+  ).toThrow("browser arm is refusalBasis");
+  const deniedCrash = structuredClone(parsedCorpus.records[0]!);
+  deniedCrash.permitted = false;
+  deniedCrash.browser = {
+    crash: true,
+    declaredRenderMs: 0,
+    declaredMemoryMb: 0,
+  };
+  expect(() =>
+    browserExtractionCorpusSchema.parse({
+      ...corpusJson,
+      records: [deniedCrash],
+    }),
+  ).toThrow("browser arm is refusalBasis");
 });
 
 test("the recorded decision is a justified non-adoption under the fixed threshold", async () => {
@@ -94,22 +117,45 @@ test("the recorded decision is a justified non-adoption under the fixed threshol
   // #17 submission path covers the permitted Reddit use cases).
   expect(report.gates.recordsQualifyingOnAccessPermittedAffordability).toEqual([
     "js-only-app-report",
+    "js-shell-loading-placeholder",
   ]);
   expect(report.gates.qualifyingLiftRecords).toEqual([]);
   expect(report.gates.observedDeploymentGapRecords).toEqual([
     "reddit-blocked-discussion",
   ]);
-  expect(report.gates.recordsWithinBudgets).toEqual(["js-only-app-report"]);
-  expect(report.gates.httpBaselineExtracted).toBe(1);
+  expect(report.gates.recordsWithinBudgets).toEqual([
+    "js-only-app-report",
+    "js-shell-loading-placeholder",
+  ]);
+  expect(report.gates.recordsHttpInaccessible).toEqual([
+    "js-only-app-report",
+    "reddit-blocked-discussion",
+    "captcha-interstitial-page",
+    "js-shell-loading-placeholder",
+  ]);
+  expect(report.gates.partialHttpCoverageRecords).toEqual([
+    "js-shell-loading-placeholder",
+  ]);
+  expect(report.gates.httpBaselineExtracted).toBe(2);
   expect(report.gates.httpBaselineUnavailable).toBe(3);
-  expect(report.gates.browserRendersPerformed).toBe(1);
+  expect(report.gates.browserArmAttempts).toBe(4);
+  expect(report.gates.browserRendersPerformed).toBe(2);
   expect(report.gates.browserRefusals).toBe(2);
   expect(report.gates.browserUnavailableOutcomes).toBe(0);
+  // The daily-budget gate is derived from the adapter's daily-budget state,
+  // not a constant; with ten daily renders, two are used and none refused.
   expect(report.gates.dailyRenderBudgetExhausted).toBe(false);
+  expect(report.gates.dailyRendersUsed).toBe(2);
+  // The decision is derived from the gates, never a literal.
+  expect(report.adoption.adopt).toBe(
+    report.gates.qualifyingLiftRecords.length > 0,
+  );
+  expect(report.adoption.adopt).toBe(false);
   // Every non-qualifying record carries its recorded rejection reason.
   expect(Object.keys(report.gates.recordedRejectionReasons).sort()).toEqual([
     "captcha-interstitial-page",
     "js-only-app-report",
+    "js-shell-loading-placeholder",
     "reddit-blocked-discussion",
     "static-press-article",
   ]);
@@ -162,8 +208,8 @@ test("the replay performs no live work: it completes with poisoned fetch, no bro
     expect(report.gates.liveProviderOrNetworkEgress).toBe(0);
     expect(report.gates.liveMeasurement.status).toBe("recorded-out-of-band");
     expect(report.gates.coreIngestionBrowserDependentRequirements).toBe(0);
-    expect(report.gates.browserArmAttempts).toBe(3);
-    expect(report.gates.browserRendersPerformed).toBe(1);
+    expect(report.gates.browserArmAttempts).toBe(4);
+    expect(report.gates.browserRendersPerformed).toBe(2);
   } finally {
     globalThis.fetch = realFetch;
   }
@@ -347,4 +393,142 @@ test("the CLI verb records the same deterministic report offline, with timing on
   expect(report.gates.qualifyingLiftRecords).toEqual([]);
   const timing = JSON.parse(proc.stderr.toString()) as { scope: string };
   expect(timing.scope).toBe("offline in-process replay");
+});
+
+test("a readable JavaScript shell that only holds a loading placeholder records partial HTTP coverage and consults the browser arm", async () => {
+  const report = await reported();
+  const shell = record(report, "js-shell-loading-placeholder");
+  // The shipped extractor "succeeds" on the placeholder body; the recorded
+  // completeness markers show the report content is missing from it, so the
+  // HTTP arm never claims complete coverage and zero lift.
+  expect(shell.http.status).toBe("extracted");
+  expect(shell.http.coverage).toBe("partial");
+  expect(shell.http.textChars).toBe(17);
+  expect(shell.http.textChars).toBeGreaterThan(0);
+  // The recorded completeness markers are what the placeholder body lacks,
+  // and the report records them via the corpus schema.
+  expect(expectedMarkersOf("js-shell-loading-placeholder")).toEqual([
+    "gait-controller calibration",
+    "teardown photos",
+  ]);
+  // The browser arm was consulted and recovers the missing report content.
+  expect(shell.browser.attempted).toBe(true);
+  expect(shell.browser.outcome).toBe("rendered");
+  expect(shell.browser.textChars).toBe(236);
+  expect(shell.browserLift).toBe(219);
+  expect(shell.httpInaccessible).toBe(true);
+  // The completed report still stays a capability probe: no observed
+  // deployment record demonstrates the pipeline losing this content.
+  expect(shell.qualifying).toBe(false);
+  expect(shell.rejectionReason).toContain("capability probe");
+  expect(report.gates.partialHttpCoverageRecords).toEqual([
+    "js-shell-loading-placeholder",
+  ]);
+});
+
+function expectedMarkersOf(id: string): string[] {
+  const found = parsedCorpus.records.find((r) => r.id === id);
+  expect(found).toBeDefined();
+  return found!.expectedHttpContent ?? [];
+}
+
+test("a transient 429/503 HTTP attempt is recorded through the shipped failProcessing lifecycle and rejects the replay instead of counting as terminal coverage", async () => {
+  const transient = structuredClone(parsedCorpus.records[0]!);
+  transient.id = "transient-503-record";
+  transient.url = "https://press.example.org/reports/transient-503";
+  transient.http = {
+    ...transient.http,
+    status: 503,
+    body: "<html><body><p>Service temporarily unavailable</p></body></html>",
+  };
+  const corpusWithTransient = browserExtractionCorpusSchema.parse({
+    ...corpusJson,
+    records: [...parsedCorpus.records, transient],
+  });
+  // The shipped handler throws for 429/503; the shipped worker records that
+  // via failProcessing (retryable), and the replay — which models no
+  // retries — refuses to emit a decision rather than calling the attempt
+  // terminal unavailability or reaching for the browser arm.
+  expect(evaluateBrowserExtraction(corpusWithTransient)).rejects.toThrow(
+    "remains retryable",
+  );
+  const rateLimited = structuredClone(transient);
+  rateLimited.id = "rate-limited-record";
+  rateLimited.url = "https://press.example.org/reports/rate-limited";
+  rateLimited.http = {
+    ...rateLimited.http,
+    status: 429,
+  };
+  expect(
+    evaluateBrowserExtraction(
+      browserExtractionCorpusSchema.parse({
+        ...corpusJson,
+        records: [...parsedCorpus.records, rateLimited],
+      }),
+    ),
+  ).rejects.toThrow("remains retryable");
+});
+
+test("an exhausted daily render allowance drives the dailyRenderBudgetExhausted gate and refuses the second permitted render", async () => {
+  const constrained = browserExtractionCorpusSchema.parse({
+    ...corpusJson,
+    budgets: { ...parsedCorpus.budgets, maxRendersPerDay: 1 },
+  });
+  const report = await evaluateBrowserExtraction(constrained);
+  // The first permitted render consumes the allowance; the second is
+  // refused; the gate reflects the exhausted state instead of a constant.
+  expect(report.gates.dailyRendersUsed).toBe(1);
+  expect(report.gates.dailyRenderBudgetExhausted).toBe(true);
+  expect(report.gates.browserRendersPerformed).toBe(1);
+  const shell = record(report, "js-shell-loading-placeholder");
+  expect(shell.browser.outcome).toBe("refused");
+  expect(shell.browser.reason).toContain("Daily render budget exhausted");
+  // Budget-limited coverage is recorded honestly; the decision stays
+  // derived from the qualifying gates, which remain empty.
+  expect(report.gates.qualifyingLiftRecords).toEqual([]);
+  expect(report.adoption.adopt).toBe(false);
+});
+
+test("the recorded decision is derived from the qualifying gates: observed grounding plus recorded lift would flip it to adoption evidence", async () => {
+  // The revisit path documented in D22: recording an observed deployment
+  // limitation in a new corpus version changes the gates, and the decision
+  // follows them instead of a literal.
+  const grounded = browserExtractionCorpusSchema.parse({
+    ...corpusJson,
+    records: parsedCorpus.records.map((r) =>
+      r.id === "js-only-app-report"
+        ? { ...r, grounding: "deployment-recorded" }
+        : r,
+    ),
+  });
+  const report = await evaluateBrowserExtraction(grounded);
+  expect(report.gates.qualifyingLiftRecords).toEqual(["js-only-app-report"]);
+  expect(report.gates.observedDeploymentGapRecords).toEqual([
+    "js-only-app-report",
+    "reddit-blocked-discussion",
+  ]);
+  expect(report.adoption.adopt).toBe(true);
+  expect(report.adoption.threshold).toBe(ADOPTION_THRESHOLD);
+});
+
+test("the adapter records daily-budget rejections in its own state for the gate", async () => {
+  const adapter = new RecordedBrowserAdapter({
+    perRenderTimeoutMs: 1000,
+    perRenderMemoryMb: 128,
+    maxConcurrentRenders: 1,
+    maxRendersPerDay: 1,
+  });
+  const small = recordWith({
+    renderedBody: "<html><body><p>x</p></body></html>",
+    declaredRenderMs: 500,
+    declaredMemoryMb: 64,
+  });
+  expect(
+    (await adapter.render("https://press.example.org/e1", small)).kind,
+  ).toBe("rendered");
+  expect(
+    (await adapter.render("https://press.example.org/e2", small)).kind,
+  ).toBe("refused");
+  expect(adapter.dailyBudgetRejections).toBe(1);
+  expect(adapter.rendersUsed).toBe(1);
 });
