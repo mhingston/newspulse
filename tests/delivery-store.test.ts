@@ -73,6 +73,23 @@ test("freeze and outbox commit atomically and reuse the original envelope", () =
   }
 });
 
+test("artifact-scoped claims keep digest rows with the delivery stage", () => {
+  const { store, deliveries, prepare } = fixture();
+  try {
+    prepare();
+    // An alert-scoped sender (the opt-in alerts stage) can never claim — or
+    // send without feedback decoration — a pending daily-digest row.
+    expect(deliveries.claim(1000, { artifact: "alert" })).toBeNull();
+    expect(deliveries.list()[0]?.status).toBe("pending");
+    // A digest-scoped sender claims exactly the digest row.
+    const claim = deliveries.claim(1000, { artifact: "digest" })!;
+    expect(claim.digest_id).not.toBeNull();
+    expect(claim.alert_id).toBeNull();
+  } finally {
+    store.close();
+  }
+});
+
 test("fences stale claims, safely reclaims before send and blocks expired ambiguity", () => {
   const { store, deliveries, prepare } = fixture();
   try {

@@ -477,14 +477,19 @@ export const digestItems = sqliteTable(
   ],
 );
 
-/** An immutable outbound envelope and fenced provider acceptance state. */
+/**
+ * An immutable outbound envelope and fenced provider acceptance state. The
+ * outbox is shared by the daily digest edition and (opt-in, issue #27) event
+ * alerts: exactly one of `digest_id`/`alert_id` is present, so every reader
+ * that joins `deliveries` to `digests` keeps digest delivery semantics while
+ * alert sends flow through the same claim/lease/idempotency rules.
+ */
 export const deliveries = sqliteTable(
   "deliveries",
   {
     id: text().primaryKey(),
-    digestId: text("digest_id")
-      .notNull()
-      .references(() => digests.id),
+    digestId: text("digest_id").references(() => digests.id),
+    alertId: text("alert_id").references(() => alerts.id),
     editionDate: text("edition_date").notNull(),
     recipient: text().notNull(),
     sender: text().notNull(),
@@ -501,7 +506,15 @@ export const deliveries = sqliteTable(
     updatedAt: integer("updated_at").notNull(),
   },
   (t) => [
-    uniqueIndex("delivery_edition_recipient").on(t.editionDate, t.recipient),
+    // One daily digest edition per recipient; alert sends can share a day.
+    uniqueIndex("delivery_edition_recipient")
+      .on(t.editionDate, t.recipient)
+      .where(sql`digest_id IS NOT NULL`),
+    // One send per alert per recipient; the idempotency key deduplicates
+    // provider retries inside its documented lifetime.
+    uniqueIndex("delivery_alert_recipient")
+      .on(t.alertId, t.recipient)
+      .where(sql`alert_id IS NOT NULL`),
     index("delivery_by_digest").on(t.digestId),
     index("delivery_due").on(t.status, t.availableAt, t.leaseUntil),
   ],
@@ -876,3 +889,76 @@ export const sourceSuggestionEvents = sqliteTable(
     index("source_suggestion_events_suggestion").on(t.suggestionId, t.id),
   ],
 );
+
+/**
+ * Frozen event alerts (issue #27, opt-in). An alert is an immutable prepared
+ * artifact — like a frozen digest edition — recording exactly one meaningful
+ * development change that crossed the configured alert thresholds. The
+ * decision snapshot records why it fired and under which configuration, so
+ * alerts remain explainable after later profile or threshold changes. Frozen
+ * alert bytes are never modified; suppression is a separate decision record.
+ */
+export const alerts = sqliteTable(
+  "alerts",
+  {
+    id: text().primaryKey(),
+    /** The recorded change event the alert cites; one alert per event, max. */
+    changeEventId: integer("change_event_id")
+      .notNull()
+      .references(() => storyChangeEvents.id),
+    kind: text().notNull(),
+    itemId: text("item_id")
+      .notNull()
+      .references(() => items.id),
+    groupId: text("group_id").references(() => storyGroups.id),
+    /** Local calendar date (alert timezone) the alert was frozen on. */
+    localDate: text("local_date").notNull(),
+    subject: text().notNull(),
+    html: text().notNull(),
+    plainText: text("plain_text").notNull(),
+    decision: text().notNull(),
+    fingerprint: text().notNull(),
+    scoreId: text("score_id"),
+    frozenAt: integer("frozen_at").notNull(),
+    sealed: integer().notNull().default(1),
+  },
+  (t) => [
+    uniqueIndex("alert_change_event").on(t.changeEventId),
+    index("alert_local_date").on(t.localDate, t.frozenAt),
+    index("alert_group").on(t.groupId, t.frozenAt),
+  ],
+);
+
+/**
+ * Why a recorded change event was evaluated but not alerted. Append-only per
+ * (event, reason, local day): repeated evaluations of the same suppression
+ * are deduplicated, so the log records the decision without flooding.
+ */
+export const alertSuppressions = sqliteTable(
+  "alert_suppressions",
+  {
+    id: integer().primaryKey({ autoIncrement: true }),
+    changeEventId: integer("change_event_id")
+      .notNull()
+      .references(() => storyChangeEvents.id),
+    reason: text().notNull(),
+    localDate: text("local_date").notNull(),
+    details: text().notNull().default("{}"),
+    createdAt: integer("created_at").notNull(),
+  },
+  (t) => [
+    uniqueIndex("alert_suppression_identity").on(
+      t.changeEventId,
+      t.reason,
+      t.localDate,
+    ),
+    index("alert_suppression_time").on(t.createdAt),
+  ],
+);
+
+/** Durable scan cursor so a restart never replays already-evaluated events. */
+export const alertState = sqliteTable("alert_state", {
+  id: integer().primaryKey(),
+  lastEventId: integer("last_event_id").notNull().default(0),
+  updatedAt: integer("updated_at").notNull(),
+});

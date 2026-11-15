@@ -49,11 +49,20 @@ function priorVersionBackup(dir: string): string {
     },
     1,
   );
-  new DeliveryStore(db).prepare(
+  // The outbox row is planted with explicit SQL because the fixture database
+  // is intentionally at the pre-suppression schema: current code's schema
+  // assumptions (e.g. the #55 alert_id column) must not leak into it.
+  db.query(
+    "INSERT INTO deliveries(id,digest_id,edition_date,recipient,sender,idempotency_key,status,attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',0,?,?,?)",
+  ).run(
+    crypto.randomUUID(),
+    digests.get(date)!.id,
     date,
     recipient,
     sender,
-    () => digests.get(date),
+    `newspulse/${crypto.randomUUID()}`,
+    1000,
+    1000,
     1000,
   );
   const backup = join(dir, "backup.sqlite");

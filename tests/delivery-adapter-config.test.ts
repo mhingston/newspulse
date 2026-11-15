@@ -31,6 +31,35 @@ describe("Resend delivery adapter", () => {
     expect(request?.init?.redirect).toBe("error");
     expect(request?.init?.signal).toBe(signal);
     expect(JSON.parse(String(request?.init?.body))).toEqual(message);
+  });
+
+  test("serializes only the outbound email fields, never internal context", async () => {
+    const signal = new AbortController().signal;
+    let request: { url: string; init?: RequestInit } | undefined;
+    const fetcher = (async (
+      url: string | URL | Request,
+      init?: RequestInit,
+    ) => {
+      request = { url: String(url), init };
+      return Response.json({ id: "email-123" });
+    }) as unknown as typeof fetch;
+    const adapter = new ResendDelivery("secret-key", fetcher);
+    // The shared outbox's message assembly carries internal delivery context
+    // (digest/alert ID, edition date, decision snapshot); none of it may be
+    // serialized to the provider.
+    await adapter.send(
+      {
+        ...message,
+        digestId: "digest-1",
+        editionDate: "2026-10-19",
+        decisions: '{"feedbackTargets":[]}',
+      } as typeof message & Record<string, string>,
+      "edition/key",
+      signal,
+    );
+    expect(Object.keys(JSON.parse(String(request?.init?.body))).sort()).toEqual(
+      ["from", "html", "subject", "text", "to"],
+    );
     const headers = new Headers(request?.init?.headers);
     expect(headers.get("authorization")).toBe("Bearer secret-key");
     expect(headers.get("idempotency-key")).toBe("edition/key");

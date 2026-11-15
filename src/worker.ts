@@ -130,6 +130,7 @@ export function schedule(
   discovery?: { tick(): Promise<void> },
   githubDiscovery?: { tick(): Promise<void> },
   hnDiscovery?: { tick(): Promise<void> },
+  alerts?: { tick(): Promise<unknown> },
 ): { stop(): Promise<void> } {
   let active: Promise<unknown> | undefined;
   let stopping = false;
@@ -190,6 +191,16 @@ export function schedule(
         .catch((e) => log("hn_discovery_scheduler_error", { error: String(e) }))
         .finally(() => stageActive.delete("hnDiscovery"));
       stageActive.set("hnDiscovery", task);
+    }
+    // Opt-in alerts evaluation; disabled deployments pass no alerts worker
+    // at all, so nothing changes for them.
+    if (alerts && !stageActive.has("alerts")) {
+      const task = alerts
+        .tick()
+        .then(() => log("alerts_evaluated"))
+        .catch(() => log("alerts_worker_error"))
+        .finally(() => stageActive.delete("alerts"));
+      stageActive.set("alerts", task);
     }
     if (processing)
       for (const stage of ["extract", "analyse", "group", "score"] as const) {

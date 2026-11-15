@@ -24,6 +24,8 @@ import { ResendInbound } from "./adapters/resend-inbound";
 import { InboundStore } from "./db/inbound";
 import { InboundWorker, inboundWebhook } from "./inbound-worker";
 import { scheduledDiscoveryConfig } from "./scheduled-discovery-config";
+import { alertConfig } from "./alert-config";
+import { AlertWorker, alertsTick } from "./alerts";
 import { acquireDiscoveryLock } from "./discovery-lock";
 import { createScheduledDiscoveryTick } from "./scheduled-discovery";
 import { githubDiscoveryConfig } from "./github-discovery-config";
@@ -37,6 +39,7 @@ import { SourceRouter } from "./worker";
 const cfg = config();
 const analysis = analysisConfig();
 const delivery = deliveryConfig();
+const alerts = alertConfig();
 const scheduledDiscovery = scheduledDiscoveryConfig();
 const githubDiscovery = githubDiscoveryConfig();
 const hnDiscovery = hnDiscoveryConfig();
@@ -44,7 +47,7 @@ const hnDiscovery = hnDiscoveryConfig();
 // Keep it for the process lifetime even if a timed-out provider ignores abort.
 if (analysis) acquireAnalysisLock(cfg.DB_PATH);
 // Retain exclusive ownership through shutdown and any in-flight send.
-if (delivery) {
+if (delivery || alerts) {
   acquireDeliveryLock(cfg.DB_PATH);
   assertDeliveryRestoreAcknowledged(cfg.DB_PATH);
 }
@@ -161,6 +164,11 @@ const scheduler = schedule(
               baseUrl: delivery.feedbackBaseUrl,
             },
           ),
+          Date.now,
+          // The digest sender claims daily-digest rows only: every digest send
+          // keeps its scoped feedback-link decoration, and alert rows stay
+          // owned by the alerts stage below.
+          "digest",
         ),
         {
           from: delivery.sender,
@@ -193,6 +201,26 @@ const scheduler = schedule(
   hnDiscovery
     ? {
         tick: createHnDiscoveryTick(cfg.DB_PATH, store, hnDiscovery),
+      }
+    : undefined,
+  alerts
+    ? {
+        tick: () =>
+          alertsTick(
+            store,
+            new DeliveryStore(store.sqlite),
+            new DeliveryWorker(
+              new DeliveryStore(store.sqlite),
+              // The shared adapter whitelists outbound email fields, so the
+              // alert's internal decision snapshot never reaches the provider;
+              // the scope keeps this sender off daily-digest rows, whose
+              // feedback-link decoration belongs to the delivery stage.
+              new ResendDelivery(alerts.apiKey),
+              Date.now,
+              "alert",
+            ),
+            alerts,
+          ),
       }
     : undefined,
 );
