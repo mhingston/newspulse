@@ -268,11 +268,15 @@ function sameDevelopment(
     canonicalUrl: right.url,
   };
 }
-function followUp(earlier: StoryInput, later: StoryInput): string[] | null {
+function followUp(
+  earlier: StoryInput,
+  later: StoryInput,
+  precomputed?: { older: string[]; newer: string[] },
+): string[] | null {
   const gap = at(later) - at(earlier);
   if (gap < 4 * DAY || gap > 90 * DAY) return null;
-  const olderTerms = terms(earlier.title);
-  const newerTerms = terms(later.title);
+  const olderTerms = precomputed?.older ?? terms(earlier.title);
+  const newerTerms = precomputed?.newer ?? terms(later.title);
   if (!versionsAgree(earlier.title, later.title)) return null;
   if (!namedSubjectsAgree(earlier.title, later.title)) return null;
   const overlap = common(olderTerms, newerTerms);
@@ -334,6 +338,12 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
     ),
   );
   const relations: StoryRelation[] = [];
+  const earliestTerms = new Map(
+    groups.map(
+      (group) =>
+        [group.id, terms(earliestByGroup.get(group.id)!.title)] as const,
+    ),
+  );
   for (let i = 0; i < groups.length; i++) {
     for (let j = i + 1; j < groups.length; j++) {
       const left = groups[i]!;
@@ -342,7 +352,10 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
       const newer = older === left ? right : left;
       const first = earliestByGroup.get(older.id)!;
       const next = earliestByGroup.get(newer.id)!;
-      const shared = followUp(first, next);
+      const shared = followUp(first, next, {
+        older: earliestTerms.get(older.id)!,
+        newer: earliestTerms.get(newer.id)!,
+      });
       if (shared)
         relations.push({
           olderGroupId: older.id,
