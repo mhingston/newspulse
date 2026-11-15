@@ -6,6 +6,8 @@ import { Store } from "./db/store";
 import { DigestStore, type FrozenDigestInput } from "./db/digest-store";
 import { ProfileStore, interestSchema } from "./profiles";
 import { createMcp } from "./mcp";
+import { consumeConfirmation, ConfirmationError } from "./confirmations";
+import { MUTATION_ACTIONS } from "./mutations";
 import { runDiscovery } from "./discovery-service";
 import type {
   SearchResult,
@@ -27,9 +29,14 @@ import { canonicalItemUrl } from "./domain";
  * transport pair: the production `createMcp` handler, no sockets, no
  * network) against a throwaway production-schema store seeded through the
  * shipped ingest, discovery, grouping, scoring and freezing paths with a
- * recorded fake discovery provider. A hypothetical web UI is adopted only
- * for a step no shipped surface can perform. No live provider, no email;
- * conversational reasoning stays in the connecting client.
+ * recorded fake discovery provider, with the confirmed trigger dispatching
+ * through the same fixture clock so both recorded discovery runs consume one
+ * recorded daily budget regardless of when the replay executes.
+ *
+ * A hypothetical web UI is adopted only for a step no shipped surface can
+ * perform; a replay whose steps do not all complete is rejected instead of
+ * emitting a decision. No live provider, no email; conversational reasoning
+ * stays in the connecting client.
  */
 
 export const WEB_INTERFACE_EVALUATION_VERSION = "web-interface-evaluation-v1";
@@ -113,7 +120,7 @@ export const webInterfaceCorpusSchema = z
         name: z.string().min(1).max(100),
         version: z.string().min(1).max(100),
       }),
-      results: z.array(resultSchema).min(1).max(50),
+      results: z.array(resultSchema).min(2).max(50),
       triggerResults: z.array(resultSchema).min(1).max(50),
     }),
     edition: z.strictObject({
@@ -158,7 +165,11 @@ export interface TaskStep {
 export interface TaskResult {
   taskId: string;
   task: string;
-  coveredBy: "mcp-tool" | "cli-verb" | "both";
+  /**
+   * Derived from the recorded steps before the report is emitted, never
+   * hard-coded: "both" requires every step to have a CLI verb.
+   */
+  coveredBy?: "mcp-tool" | "cli-verb" | "both";
   steps: TaskStep[];
   /** Steps no shipped MCP tool or CLI verb can perform; the UI-only slice. */
   mcpClientCannotPerform: string[];
@@ -176,12 +187,25 @@ export interface WebInterfaceEvaluationReport {
   tasks: TaskResult[];
   gates: {
     taskStepsWithoutShippedSurface: number;
+    /** Total recorded steps that completed through their declared surface. */
+    taskStepsCompleted: number;
     uncoveredSteps: string[];
     /** Steps a browser session would add today; empty means none. */
     uiOnlySteps: string[];
+    /**
+     * True only when the replay verified BOTH halves: a replayed consumed
+     * token is rejected, and on fresh preview tokens an equal-document
+     * confirm applies nothing while a changed document is rejected as
+     * payload_changed with no mutation.
+     */
     previewConfirmTokenSingleUseAndPayloadBound: boolean;
     discoveryLedgerRefinementRecordedFromItemFeedback: boolean;
     frozenEditionImmutableUnderFeedback: boolean;
+    /**
+     * The confirmed trigger dispatches through the fixture clock, so both
+     * recorded discovery pages must consume the same (fixture) daily budget.
+     */
+    triggerBudgetConsumedOnFixtureDay: boolean;
     recordedProviderRequests: number;
     uiTransportOrEmailSideEffects: 0;
     newTrustBoundariesAdoptionWouldCreate: string[];
@@ -456,6 +480,10 @@ async function evaluateTasks(
   const server = createMcp(store, {
     discoveryProvider: provider,
     env: corpus.discoveryEnv,
+    // The confirmed trigger dispatches through the same fixture clock as the
+    // seeded run, so both consume the same recorded daily budget no matter
+    // when the replay executes.
+    clock: () => corpus.asOf,
   });
   await server.connect(serverTransport);
   const client = new Client({
@@ -530,7 +558,6 @@ async function evaluateTasks(
       tasks.push({
         taskId: "understand-discovery-explanation",
         task: "Ask what was found outside subscriptions and why one discovered item ranks where it does.",
-        coveredBy: "mcp-tool",
         steps: [
           {
             stepId: "find-the-discovery",
@@ -593,6 +620,7 @@ async function evaluateTasks(
     }
 
     // Task 2: run a new budgeted discovery query.
+    let triggerOnFixtureDay = false;
     {
       const preview = await call("trigger_discovery", {
         query: corpus.discovery.triggerQuery,
@@ -629,11 +657,24 @@ async function evaluateTasks(
       const ledgerGrew = after > before;
       const browsable = await call("get_discoveries", { limit: 20 });
       const browsableData = browsable.data as { discoveries: unknown[] };
-      const ok = previewed && dispatched && ledgerGrew;
+      // Same-day budget regression check: the seeded run and the MCP-confirmed
+      // run both dispatch through the fixture clock, so both reservations must
+      // fall on the fixture's budget day (budget_day = floor(now / 86400000),
+      // exactly as the shipped reservePage computes it). If the confirmed run
+      // ever used the wall clock, its pages would land on the execution day
+      // and the recorded budget evidence would depend on when the replay ran.
+      const fixtureDay = Math.floor(corpus.asOf / 86_400_000);
+      const fixtureDayPages = store.sqlite
+        .query<{ n: number }, [number]>(
+          "SELECT count(*) AS n FROM discovery_pages WHERE budget_day=?",
+        )
+        .get(fixtureDay)!.n;
+      const sameDayBudget = fixtureDayPages === 2 && ledgerGrew;
+      triggerOnFixtureDay = sameDayBudget;
+      const ok = previewed && dispatched && ledgerGrew && sameDayBudget;
       tasks.push({
         taskId: "run-budgeted-discovery",
         task: "Run one new budgeted discovery query and see what it found.",
-        coveredBy: "both",
         steps: [
           {
             stepId: "preview-the-query",
@@ -665,20 +706,19 @@ async function evaluateTasks(
             stepId: "see-what-was-found",
             description:
               "See the new discovered items with origin and original URLs.",
-            surfaces: ["mcp-tool", "cli-verb"],
+            surfaces: ["mcp-tool"],
             mcpTool: "get_discoveries",
-            cliVerb:
-              "discovery-runs + search QUERY (run ledger and canonical items; origin provenance is MCP-only)",
+            cliVerb: null,
             performed: true,
             ok: ledgerGrew && browsableData.discoveries.length >= 1,
             observed: ledgerGrew
-              ? `the discovery ledger grew from ${before} to ${after} recorded result(s); get_discoveries lists the new items`
+              ? `the discovery ledger grew from ${before} to ${after} recorded result(s); get_discoveries lists the new items (the CLI discovery-runs verb shows run metadata and search finds the canonical items, but neither exposes discovery-result origin provenance, so this step is MCP-only)`
               : "no discovery result was recorded for the confirmed query",
           },
         ],
         mcpClientCannotPerform: [],
         shipped:
-          "trigger_discovery preview/confirm performs the budgeted dispatch through the shared application service (the same preview/confirm and budget ledger the CLI verbs discovery-trigger-preview/discovery-trigger-confirm use), and get_discoveries reports the new findings with origin provenance.",
+          "trigger_discovery preview/confirm performs the budgeted dispatch through the shared application service, and get_discoveries reports the new findings with origin provenance; the dispatch steps also have CLI verbs, but the origin-provenance review is MCP-only.",
         verdict: ok
           ? "budgeted_discovery_dispatched_by_preview_confirm"
           : "budgeted_discovery_gap",
@@ -695,7 +735,7 @@ async function evaluateTasks(
         (i) => i.id === corpus.interestSeed.id,
       );
       const preview = await call("update_interest", {
-        interest: corpus.interestUpdate,
+        interest: corpus.interestUpdate as Record<string, unknown>,
       });
       const previewData = preview.data as {
         status?: string;
@@ -709,7 +749,7 @@ async function evaluateTasks(
       const token = previewData.confirm_token;
       const confirmed = previewed
         ? await call("update_interest", {
-            interest: corpus.interestUpdate,
+            interest: corpus.interestUpdate as Record<string, unknown>,
             confirm_token: token,
           })
         : { isError: true, data: {} as Record<string, unknown> };
@@ -723,22 +763,96 @@ async function evaluateTasks(
       const versionAppended =
         updated !== undefined &&
         updated.version === (previewData.interest?.version ?? 0);
-      // The confirmation token is single-use and payload-bound: a replayed
-      // confirm with the consumed token must be rejected by the shipped
-      // confirmation flow.
+      // The confirmation token is single-use: a replayed confirm with the
+      // consumed token must be rejected by the shipped confirmation flow.
+      // Because consumeConfirmation rejects used tokens before any payload
+      // hash is compared, payload binding needs its own probes on fresh
+      // preview tokens, driven through the shipped confirmation service
+      // both transports share.
       let replayRejected = false;
       if (previewed) {
         const replay = await call("update_interest", {
-          interest: corpus.interestUpdate,
+          interest: corpus.interestUpdate as Record<string, unknown>,
           confirm_token: token,
         });
         replayRejected = replay.isError;
       }
-      const ok = seedVisible && previewed && versionAppended && replayRejected;
+      const interestVersion = (): number =>
+        store.sqlite
+          .query<{ v: number }, [string]>(
+            "SELECT max(version) AS v FROM profiles WHERE kind='interest' AND id=?",
+          )
+          .get(corpus.interestSeed.id)!.v;
+      const versionBeforeBindingProbes = interestVersion();
+      // Equal payload on a fresh token: accepted, with the no-op apply never
+      // touching a profile (the same hash path the surfaces' confirms use).
+      const equalPreview = await call("update_interest", {
+        interest: {
+          ...(corpus.interestUpdate as Record<string, unknown>),
+          description: "Payload binding equal-payload probe",
+        },
+      });
+      const equalPayload = (equalPreview.data as { interest?: unknown })
+        .interest;
+      let equalPayloadAccepted = false;
+      try {
+        consumeConfirmation(store.sqlite, {
+          action: MUTATION_ACTIONS.update_interest,
+          token: (equalPreview.data as { confirm_token?: string })
+            .confirm_token!,
+          payload: equalPayload,
+          apply: () => "binding-probe-no-op",
+        });
+        equalPayloadAccepted = true;
+      } catch {
+        equalPayloadAccepted = false;
+      }
+      // Changed payload on another fresh token: rejected as payload_changed,
+      // and the guarded apply must never run.
+      const changedPreview = await call("update_interest", {
+        interest: {
+          ...(corpus.interestUpdate as Record<string, unknown>),
+          description: "Payload binding changed-payload probe",
+        },
+      });
+      let changedPayloadRejected = false;
+      try {
+        consumeConfirmation(store.sqlite, {
+          action: MUTATION_ACTIONS.update_interest,
+          token: (changedPreview.data as { confirm_token?: string })
+            .confirm_token!,
+          payload: {
+            ...(equalPayload as Record<string, unknown>),
+            description: "A document the preview did not authorize",
+          },
+          apply: () => {
+            throw new Error(
+              "payload-mismatch apply ran; payload binding is broken",
+            );
+          },
+        });
+      } catch (error) {
+        if (
+          error instanceof ConfirmationError &&
+          error.code === "payload_changed"
+        )
+          changedPayloadRejected = true;
+        else throw error;
+      }
+      const versionAfterBindingProbes = interestVersion();
+      const payloadBindingVerified =
+        equalPayloadAccepted &&
+        changedPayloadRejected &&
+        versionBeforeBindingProbes === versionAfterBindingProbes;
+      const ok =
+        seedVisible &&
+        previewed &&
+        versionAppended &&
+        replayRejected &&
+        payloadBindingVerified;
       tasks.push({
         taskId: "configure-interests",
         task: "Read the active interests and change what the user values.",
-        coveredBy: "both",
         steps: [
           {
             stepId: "read-active-interests",
@@ -778,7 +892,7 @@ async function evaluateTasks(
               : "interest versions did not advance after confirmation",
           },
           {
-            stepId: "token-is-single-use-and-payload-bound",
+            stepId: "token-is-single-use",
             description:
               "Replay a consumed confirmation token and expect rejection.",
             surfaces: ["mcp-tool", "cli-verb"],
@@ -787,8 +901,22 @@ async function evaluateTasks(
             performed: true,
             ok: replayRejected,
             observed: replayRejected
-              ? "the replayed token was rejected; confirmation stays single-use and bound to the previewed payload over every transport"
+              ? "the replayed token was rejected; confirmation stays single-use over every transport"
               : "a consumed confirmation token was accepted again",
+          },
+          {
+            stepId: "token-is-payload-bound",
+            description:
+              "On fresh preview tokens, confirm the previewed document (accepted, no effect) and an altered document (rejected, no effect).",
+            surfaces: ["mcp-tool", "cli-verb"],
+            mcpTool: "update_interest",
+            cliVerb:
+              "interest-preview JSON + interest-confirm TOKEN (shared confirmation service)",
+            performed: true,
+            ok: payloadBindingVerified,
+            observed: payloadBindingVerified
+              ? `a fresh token confirmed with the exact previewed document was accepted with no profile write, a different document was rejected with payload_changed, and the interest version stayed at ${String(versionBeforeBindingProbes)} throughout — the payload hash is compared, not just the token state`
+              : "the payload binding probe did not hold (equal-payload accept, payload_changed rejection or version bookkeeping)",
           },
         ],
         mcpClientCannotPerform: [],
@@ -852,7 +980,6 @@ async function evaluateTasks(
       tasks.push({
         taskId: "give-explicit-feedback",
         task: "Give explicit useful feedback on a discovery result so scoring and query order refine.",
-        coveredBy: "both",
         steps: [
           {
             stepId: "preview-the-judgment",
@@ -1018,7 +1145,6 @@ async function evaluateTasks(
       tasks.push({
         taskId: "review-developments-history",
         task: "Review one story development end to end: coverage, recorded change evidence and the frozen edition it was published in.",
-        coveredBy: "mcp-tool",
         steps: [
           {
             stepId: "find-the-coverage",
@@ -1061,12 +1187,12 @@ async function evaluateTasks(
             stepId: "read-the-frozen-edition",
             description:
               "Read the immutable edition the development was published in.",
-            surfaces: ["mcp-tool", "cli-verb"],
+            surfaces: ["mcp-tool"],
             mcpTool: "get_digest",
-            cliVerb: "digest-preview DATE (draft view only)",
+            cliVerb: null,
             performed: true,
             ok: frozenReadable && listReadable,
-            observed: `frozen view returned the edition frozen near ${publishedAt} with the development's item reference, and the list view returned ${String((listData.editions ?? []).length)} edition(s)`,
+            observed: `frozen view returned the edition frozen near ${publishedAt} with the development's item reference, and the list view returned ${String((listData.editions ?? []).length)} edition(s); no CLI verb reads a frozen edition or edition history (digest-preview rebuilds a draft from current state), so this step is MCP-only`,
           },
           {
             stepId: "edition-survives-feedback",
@@ -1092,6 +1218,18 @@ async function evaluateTasks(
       });
     }
 
+    // Coverage derives from the recorded steps, never from a hard-coded
+    // task label: a task is both-transport covered only when every one of
+    // its steps has a CLI verb, and mcp-tool covered when its steps were
+    // performed through MCP tools.
+    const deriveCoveredBy = (steps: TaskStep[]): TaskResult["coveredBy"] =>
+      steps.every((step) => step.cliVerb !== null && step.mcpTool !== null)
+        ? "both"
+        : steps.some((step) => step.mcpTool !== null)
+          ? "mcp-tool"
+          : "cli-verb";
+    for (const task of tasks) task.coveredBy = deriveCoveredBy(task.steps);
+
     const uncoveredSteps = tasks.flatMap((task) =>
       task.steps
         .filter((step) => step.surfaces.length === 0)
@@ -1107,6 +1245,20 @@ async function evaluateTasks(
       (task) => task.taskId === "review-developments-history",
     )!;
 
+    // Guard the recorded decision, fixed before any verdict existed: a report
+    // is only emitted when every recorded step completed through its declared
+    // surface. A failed step is neither coverage evidence nor UI-adopting
+    // evidence — the replay is rejected instead of silently deciding either way.
+    const failedSteps = tasks.flatMap((task) =>
+      task.steps
+        .filter((step) => !step.performed || !step.ok)
+        .map((step) => `${task.taskId}/${step.stepId}`),
+    );
+    if (failedSteps.length)
+      throw new Error(
+        `Incomplete web-interface replay; refusing to emit a coverage decision from failed steps: ${failedSteps.join(", ")}`,
+      );
+
     return {
       evaluationVersion: WEB_INTERFACE_EVALUATION_VERSION,
       corpus: {
@@ -1119,16 +1271,25 @@ async function evaluateTasks(
       tasks,
       gates: {
         taskStepsWithoutShippedSurface: uncoveredSteps.length,
+        taskStepsCompleted: tasks.reduce(
+          (n, task) =>
+            n + task.steps.filter((step) => step.performed && step.ok).length,
+          0,
+        ),
         uncoveredSteps,
         uiOnlySteps: [],
-        previewConfirmTokenSingleUseAndPayloadBound: interestsTask.steps.find(
-          (s) => s.stepId === "token-is-single-use-and-payload-bound",
-        )!.ok,
+        previewConfirmTokenSingleUseAndPayloadBound:
+          interestsTask.steps.find((s) => s.stepId === "token-is-single-use")!
+            .ok &&
+          interestsTask.steps.find(
+            (s) => s.stepId === "token-is-payload-bound",
+          )!.ok,
         discoveryLedgerRefinementRecordedFromItemFeedback:
           linkageTask.steps.every((s) => s.ok),
         frozenEditionImmutableUnderFeedback: historyTask!.steps.find(
           (s) => s.stepId === "edition-survives-feedback",
         )!.ok,
+        triggerBudgetConsumedOnFixtureDay: triggerOnFixtureDay,
         recordedProviderRequests: provider.requests,
         uiTransportOrEmailSideEffects: 0,
         newTrustBoundariesAdoptionWouldCreate: [

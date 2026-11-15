@@ -65,6 +65,9 @@ test("the recorded decision is a justified non-adoption under the fixed threshol
   // Every concrete task step is performable through a shipped surface, and
   // no step exists that only a browser session could perform.
   expect(report.gates.taskStepsWithoutShippedSurface).toBe(0);
+  expect(report.gates.taskStepsCompleted).toBe(
+    report.tasks.reduce((n, t) => n + t.steps.length, 0),
+  );
   expect(report.gates.uncoveredSteps).toEqual([]);
   expect(report.gates.uiOnlySteps).toEqual([]);
   expect(report.gates.uiTransportOrEmailSideEffects).toBe(0);
@@ -75,8 +78,28 @@ test("the recorded decision is a justified non-adoption under the fixed threshol
     true,
   );
   expect(report.gates.frozenEditionImmutableUnderFeedback).toBe(true);
+  // Both recorded discovery runs consumed the fixture day's budget.
+  expect(report.gates.triggerBudgetConsumedOnFixtureDay).toBe(true);
   // The only provider interaction was the recorded fake; nothing else egressed.
   expect(report.gates.recordedProviderRequests).toBe(2);
+});
+
+test("the corpus requires both seed discovery results and their trigger record before opening a store", async () => {
+  // The feedback task reads the second recorded seed result; a corpus with
+  // fewer is rejected at the schema instead of crashing mid-replay.
+  const oneResult = {
+    ...corpusJson,
+    discovery: {
+      ...corpus.discovery,
+      results: corpus.discovery.results.slice(0, 1),
+    },
+  };
+  expect(() => webInterfaceCorpusSchema.parse(oneResult)).toThrow();
+  const noTriggerResults = {
+    ...corpusJson,
+    discovery: { ...corpus.discovery, triggerResults: [] },
+  };
+  expect(() => webInterfaceCorpusSchema.parse(noTriggerResults)).toThrow();
 });
 
 test("every step's declared MCP tool exists in the registered tool contract", async () => {
@@ -127,12 +150,59 @@ test("tasks marked covered by both transports record CLI verbs too", async () =>
   const report = await reported();
   const both = report.tasks.filter((t) => t.coveredBy === "both");
   expect(both.map((t) => t.taskId)).toEqual([
-    "run-budgeted-discovery",
     "configure-interests",
     "give-explicit-feedback",
   ]);
   for (const task of both)
     for (const step of task.steps) expect(step.cliVerb).not.toBeNull();
+});
+
+test("discovery-result provenance and frozen-edition history are MCP-only steps", async () => {
+  // These steps were recorded CLI-covered in an earlier recording; review
+  // corrected the measurement: the CLI discovery-runs/search verbs expose
+  // neither origin provenance nor frozen editions (digest-preview drafts
+  // from current state), so both steps and their tasks are MCP-only.
+  const report = await reported();
+  const dispatch = report.tasks.find(
+    (t) => t.taskId === "run-budgeted-discovery",
+  )!;
+  const reviewStep = dispatch.steps.find(
+    (s) => s.stepId === "see-what-was-found",
+  )!;
+  expect(reviewStep.cliVerb).toBeNull();
+  expect(reviewStep.surfaces).toEqual(["mcp-tool"]);
+  expect(dispatch.coveredBy).toBe("mcp-tool");
+  const history = report.tasks.find(
+    (t) => t.taskId === "review-developments-history",
+  )!;
+  const frozenStep = history.steps.find(
+    (s) => s.stepId === "read-the-frozen-edition",
+  )!;
+  expect(frozenStep.cliVerb).toBeNull();
+  expect(frozenStep.surfaces).toEqual(["mcp-tool"]);
+  expect(history.coveredBy).toBe("mcp-tool");
+});
+
+test("payload binding is verified with a changed document on a fresh token, not just a consumed one", async () => {
+  const report = await reported();
+  // The single-use replay alone would hold even if payload hashing were
+  // broken (used tokens reject before any hash comparison), so the recorded
+  // gate additionally requires the equal/changed probes to pass.
+  const interests = report.tasks.find(
+    (t) => t.taskId === "configure-interests",
+  )!;
+  const singleUse = interests.steps.find(
+    (s) => s.stepId === "token-is-single-use",
+  )!;
+  expect(singleUse.ok).toBe(true);
+  const bound = interests.steps.find(
+    (s) => s.stepId === "token-is-payload-bound",
+  )!;
+  expect(bound.ok).toBe(true);
+  expect(bound.observed).toContain("payload_changed");
+  expect(bound.observed).toContain("no profile write");
+  expect(bound.observed).toContain("stayed at 2");
+  expect(report.gates.previewConfirmTokenSingleUseAndPayloadBound).toBe(true);
 });
 
 test("the shipped ranking explanation exposes criteria versions and exclusions", async () => {
@@ -234,9 +304,11 @@ test("the CLI verbs recorded for the both-covered tasks run offline end to end",
     const fb = JSON.parse(fbPreview.out) as { confirm_token?: string };
     expect(fb.confirm_token).toBeTruthy();
     expect(cli(["feedback-confirm", fb.confirm_token!]).code).toBe(0);
-    // Discovery trigger preview (run-budgeted-discovery task) previews the
-    // bounded budget without contacting any provider; the budget settings
-    // are required configuration, so the spawn supplies them explicitly.
+    // Discovery trigger preview: the recorded CLI verbs on the dispatch
+    // steps exist and preview the bounded budget without contacting any
+    // provider (the task's provenance review is MCP-only); the budget
+    // settings are required configuration, so the spawn supplies them
+    // explicitly.
     const trigger = cli(["discovery-trigger-preview", "humanoid robotics"], {
       DISCOVERY_DAILY_MICROS: "3000",
       DISCOVERY_RUN_MICROS: "1000",
@@ -244,13 +316,8 @@ test("the CLI verbs recorded for the both-covered tasks run offline end to end",
     });
     expect(trigger.code).toBe(0);
     expect(JSON.parse(trigger.out)).toHaveProperty("confirm_token");
-    // History reads (review-developments-history task) work; the digest
-    // preview requires the current local edition date, as shipped.
-    const today = new Intl.DateTimeFormat("en-CA", {
-      timeZone: "Europe/London",
-    }).format(new Date());
-    const digest = cli(["digest-preview", today]);
-    expect(digest.code).toBe(0);
+    // The `search` verb is recorded on item-lookup steps; frozen edition and
+    // discovery-provenance reads are MCP-only and assert nothing here.
     expect(cli(["search", "anything"]).code).toBe(0);
   } finally {
     rmSync(dir, { recursive: true, force: true });

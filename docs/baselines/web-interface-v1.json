@@ -32,7 +32,6 @@
     {
       "taskId": "understand-discovery-explanation",
       "task": "Ask what was found outside subscriptions and why one discovered item ranks where it does.",
-      "coveredBy": "mcp-tool",
       "steps": [
         {
           "stepId": "find-the-discovery",
@@ -77,12 +76,12 @@
       ],
       "mcpClientCannotPerform": [],
       "shipped": "The connecting MCP client performs the explanation conversationally: search_items and get_discoveries surface the discovery with origin provenance, get_item reads analysis provenance and source references, explain_ranking returns the recorded scoring runs, criteria version and exclusions. A browser would re-render the same recorded rows in a second transport.",
-      "verdict": "discovery_explanation_answered_by_mcp_reads"
+      "verdict": "discovery_explanation_answered_by_mcp_reads",
+      "coveredBy": "mcp-tool"
     },
     {
       "taskId": "run-budgeted-discovery",
       "task": "Run one new budgeted discovery query and see what it found.",
-      "coveredBy": "both",
       "steps": [
         {
           "stepId": "preview-the-query",
@@ -107,22 +106,22 @@
         {
           "stepId": "see-what-was-found",
           "description": "See the new discovered items with origin and original URLs.",
-          "surfaces": ["mcp-tool", "cli-verb"],
+          "surfaces": ["mcp-tool"],
           "mcpTool": "get_discoveries",
-          "cliVerb": "discovery-runs + search QUERY (run ledger and canonical items; origin provenance is MCP-only)",
+          "cliVerb": null,
           "performed": true,
           "ok": true,
-          "observed": "the discovery ledger grew from 2 to 3 recorded result(s); get_discoveries lists the new items"
+          "observed": "the discovery ledger grew from 2 to 3 recorded result(s); get_discoveries lists the new items (the CLI discovery-runs verb shows run metadata and search finds the canonical items, but neither exposes discovery-result origin provenance, so this step is MCP-only)"
         }
       ],
       "mcpClientCannotPerform": [],
-      "shipped": "trigger_discovery preview/confirm performs the budgeted dispatch through the shared application service (the same preview/confirm and budget ledger the CLI verbs discovery-trigger-preview/discovery-trigger-confirm use), and get_discoveries reports the new findings with origin provenance.",
-      "verdict": "budgeted_discovery_dispatched_by_preview_confirm"
+      "shipped": "trigger_discovery preview/confirm performs the budgeted dispatch through the shared application service, and get_discoveries reports the new findings with origin provenance; the dispatch steps also have CLI verbs, but the origin-provenance review is MCP-only.",
+      "verdict": "budgeted_discovery_dispatched_by_preview_confirm",
+      "coveredBy": "mcp-tool"
     },
     {
       "taskId": "configure-interests",
       "task": "Read the active interests and change what the user values.",
-      "coveredBy": "both",
       "steps": [
         {
           "stepId": "read-active-interests",
@@ -155,24 +154,34 @@
           "observed": "the confirmed update appended the new immutable version visible to get_interests"
         },
         {
-          "stepId": "token-is-single-use-and-payload-bound",
+          "stepId": "token-is-single-use",
           "description": "Replay a consumed confirmation token and expect rejection.",
           "surfaces": ["mcp-tool", "cli-verb"],
           "mcpTool": "update_interest",
           "cliVerb": "interest-confirm TOKEN",
           "performed": true,
           "ok": true,
-          "observed": "the replayed token was rejected; confirmation stays single-use and bound to the previewed payload over every transport"
+          "observed": "the replayed token was rejected; confirmation stays single-use over every transport"
+        },
+        {
+          "stepId": "token-is-payload-bound",
+          "description": "On fresh preview tokens, confirm the previewed document (accepted, no effect) and an altered document (rejected, no effect).",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "update_interest",
+          "cliVerb": "interest-preview JSON + interest-confirm TOKEN (shared confirmation service)",
+          "performed": true,
+          "ok": true,
+          "observed": "a fresh token confirmed with the exact previewed document was accepted with no profile write, a different document was rejected with payload_changed, and the interest version stayed at 2 throughout — the payload hash is compared, not just the token state"
         }
       ],
       "mcpClientCannotPerform": [],
       "shipped": "get_interests reads profiles; update_interest preview/confirm appends the next immutable version through the shared application service (the same previewUpdateInterest/confirmUpdateInterest the CLI interest-preview/interest-confirm verbs call). A web form would add an input field, not a capability.",
-      "verdict": "interest_configuration_by_versioned_preview_confirm"
+      "verdict": "interest_configuration_by_versioned_preview_confirm",
+      "coveredBy": "both"
     },
     {
       "taskId": "give-explicit-feedback",
       "task": "Give explicit useful feedback on a discovery result so scoring and query order refine.",
-      "coveredBy": "both",
       "steps": [
         {
           "stepId": "preview-the-judgment",
@@ -207,12 +216,12 @@
       ],
       "mcpClientCannotPerform": [],
       "shipped": "submit_feedback preview/confirm records the explicit judgment through the shared feedback service, visible over get_feedback, and the same write propagates the item/query/discovery refinement to the discovery-result ledger (the CLI feedback-preview/feedback-confirm and discovery-item-feedback verbs call the identical application service).",
-      "verdict": "explicit_feedback_recorded_with_discovery_linkage"
+      "verdict": "explicit_feedback_recorded_with_discovery_linkage",
+      "coveredBy": "both"
     },
     {
       "taskId": "review-developments-history",
       "task": "Review one story development end to end: coverage, recorded change evidence and the frozen edition it was published in.",
-      "coveredBy": "mcp-tool",
       "steps": [
         {
           "stepId": "find-the-coverage",
@@ -247,12 +256,12 @@
         {
           "stepId": "read-the-frozen-edition",
           "description": "Read the immutable edition the development was published in.",
-          "surfaces": ["mcp-tool", "cli-verb"],
+          "surfaces": ["mcp-tool"],
           "mcpTool": "get_digest",
-          "cliVerb": "digest-preview DATE (draft view only)",
+          "cliVerb": null,
           "performed": true,
           "ok": true,
-          "observed": "frozen view returned the edition frozen near 2026-11-10T07:00:00.000Z with the development's item reference, and the list view returned 1 edition(s)"
+          "observed": "frozen view returned the edition frozen near 2026-11-10T07:00:00.000Z with the development's item reference, and the list view returned 1 edition(s); no CLI verb reads a frozen edition or edition history (digest-preview rebuilds a draft from current state), so this step is MCP-only"
         },
         {
           "stepId": "edition-survives-feedback",
@@ -267,16 +276,19 @@
       ],
       "mcpClientCannotPerform": [],
       "shipped": "The development and history review is covered by the read tools (get_story_group, get_development_changes, get_digest frozen/list) plus the confirmed feedback mutation through the same application service the CLI feedback verbs call; the connecting MCP client narrates the review.",
-      "verdict": "developments_and_history_covered_by_mcp_reads"
+      "verdict": "developments_and_history_covered_by_mcp_reads",
+      "coveredBy": "mcp-tool"
     }
   ],
   "gates": {
     "taskStepsWithoutShippedSurface": 0,
+    "taskStepsCompleted": 20,
     "uncoveredSteps": [],
     "uiOnlySteps": [],
     "previewConfirmTokenSingleUseAndPayloadBound": true,
     "discoveryLedgerRefinementRecordedFromItemFeedback": true,
     "frozenEditionImmutableUnderFeedback": true,
+    "triggerBudgetConsumedOnFixtureDay": true,
     "recordedProviderRequests": 2,
     "uiTransportOrEmailSideEffects": 0,
     "newTrustBoundariesAdoptionWouldCreate": [
