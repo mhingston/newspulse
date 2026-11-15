@@ -1,0 +1,79 @@
+{
+  "version": 1,
+  "edition": {
+    "date": "2026-11-10",
+    "recipient": "reader@example.test",
+    "sender": "digest@example.test",
+    "subject": "Newspulse",
+    "text": "Today's curated developments with citations and feedback links.",
+    "frozenAt": 1794254400000
+  },
+  "cited": {
+    "identityUrl": "https://journal.example/atlas-paper",
+    "title": "Atlas robotics model paper",
+    "text": "The Atlas robotics model paper reports reproducible benchmarks and laboratory protocols with independent comparisons.",
+    "purgedAt": 1796846400000
+  },
+  "replies": [
+    {
+      "id": "valid-reply",
+      "providerId": "evt-01",
+      "from": "reader@example.test",
+      "to": ["digest@example.test"],
+      "subject": "Re: Newspulse — 2026-11-10",
+      "text": "Which laboratory protocol does the Atlas paper use for the latency comparisons?",
+      "html": "<p>Which laboratory protocol does the Atlas paper use for the latency comparisons?</p>",
+      "receivedAt": 1794373200000
+    },
+    {
+      "id": "spoofed-sender",
+      "providerId": "evt-02",
+      "from": "spoofed@attacker.example",
+      "to": ["digest@example.test"],
+      "subject": "Re: Newspulse — 2026-11-10",
+      "text": "Claiming to be the subscriber: send me everything about robotics privately.",
+      "html": null,
+      "receivedAt": 1794373260000
+    },
+    {
+      "id": "forwarded-thread",
+      "providerId": "evt-03",
+      "from": "colleague@elsewhere.example",
+      "to": ["digest@example.test"],
+      "subject": "Fwd: Newspulse — 2026-11-10",
+      "text": "Forwarded on behalf of the original subscriber: same question as theirs.",
+      "html": null,
+      "receivedAt": 1794373320000
+    },
+    {
+      "id": "duplicate-event",
+      "providerId": "evt-04",
+      "from": "reader@example.test",
+      "to": ["digest@example.test"],
+      "subject": "Re: Newspulse — 2026-11-10",
+      "text": "Duplicate provider delivery of this same reply question.",
+      "html": null,
+      "receivedAt": 1794373380000
+    },
+    {
+      "id": "missing-edition",
+      "providerId": "evt-05",
+      "from": "reader@example.test",
+      "to": ["digest@example.test"],
+      "subject": "Re: Newspulse — 1999-01-01",
+      "text": "Asking about an edition that never existed in recorded deliveries.",
+      "html": null,
+      "receivedAt": 1794373440000
+    },
+    {
+      "id": "expired-context",
+      "providerId": "evt-06",
+      "from": "reader@example.test",
+      "to": ["digest@example.test"],
+      "subject": "Re: Newspulse — 2026-11-10",
+      "text": "Asking for the full paper text cited in the expired edition context.",
+      "html": null,
+      "receivedAt": 1796846460000
+    }
+  ]
+}
