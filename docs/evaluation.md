@@ -242,3 +242,39 @@ Recorded findings (fixture metrics; see the baseline for the corpus hash and the
 Measured gates: 20/20 recorded task steps completed through shipped surfaces; 0 steps uncovered (`uncoveredSteps: []`, `uiOnlySteps: []`); 2 recorded fake-provider requests (seeded run and confirmed run on the same fixture `budget_day` — the confirmed dispatch runs on an injected fixture clock, so the budget evidence never depends on the replay's execution day); 0 UI-transport or email side effects; the preview/confirm token stayed single-use, and a separate fresh-token probe verified payload binding as a real hash comparison (equal document accepted with no profile write, altered document rejected with `payload_changed`); the frozen edition stayed byte-identical under not-useful edition feedback. The replay rejects itself instead of emitting a decision when a recorded step does not complete. A review correction fixed two overstated CLI halves (findings 3/4 of PR #82): `discovery-runs`/`search` expose no discovery-result origin provenance and no CLI verb reads a frozen edition or edition history (`digest-preview` rebuilds a draft from current state), so three `mcp-tool`-only tasks — discovery explanation, budgeted dispatch, developments/history — record a CLI convenience gap in rendering, not capability, which is exactly the conversational role D8 assigns to the connecting client. Coverage is derived from the recorded steps, never asserted per task.
 
 Interpretation preserved in decision [D21](decisions.md): the adoption threshold requires a step no shipped surface can perform; none exists. Non-adoption recorded with revisit triggers; no UI code ships.
+
+## Browser extraction evaluation (issue #24)
+
+Issue #24 required a recorded evaluation of permitted browser extraction, closed by either a tested optional adapter or a justified non-adoption. The replay (`evaluateBrowserExtraction` in `src/browser-extraction-evaluation.ts`) runs the shipped HTTP-only extraction path for each of four corpus records — issue #17's manual-submission intake, the shipped extract job claim/complete flow and the shipped `HttpContentExtractor` (issue #3) over recorded fake DNS and transport — and consults a browser arm only when HTTP extraction fails. The browser arm is a simulated recorded adapter: renders come pre-recorded in the corpus and the adapter enforces the contracts adoption would need — destination validation (the manual-submission discipline), permission refusals before any render, per-render timeout and memory budgets, concurrency and daily render budgets, and crash isolation. The adoption threshold was fixed in code (`ADOPTION_THRESHOLD`) before the replay ran.
+
+The corpus, [browser-extraction-corpus-v1](../tests/fixtures/browser-extraction-corpus-v1.json), covers the issue's scope: an ordinary permitted static page (HTTP baseline), a genuinely HTTP-inaccessible but permitted-to-render JavaScript-only page, a blocked Reddit discussion found through #17's permitted paths, and an anti-abuse captcha interstitial.
+
+Reproduce:
+
+```sh
+bun run cli evaluate-browser-extraction tests/fixtures/browser-extraction-corpus-v1.json
+# Optional local timing observation is emitted to stderr, not the deterministic report:
+bun run cli evaluate-browser-extraction tests/fixtures/browser-extraction-corpus-v1.json --timing
+```
+
+The [browser-extraction-v1](baselines/browser-extraction-v1.json) baseline records the replay deterministically — tests re-verify byte-exact reproduction, the blocked-Reddit-stays-unavailable assertion and a poisoned-`fetch` no-egress run, and exercise the adapter's budget/refusal/crash contracts directly.
+
+| Record (issue #24 scope)  | HTTP-only outcome (shipped path)             | Browser arm (simulated, recorded)                                                               |
+| ------------------------- | -------------------------------------------- | ----------------------------------------------------------------------------------------------- |
+| Permitted static article  | extracted, 327 text chars                    | not needed; no render attempted                                                                 |
+| JavaScript-only page      | unavailable, `Page unavailable` (JS shell)   | rendered +358 text chars at declared 4.2 s / 512 MB, inside budgets; capability probe           |
+| Blocked Reddit discussion | unavailable, `HTTP 403`                      | refused — anti-abuse control; render would circumvent a platform restriction; stays unavailable |
+| Captcha interstitial      | unavailable (shipped interstitial detection) | refused — anti-abuse challenge; no render measured or recorded                                  |
+
+Recorded gates: `qualifyingLiftRecords: []` and `recordsQualifyingOnAccessPermittedAffordability: ["js-only-app-report"]` — the only record that is HTTP-inaccessible, permitted and affordable fails the grounding condition (capability probe, not observed pipeline loss); `blockedRedditResponseStaysUnavailable: true`; `circumventionAttempts: 0`; Reddit post-ID provenance preserved through the submission path; every non-qualifying record carries an explicit rejection reason; 0 live browser launches, 0 live network egress, 0 browser-dependent requirements in core.
+
+The decision ([D22](decisions.md)) is non-adoption: the shipped HTTP-only extraction already covers every observed permitted use case, the blocked Reddit response stays unavailable rather than circumvented, and no browser capability is validated in any default test path. Revisit triggers are recorded in D22.
+
+### Live measurement (recorded out-of-band; clearly labelled; not part of the deterministic baseline)
+
+Everything above is a deterministic recorded replay with zero egress. Separately, while recording this evaluation, a bounded live capability probe was performed in the recording environment to answer the issue's "is a browser tool even available here" question first:
+
+- **Scope:** an `agent-browser` CLI was present in the environment; it launched its bundled Chrome 155.0.8059.84 against a **localhost-only** page served during the recording. No third-party page and no Reddit URL was navigated, and no external egress occurred.
+- **Observed:** the browser launched and executed the page's JavaScript (page open 94 ms and agent-readable text 14 ms against a warm daemon; plain `curl` 26 ms on the same page — warm, single local page). During the probe, at least three Chrome renderer processes were resident (~556 MB total RSS). The CLI itself warned that Chrome 155 is **729 CVEs behind stable** (`agent-browser install` advised).
+- **Not measured / not run (recorded as unknown):** any third-party page traversal or Reddit request — deliberately outside the recorded authorization, since the recorded decision treats Reddit's block as an anti-abuse control that a browser render must not defeat; cold-start, binary download and update cadence beyond the CLI's own warning; and any sustained per-page cost distribution.
+- **Status:** these are environment-specific observations made at recording time. They are **not** part of `browser-extraction-v1.json` (which must stay byte-reproducible); the baseline records only a fixed pointer to this section. Default tests launch no browser and make no network calls.
