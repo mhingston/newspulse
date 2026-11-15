@@ -403,6 +403,12 @@ export class StoryStore {
           "SELECT count(*) AS count FROM story_memberships WHERE ended_at IS NULL",
         )
         .get()!.count,
+      // Append-only change evidence (issue #26); count-only diagnostic.
+      recorded_change_events: this.sqlite
+        .query<{ count: number }, []>(
+          "SELECT count(*) AS count FROM story_change_events",
+        )
+        .get()!.count,
       rule_version: STORY_RULE_VERSION,
     };
   }
