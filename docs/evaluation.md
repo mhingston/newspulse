@@ -212,3 +212,33 @@ The [newsletter-replies-v1](baselines/newsletter-replies-v1.json) baseline recor
 | Same question over MCP                  | Authenticated `get_digest`/`search_items`/`get_item` answer with source-linked citations and uncertainty | `answered_with_citations_over_mcp`  |
 
 Decision recorded in [D20](decisions.md): the adoption threshold (fixed in code as `ADOPTION_THRESHOLD`) fails on sender verification and edition correlation, and the MCP-equivalence arm shows the client can already reach the same scoped knowledge. Non-adoption recorded with revisit triggers; no reply channel code ships.
+
+## Web interface task replay (issue #31)
+
+Issue #31 requires evaluating an optional discovery-focused web interface with concrete user tasks and recorded evidence that MCP/CLI do or do not cover them. The replay (`evaluateWebInterface` in `src/web-interface-evaluation.ts`) defines five tasks spanning the issue's scope and performs every step through the shipped surfaces — the real registered MCP tool handlers driven by the official SDK client over an in-memory transport pair (production `createMcp` code, no sockets), and, for the tasks the CLI also covers, the shipped CLI verbs that call the identical application services — against a throwaway production-schema store seeded through the shipped poll, discovery-run (recorded fake provider), grouping/scoring settle and immutable-edition-freeze paths. No provider, no network, no email.
+
+The recorded corpus, [web-interface-corpus-v1](../tests/fixtures/web-interface-corpus-v1.json), contains two RSS waves (one development with anchor plus repeat coverage), two pre-recorded discovery results, one trigger-query result, a persistent interest profile plus its recorded update, and one frozen-edition definition. The adoption threshold was fixed in code (`ADOPTION_THRESHOLD`) before the replay ran.
+
+Reproduce:
+
+```sh
+bun run cli evaluate-web-interface tests/fixtures/web-interface-corpus-v1.json
+# Optional local timing observation is emitted to stderr, not the deterministic report:
+bun run cli evaluate-web-interface tests/fixtures/web-interface-corpus-v1.json --timing
+```
+
+The [web-interface-v1](baselines/web-interface-v1.json) baseline records the replay deterministically (a test re-verifies byte-exact reproduction and runs the whole replay once with a poisoned `fetch`); a further test exercises the recorded CLI verbs end to end on a throwaway database.
+
+Recorded findings (fixture metrics; see the baseline for the corpus hash and the exact registered tool contract):
+
+| Task (issue #31 scope)                       | Shipped steps that completed                                                                                                          | Covered by |
+| -------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| Understand a discovery + ranking explanation | `search_items`, `get_discoveries`, `get_item` (analysis provenance, `latest_score`), `explain_ranking` (criteria version, exclusions) | `mcp-tool` |
+| Run a budgeted discovery query               | `trigger_discovery` preview → confirm over the shared budget ledger; results listed with origin provenance                            | `both`     |
+| Configure interests                          | `get_interests`; `update_interest` preview → confirm appends the immutable version; replayed token rejected                           | `both`     |
+| Give explicit feedback (item/edition/query)  | `submit_feedback` preview → confirm; `get_feedback`; `discovery_result_feedback` refinement row recorded                              | `both`     |
+| Review developments + history                | `search_items`, `get_story_group`, `get_development_changes`, `get_digest` (frozen + list); frozen bytes unchanged under feedback     | `mcp-tool` |
+
+Measured gates: 19/19 task steps completed through shipped surfaces; 0 steps uncovered (`uncoveredSteps: []`, `uiOnlySteps: []`); 2 recorded fake-provider requests; 0 UI-transport or email side effects; the preview/confirm token stayed single-use and payload-bound; the frozen edition stayed byte-identical under not-useful edition feedback. The two `mcp-tool`-only tasks record a CLI convenience gap (no CLI verb renders `get_discoveries` origin provenance, story groups or change evidence) — a gap in rendering, not capability, which is exactly the conversational role D8 assigns to the connecting client.
+
+Interpretation preserved in decision [D21](decisions.md): the adoption threshold requires a step no shipped surface can perform; none exists. Non-adoption recorded with revisit triggers; no UI code ships.

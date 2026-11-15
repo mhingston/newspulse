@@ -1,0 +1,293 @@
+{
+  "evaluationVersion": "web-interface-evaluation-v1",
+  "corpus": {
+    "id": "web-interface-corpus-v1",
+    "version": 1,
+    "asOf": 1794297600000,
+    "hash": "b5a7b5af38b83d239f6efcff2fb150c799fad1783ae4929f8ae9b7a11805b9ce"
+  },
+  "sourceSurface": {
+    "mcpTools": [
+      "add_source",
+      "explain_ranking",
+      "get_development_changes",
+      "get_digest",
+      "get_discoveries",
+      "get_feedback",
+      "get_interests",
+      "get_item",
+      "get_sources",
+      "get_status",
+      "get_story_group",
+      "get_submission",
+      "ingest_url",
+      "remove_source",
+      "search_items",
+      "submit_feedback",
+      "trigger_discovery",
+      "update_interest"
+    ]
+  },
+  "tasks": [
+    {
+      "taskId": "understand-discovery-explanation",
+      "task": "Ask what was found outside subscriptions and why one discovered item ranks where it does.",
+      "coveredBy": "mcp-tool",
+      "steps": [
+        {
+          "stepId": "find-the-discovery",
+          "description": "Find the discovered item by its topic terms.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "search_items",
+          "cliVerb": "search QUERY",
+          "performed": true,
+          "ok": true,
+          "observed": "search_items returned the discovered item when queried by its topic terms"
+        },
+        {
+          "stepId": "list-non-subscription-finds",
+          "description": "List items found outside followed subscriptions with origin and original URL.",
+          "surfaces": ["mcp-tool"],
+          "mcpTool": "get_discoveries",
+          "cliVerb": null,
+          "performed": true,
+          "ok": true,
+          "observed": "get_discoveries listed the item with origin 'discovered' and its original URL"
+        },
+        {
+          "stepId": "read-analysis-provenance",
+          "description": "Read the item with its model analysis provenance, references and latest score.",
+          "surfaces": ["mcp-tool"],
+          "mcpTool": "get_item",
+          "cliVerb": null,
+          "performed": true,
+          "ok": true,
+          "observed": "get_item returned the item with latest_score present (true) and 1 recorded source references (analysis status analysed)"
+        },
+        {
+          "stepId": "explain-the-ranking",
+          "description": "Explain why the item ranks as it does, with components and exclusions.",
+          "surfaces": ["mcp-tool"],
+          "mcpTool": "explain_ranking",
+          "cliVerb": null,
+          "performed": true,
+          "ok": true,
+          "observed": "explain_ranking returned 1 recorded scoring run(s) with criteria versions and exclusion reasons (1 exclusions)"
+        }
+      ],
+      "mcpClientCannotPerform": [],
+      "shipped": "The connecting MCP client performs the explanation conversationally: search_items and get_discoveries surface the discovery with origin provenance, get_item reads analysis provenance and source references, explain_ranking returns the recorded scoring runs, criteria version and exclusions. A browser would re-render the same recorded rows in a second transport.",
+      "verdict": "discovery_explanation_answered_by_mcp_reads"
+    },
+    {
+      "taskId": "run-budgeted-discovery",
+      "task": "Run one new budgeted discovery query and see what it found.",
+      "coveredBy": "both",
+      "steps": [
+        {
+          "stepId": "preview-the-query",
+          "description": "Preview the bounded query with its budget reservation.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "trigger_discovery",
+          "cliVerb": "discovery-trigger-preview QUERY",
+          "performed": true,
+          "ok": true,
+          "observed": "preview returned run_one_budgeted_query with a single-use confirm token"
+        },
+        {
+          "stepId": "confirm-the-dispatch",
+          "description": "Confirm; the run re-checks budgets and pace against the recorded provider.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "trigger_discovery",
+          "cliVerb": "discovery-trigger-confirm TOKEN",
+          "performed": true,
+          "ok": true,
+          "observed": "confirm dispatched status complete over 1 page(s) and ingested 1 result(s) from the recorded provider (2 provider request(s) in total)"
+        },
+        {
+          "stepId": "see-what-was-found",
+          "description": "See the new discovered items with origin and original URLs.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "get_discoveries",
+          "cliVerb": "discovery-runs + search QUERY (run ledger and canonical items; origin provenance is MCP-only)",
+          "performed": true,
+          "ok": true,
+          "observed": "the discovery ledger grew from 2 to 3 recorded result(s); get_discoveries lists the new items"
+        }
+      ],
+      "mcpClientCannotPerform": [],
+      "shipped": "trigger_discovery preview/confirm performs the budgeted dispatch through the shared application service (the same preview/confirm and budget ledger the CLI verbs discovery-trigger-preview/discovery-trigger-confirm use), and get_discoveries reports the new findings with origin provenance.",
+      "verdict": "budgeted_discovery_dispatched_by_preview_confirm"
+    },
+    {
+      "taskId": "configure-interests",
+      "task": "Read the active interests and change what the user values.",
+      "coveredBy": "both",
+      "steps": [
+        {
+          "stepId": "read-active-interests",
+          "description": "Read the active interest profiles.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "get_interests",
+          "cliVerb": "list-profiles (profile export view)",
+          "performed": true,
+          "ok": true,
+          "observed": "get_interests returned the seeded active interest (latest version, persistent)"
+        },
+        {
+          "stepId": "preview-the-interest-change",
+          "description": "Preview the new immutable interest version.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "update_interest",
+          "cliVerb": "interest-preview JSON",
+          "performed": true,
+          "ok": true,
+          "observed": "preview recorded effect append_version toward version 2 with a confirmation token"
+        },
+        {
+          "stepId": "confirm-the-interest-change",
+          "description": "Confirm; scores are re-derived, frozen editions unchanged.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "update_interest",
+          "cliVerb": "interest-confirm TOKEN",
+          "performed": true,
+          "ok": true,
+          "observed": "the confirmed update appended the new immutable version visible to get_interests"
+        },
+        {
+          "stepId": "token-is-single-use-and-payload-bound",
+          "description": "Replay a consumed confirmation token and expect rejection.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "update_interest",
+          "cliVerb": "interest-confirm TOKEN",
+          "performed": true,
+          "ok": true,
+          "observed": "the replayed token was rejected; confirmation stays single-use and bound to the previewed payload over every transport"
+        }
+      ],
+      "mcpClientCannotPerform": [],
+      "shipped": "get_interests reads profiles; update_interest preview/confirm appends the next immutable version through the shared application service (the same previewUpdateInterest/confirmUpdateInterest the CLI interest-preview/interest-confirm verbs call). A web form would add an input field, not a capability.",
+      "verdict": "interest_configuration_by_versioned_preview_confirm"
+    },
+    {
+      "taskId": "give-explicit-feedback",
+      "task": "Give explicit useful feedback on a discovery result so scoring and query order refine.",
+      "coveredBy": "both",
+      "steps": [
+        {
+          "stepId": "preview-the-judgment",
+          "description": "Preview recording explicit feedback for the item.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "submit_feedback",
+          "cliVerb": "feedback-preview ITEM_ID useful|not-useful",
+          "performed": true,
+          "ok": true,
+          "observed": "preview returned the item title (Humanoid firmware advisory affects bench tests) with a confirmation token"
+        },
+        {
+          "stepId": "confirm-the-judgment",
+          "description": "Confirm the explicit useful/not-useful judgment.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "submit_feedback",
+          "cliVerb": "feedback-confirm TOKEN",
+          "performed": true,
+          "ok": true,
+          "observed": "get_feedback lists the recorded latest judgment for the item with source mcp"
+        },
+        {
+          "stepId": "refine-the-discovery-ledger",
+          "description": "Record the item/query/discovery refinement linkage.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "submit_feedback",
+          "cliVerb": "discovery-item-feedback ITEM_ID useful|not-useful",
+          "performed": true,
+          "ok": true,
+          "observed": "the shipped feedback write recorded 1 discovery-result refinement row(s) for the item, so future query order refines with provenance (the CLI discovery-item-feedback verb writes the same ledger)"
+        }
+      ],
+      "mcpClientCannotPerform": [],
+      "shipped": "submit_feedback preview/confirm records the explicit judgment through the shared feedback service, visible over get_feedback, and the same write propagates the item/query/discovery refinement to the discovery-result ledger (the CLI feedback-preview/feedback-confirm and discovery-item-feedback verbs call the identical application service).",
+      "verdict": "explicit_feedback_recorded_with_discovery_linkage"
+    },
+    {
+      "taskId": "review-developments-history",
+      "task": "Review one story development end to end: coverage, recorded change evidence and the frozen edition it was published in.",
+      "coveredBy": "mcp-tool",
+      "steps": [
+        {
+          "stepId": "find-the-coverage",
+          "description": "Find both items covering the development.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "search_items",
+          "cliVerb": "search QUERY",
+          "performed": true,
+          "ok": true,
+          "observed": "search_items returned both development items"
+        },
+        {
+          "stepId": "read-the-development",
+          "description": "Read the development group with its members and citations.",
+          "surfaces": ["mcp-tool"],
+          "mcpTool": "get_story_group",
+          "cliVerb": null,
+          "performed": true,
+          "ok": true,
+          "observed": "get_story_group returned the development with its recorded memberships and citations"
+        },
+        {
+          "stepId": "read-the-change-evidence",
+          "description": "Read recorded change evidence for the development.",
+          "surfaces": ["mcp-tool"],
+          "mcpTool": "get_development_changes",
+          "cliVerb": null,
+          "performed": true,
+          "ok": true,
+          "observed": "get_development_changes returned 2 recorded events (new coverage and content changes) inside the 3-day window"
+        },
+        {
+          "stepId": "read-the-frozen-edition",
+          "description": "Read the immutable edition the development was published in.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "get_digest",
+          "cliVerb": "digest-preview DATE (draft view only)",
+          "performed": true,
+          "ok": true,
+          "observed": "frozen view returned the edition frozen near 2026-11-10T07:00:00.000Z with the development's item reference, and the list view returned 1 edition(s)"
+        },
+        {
+          "stepId": "edition-survives-feedback",
+          "description": "Give not-useful edition feedback and re-read the frozen edition.",
+          "surfaces": ["mcp-tool", "cli-verb"],
+          "mcpTool": "submit_feedback",
+          "cliVerb": "feedback-preview ITEM_ID not-useful EDITION_DATE",
+          "performed": true,
+          "ok": true,
+          "observed": "the not-useful edition feedback was recorded with its edition context while the frozen edition bytes stayed identical"
+        }
+      ],
+      "mcpClientCannotPerform": [],
+      "shipped": "The development and history review is covered by the read tools (get_story_group, get_development_changes, get_digest frozen/list) plus the confirmed feedback mutation through the same application service the CLI feedback verbs call; the connecting MCP client narrates the review.",
+      "verdict": "developments_and_history_covered_by_mcp_reads"
+    }
+  ],
+  "gates": {
+    "taskStepsWithoutShippedSurface": 0,
+    "uncoveredSteps": [],
+    "uiOnlySteps": [],
+    "previewConfirmTokenSingleUseAndPayloadBound": true,
+    "discoveryLedgerRefinementRecordedFromItemFeedback": true,
+    "frozenEditionImmutableUnderFeedback": true,
+    "recordedProviderRequests": 2,
+    "uiTransportOrEmailSideEffects": 0,
+    "newTrustBoundariesAdoptionWouldCreate": [
+      "an authenticated, browser-session HTTP surface rendered from untrusted stored content (a new origin/CSRF and HTML-sanitisation boundary the MCP transport does not need)",
+      "browser session state re-implementing the preview/confirm mutation contract that already exists transport-free",
+      "a second rendering of recorded data whose only unique input is already fully exposed to the conversational client"
+    ],
+    "duplicateTransportSurface": true
+  },
+  "adoption": {
+    "adopt": false,
+    "threshold": "Adopt a minimal discovery-focused web interface only when the replayed corpus contains at least one concrete task step that no shipped MCP tool and no shipped CLI verb can perform, and a private, authenticated browser session would demonstrably and materially improve exactly that step within the modular-monolith constraints (reusing the shared application services, keeping the preview/confirm mutation contract, origin/CSRF protections and untrusted-content citation discipline), rather than duplicating conversational reasoning or read rendering the connecting MCP client already performs. Otherwise record a justified non-adoption."
+  }
+}

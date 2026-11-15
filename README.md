@@ -84,6 +84,10 @@ await client.connect(transport);
 
 Diagnostics: server startup, lifecycle and error events appear as JSON on stderr, never on stdout — read stdout only as JSON-RPC when debugging a client. One malformed line on stdin does not end the session; the SDK reports a protocol error on stderr and continues answering valid requests. Before relying on any client other than the tested SDK one, verify it against this command in your environment; a client advertising MCP support is not interoperability evidence on its own.
 
+### No web interface (recorded evaluation)
+
+There is deliberately no web UI, and this is a recorded decision, not a gap: the optional discovery-focused web interface ([M5 issue #31](https://github.com/mhingston/newspulse/issues/31)) was evaluated with a replay of five concrete user tasks — understanding a discovery and its ranking explanation, running a budgeted discovery query, configuring interests, giving explicit feedback, and reviewing story developments and edition history — and every task step was completed by the shipped MCP tools (over HTTP, or the opt-in stdio mode) or the CLI verbs that call the same application services ([decision D21](docs/decisions.md), replay recorded as [web-interface-v1](docs/baselines/web-interface-v1.json), reproducible with `bun run cli evaluate-web-interface tests/fixtures/web-interface-corpus-v1.json`). Adoption would add a browser session, origin/CSRF and untrusted-HTML boundary while duplicating rendering that the connecting MCP client already performs conversationally. If a client you use cannot complete a task, record it as evidence and reopen the evaluation rather than reaching for curl scripts against the database directly; MCP and CLI remain the supported interfaces with no unread counters or reader-dashboard scope.
+
 ## Docker Compose
 
 ```sh
