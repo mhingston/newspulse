@@ -1,0 +1,1 @@
+ALTER TABLE `story_change_events` ADD `version_id` integer REFERENCES content_versions(id);

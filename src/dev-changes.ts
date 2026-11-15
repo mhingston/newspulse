@@ -21,8 +21,25 @@ export const CHANGE_EVENT_KINDS = [
 ] as const;
 export type ChangeEventKind = (typeof CHANGE_EVENT_KINDS)[number];
 
-/** Bounded lexical diff so a large body change cannot grow a row. */
+/** Per-list term cap so a large body change cannot grow a row. */
 const DIFF_TERM_LIMIT = 20;
+/** Hard envelope for the serialized term diff inside a stored evidence row. */
+const DIFF_BYTES_LIMIT = 2048;
+/** Individual tokens are bounded, so one long source token is never stored. */
+const DIFF_TOKEN_MAX = 24;
+/** Bound for membership-id scans backing one read. */
+const MEMBER_QUERY_CAP = 2000;
+
+const encoder = new TextEncoder();
+export function tokenBytes(term: string): number {
+  return encoder.encode(JSON.stringify(term)).length;
+}
+
+/** The row id of the content_versions insert that preceded the event record. */
+export function recordedVersionId(db: Database): number {
+  return db.query<{ id: number }, []>("SELECT last_insert_rowid() AS id").get()!
+    .id;
+}
 
 export interface ChangeEvidence {
   reason?: string;
@@ -32,42 +49,89 @@ export interface ChangeEvidence {
   urlChanged?: boolean;
   addedTerms?: string[];
   removedTerms?: string[];
-  /** For grouping corrections in the read-time dev story-group shape. */
+  /** Set when the term diff was truncated to fit the bounded evidence row. */
+  diffTruncated?: boolean;
+  /**
+   * Set instead of a term diff when the previous body could not be compared:
+   * its text was purged or the observation delivered no comparable body.
+   */
+  bodyComparison?: "unavailable_previous_body_not_retained";
+  /** For grouping corrections; names the association change. */
+  movedFromGroupId?: string;
   movedToGroupId?: string | null;
   ruleVersion?: string;
 }
 
-function terms(text: string): string[] {
-  return [
-    ...new Set(text.toLocaleLowerCase("en").match(/[\p{L}\p{N}]{4,}/gu) ?? []),
-  ].sort();
+function terms(text: string): { terms: Set<string>; dropped: boolean } {
+  const lowered = text.toLocaleLowerCase("en");
+  // Whole-token match: lookarounds require the run of letters/digits to end
+  // within the cap, so a one-megabyte token from a hostile feed is discarded
+  // outright instead of being split into cap-sized chunks.
+  const matched =
+    lowered.match(
+      new RegExp(
+        `(?<![\\p{L}\\p{N}])[\\p{L}\\p{N}]{4,${DIFF_TOKEN_MAX}}(?![\\p{L}\\p{N}])`,
+        "gu",
+      ),
+    ) ?? [];
+  // Any over-long token (or short non-word fragment excluded by the floor)
+  // still marks the diff truncated, so evidence consumers see that the
+  // bounded diff is a partial view of the bodies.
+  const dropped = new RegExp(`[\\p{L}\\p{N}]{${DIFF_TOKEN_MAX + 1},}`).test(
+    lowered,
+  );
+  return { terms: new Set(matched), dropped };
 }
 
-/** Deterministic term diff between two retained bodies, add and remove capped. */
+/**
+ * Deterministic, byte-bounded term diff between two retained bodies.
+ * Individual tokens are length-capped — a one-megabyte token from a hostile
+ * feed is discarded, never stored — each list is capped at DIFF_TERM_LIMIT,
+ * and the combined diff is bounded at DIFF_BYTES_LIMIT with `truncated`
+ * returned so truncation is always recorded in the evidence row.
+ */
 export function boundedTermDiff(
   previous: string,
   current: string,
-): { addedTerms: string[]; removedTerms: string[] } {
-  const before = new Set(terms(previous));
-  const after = new Set(terms(current));
-  return {
-    addedTerms: [...after]
-      .filter((term) => !before.has(term))
-      .sort()
-      .slice(0, DIFF_TERM_LIMIT),
-    removedTerms: [...before]
-      .filter((term) => !after.has(term))
-      .sort()
-      .slice(0, DIFF_TERM_LIMIT),
-  };
+): { addedTerms: string[]; removedTerms: string[]; truncated: boolean } {
+  const before = terms(previous);
+  const after = terms(current);
+  const added = [...after.terms]
+    .filter((term) => !before.terms.has(term))
+    .sort();
+  const removed = [...before.terms]
+    .filter((term) => !after.terms.has(term))
+    .sort();
+  let bytes = 0;
+  let truncated = before.dropped || after.dropped;
+  const cappedAdded: string[] = [];
+  const cappedRemoved: string[] = [];
+  const overBudget = (term: string) =>
+    bytes + tokenBytes(term) + 6 > DIFF_BYTES_LIMIT;
+  for (const [list, capped] of [
+    [added, cappedAdded],
+    [removed, cappedRemoved],
+  ] as const) {
+    for (const term of list) {
+      if (capped.length >= DIFF_TERM_LIMIT || overBudget(term)) {
+        truncated = true;
+        break;
+      }
+      capped.push(term);
+      bytes += tokenBytes(term) + 6;
+    }
+  }
+  return { addedTerms: cappedAdded, removedTerms: cappedRemoved, truncated };
 }
 
 /**
  * Records a change event inside the caller's transaction. Rows are
  * append-only: no code path ever updates or deletes them. A grouping-corrected
- * event stores the group whose membership ended; other events keep their
+ * event stores the group whose association changed; other events keep their
  * group_id only when a live membership already exists at record time and are
- * otherwise resolved to the item's development at read time.
+ * otherwise resolved to the item's development at read time. `versionId` binds
+ * content events to the exact recorded content version, so citations stay
+ * immutable against later item edits.
  */
 export function recordChangeEvent(
   db: Database,
@@ -81,6 +145,8 @@ export function recordChangeEvent(
     observedAt: number;
     sourceId: string | null;
     nativeId: string | null;
+    /** The content_versions row this event cites; null for grouping events. */
+    versionId: number | null;
     evidence: Omit<ChangeEvidence, "version">;
   } & (
     | { kind: "grouping_corrected"; groupId: string }
@@ -98,7 +164,7 @@ export function recordChangeEvent(
           )
           .get(event.itemId)?.group_id ?? null);
   db.query(
-    "INSERT INTO story_change_events(item_id,group_id,kind,source_id,native_id,reported_at,event_at,observed_at,evidence) VALUES(?,?,?,?,?,?,?,?,?)",
+    "INSERT INTO story_change_events(item_id,group_id,kind,source_id,native_id,reported_at,event_at,observed_at,version_id,evidence) VALUES(?,?,?,?,?,?,?,?,?,?)",
   ).run(
     event.itemId,
     groupId,
@@ -108,6 +174,7 @@ export function recordChangeEvent(
     event.reportedAt ?? null,
     event.eventAt ?? null,
     event.observedAt,
+    event.versionId ?? null,
     JSON.stringify({ version: CHANGE_EVIDENCE_VERSION, ...event.evidence }),
   );
 }
@@ -122,6 +189,7 @@ interface EventRow {
   reported_at: number | null;
   event_at: number | null;
   observed_at: number;
+  version_id: number | null;
   evidence: string;
 }
 
@@ -132,6 +200,8 @@ export interface ChangeCitation {
   sourceId: string | null;
   nativeId: string | null;
   sourceTitle: string | null;
+  /** Set when the citation is bound to the recorded content version. */
+  versionId: number | null;
 }
 
 export interface Uncertainty {
@@ -160,7 +230,7 @@ export interface DevelopmentChange {
   observedAt: number;
   development: { groupId: string; current: boolean } | null;
   detailAvailable: boolean;
-  /** Set when the referenced content expired and only citations remain. */
+  /** Set when the cited version expired and only the citation remains. */
   detailUnavailableReason: string | null;
   evidence: unknown;
   groupingContext: GroupingContext | null;
@@ -186,6 +256,13 @@ export interface DevelopmentChanges {
  * citations that survive content expiry. Timeline construction and retrieval
  * stay inside the monolith; a connecting MCP agent explains the change from
  * this evidence — the service never performs conversational reasoning itself.
+ *
+ * Attribution is resolved consistently through membership history: a recorded
+ * group wins; otherwise the membership effective at the event's observation
+ * time; otherwise the item's live membership. A regrouping never reattributes
+ * earlier coverage, and the move records `grouping_corrected` evidence on both
+ * sides of the correction, so the triggering update stays discoverable from
+ * the new development.
  */
 export function developmentChanges(
   store: Store,
@@ -201,14 +278,18 @@ export function developmentChanges(
     throw new Error("A group or item id is required");
   const sqlite = store.sqlite;
   const limit = Math.max(1, Math.min(100, query.limit ?? 50));
+  const scopedGroup = query.groupId;
 
+  // Resolve the requested item through redirects and require existence, so an
+  // unknown id returns null (the MCP surface reports "not found") instead of
+  // a successful but empty envelope.
   const itemIds: string[] = [];
-  if (query.groupId !== undefined) {
+  if (scopedGroup !== undefined) {
     const members = sqlite
-      .query<{ item_id: string }, [string]>(
-        "SELECT DISTINCT item_id FROM story_memberships WHERE group_id=? ORDER BY item_id",
+      .query<{ item_id: string }, [string, number]>(
+        "SELECT DISTINCT item_id FROM story_memberships WHERE group_id=? ORDER BY item_id LIMIT ?",
       )
-      .all(query.groupId);
+      .all(scopedGroup, MEMBER_QUERY_CAP);
     if (!members.length) return null;
     itemIds.push(...members.map((row) => row.item_id));
   } else {
@@ -218,43 +299,95 @@ export function developmentChanges(
           "SELECT item_id FROM item_redirects WHERE old_id=?",
         )
         .get(query.itemId!)?.item_id ?? query.itemId!;
+    if (!sqlite.query("SELECT 1 FROM items WHERE id=?").get(resolved))
+      return null;
     itemIds.push(resolved);
   }
 
-  const currentMembership = new Map(
+  // Membership, citation and detail lookups are scoped to the resolved item
+  // ids only; no read here scales with the full membership table.
+  const liveMembership = new Map(
     sqlite
-      .query<{ item_id: string; group_id: string }, []>(
-        "SELECT item_id,group_id FROM story_memberships WHERE ended_at IS NULL",
+      .query<{ item_id: string; group_id: string }, (string | number)[]>(
+        `SELECT item_id,group_id FROM story_memberships
+         WHERE ended_at IS NULL AND item_id IN (${itemIds.map(() => "?").join(",")})
+         LIMIT ?`,
       )
-      .all()
+      .all(...itemIds, MEMBER_QUERY_CAP)
       .map((row) => [row.item_id, row.group_id] as const),
   );
+  return developmentChangesRead(store, {
+    ...query,
+    limit,
+    scopedGroup,
+    itemIds,
+    liveMembership,
+  });
+}
 
-  const clauses: string[] = [
+interface ReadContext {
+  limit: number;
+  scopedGroup?: string;
+  itemIds: string[];
+  liveMembership: Map<string, string>;
+}
+
+function developmentChangesRead(
+  store: Store,
+  query: ReadContext & {
+    since?: number;
+    until?: number;
+  },
+): DevelopmentChanges {
+  const sqlite = store.sqlite;
+  const limit = query.limit;
+  const scopedGroup = query.scopedGroup;
+  const itemIds = query.itemIds;
+  const liveMembership = query.liveMembership;
+
+  /**
+   * Attribution through membership history: a recorded group wins; otherwise
+   * the membership effective at the event's observation time resolves events
+   * recorded before any membership existed (grouping runs after ingestion)
+   * without reattributing them after a later correction moved the item.
+   */
+  const attribution = (row: EventRow): string | null => {
+    if (row.group_id) return row.group_id;
+    const effective = sqlite
+      .query<{ group_id: string }, [string, number, number]>(
+        `SELECT group_id FROM story_memberships WHERE item_id=? AND started_at<=?
+         AND (ended_at IS NULL OR ended_at>?) ORDER BY started_at DESC LIMIT 1`,
+      )
+      .get(row.item_id, row.observed_at, row.observed_at)?.group_id;
+    return effective ?? liveMembership.get(row.item_id) ?? null;
+  };
+
+  const conditions: string[] = [
     `item_id IN (${itemIds.map(() => "?").join(",")})`,
   ];
   const params: (string | number)[] = [...itemIds];
-  if (query.groupId !== undefined) {
-    clauses.push("(group_id=? OR group_id IS NULL)");
-    params.push(query.groupId);
+  if (scopedGroup !== undefined) {
+    conditions.push("(group_id IS NULL OR group_id=?)");
+    params.push(scopedGroup);
   }
   if (query.since !== undefined) {
-    clauses.push("observed_at>=?");
+    conditions.push("observed_at>=?");
     params.push(query.since);
   }
   if (query.until !== undefined) {
-    clauses.push("observed_at<?");
+    conditions.push("observed_at<?");
     params.push(query.until);
   }
+  const where = conditions.map((condition) => `(${condition})`).join(" AND ");
 
   const rows = sqlite
     .query<EventRow, (string | number)[]>(
-      `SELECT * FROM story_change_events WHERE ${clauses.join(" AND ")}
+      `SELECT * FROM story_change_events WHERE ${where}
        ORDER BY observed_at DESC,id DESC LIMIT ?`,
     )
     .all(...params, limit + 1);
 
-  const citation = (itemId: string): ChangeCitation | null => {
+  const itemCitation = (itemId: string): ChangeCitation | null => {
     const row = sqlite
       .query<{ id: string; title: string; url: string | null }, [string]>(
         "SELECT id,title,url FROM items WHERE id=?",
@@ -268,22 +401,44 @@ export function developmentChanges(
       sourceId: null,
       nativeId: null,
       sourceTitle: null,
+      versionId: null,
     };
   };
 
-  const detailState = (
-    itemId: string,
-  ): {
-    detailAvailable: boolean;
-    reason: string | null;
-  } => {
+  /** Detail state of one exact recorded version, or of the item's content. */
+  const detail = (itemId: string, versionId: number | null) => {
+    if (versionId !== null) {
+      const version = sqlite
+        .query<{ purged_at: number | null; text: string }, [number]>(
+          "SELECT purged_at,text FROM content_versions WHERE id=?",
+        )
+        .get(versionId);
+      if (!version)
+        return { detailAvailable: false, reason: "version_unavailable" };
+      if (version.text !== "" && version.purged_at === null)
+        return { detailAvailable: true, reason: null as string | null };
+      const purged =
+        sqlite
+          .query<{ n: number }, [string]>(
+            "SELECT EXISTS(SELECT 1 FROM retention_purges WHERE item_id=? AND class='feed_text') AS n",
+          )
+          .get(itemId)!.n > 0;
+      return {
+        detailAvailable: false,
+        reason: purged
+          ? "content_expired_retention_citation_retained"
+          : "content_not_extracted",
+      };
+    }
+    // Item-level fallback for grouping-only events (no recorded version).
     const retained =
       sqlite
         .query<{ n: number }, [string]>(
           "SELECT EXISTS(SELECT 1 FROM content_versions WHERE item_id=? AND purged_at IS NULL AND text<>'') AS n",
         )
         .get(itemId)!.n > 0;
-    if (retained) return { detailAvailable: true, reason: null };
+    if (retained)
+      return { detailAvailable: true, reason: null as string | null };
     const purged =
       sqlite
         .query<{ n: number }, [string]>(
@@ -300,10 +455,42 @@ export function developmentChanges(
 
   const events: DevelopmentChange[] = [];
   for (const row of rows.slice(0, limit)) {
-    const item = citation(row.item_id);
+    // For development-scoped reads, an unattributed event only belongs to the
+    // queried development when its resolved attribution is that group; this
+    // keeps a regrouped item's earlier NULL-group events out of the new
+    // development's answer.
+    if (scopedGroup !== undefined && attribution(row) !== scopedGroup) continue;
+    const versionState =
+      row.version_id !== null
+        ? (sqlite
+            .query<
+              { item_id: string; title: string; url: string | null },
+              [number]
+            >("SELECT item_id,title,url FROM content_versions WHERE id=?")
+            .get(row.version_id) ?? null)
+        : null;
+    const item: ChangeCitation | null = versionState
+      ? {
+          // Version-bound citation: the title/URL exactly as observed, immune
+          // to later edits of the mutable canonical item.
+          itemId: versionState.item_id,
+          title: versionState.title,
+          url: versionState.url,
+          sourceId: row.source_id,
+          nativeId: row.native_id,
+          sourceTitle: row.source_id
+            ? (sqlite
+                .query<{ title: string }, [string]>(
+                  "SELECT title FROM sources WHERE id=?",
+                )
+                .get(row.source_id)?.title ?? null)
+            : null,
+          versionId: row.version_id,
+        }
+      : itemCitation(row.item_id);
     if (!item) continue;
-    const { detailAvailable, reason } = detailState(row.item_id);
-    const membership = query.groupId
+    const state = detail(row.item_id, row.version_id);
+    const membership = scopedGroup
       ? (sqlite
           .query<
             {
@@ -315,37 +502,24 @@ export function developmentChanges(
           >(
             "SELECT evidence,started_at,ended_at FROM story_memberships WHERE item_id=? AND group_id=? ORDER BY id DESC LIMIT 1",
           )
-          .get(row.item_id, query.groupId) ?? null)
+          .get(row.item_id, scopedGroup) ?? null)
       : null;
-    const resolvedGroupId =
-      row.group_id ?? currentMembership.get(row.item_id) ?? null;
-    const source = row.source_id
-      ? (sqlite
-          .query<{ title: string }, [string]>(
-            "SELECT title FROM sources WHERE id=?",
-          )
-          .get(row.source_id)?.title ?? null)
-      : null;
+    const resolvedGroupId = attribution(row);
     events.push({
       id: row.id,
       kind: row.kind,
-      item: {
-        ...item,
-        sourceId: row.source_id,
-        nativeId: row.native_id,
-        sourceTitle: source,
-      },
+      item,
       reportedAt: row.reported_at,
       eventAt: row.event_at,
       observedAt: row.observed_at,
       development: resolvedGroupId
         ? {
             groupId: resolvedGroupId,
-            current: currentMembership.get(row.item_id) === resolvedGroupId,
+            current: liveMembership.get(row.item_id) === resolvedGroupId,
           }
         : null,
-      detailAvailable,
-      detailUnavailableReason: reason,
+      detailAvailable: state.detailAvailable,
+      detailUnavailableReason: state.reason,
       evidence: JSON.parse(row.evidence) as unknown,
       groupingContext: membership
         ? {
@@ -357,21 +531,52 @@ export function developmentChanges(
     });
   }
 
-  const scoped = query.groupId !== undefined;
+  const scoped = scopedGroup !== undefined;
   const currentMembers = (
     scoped
-      ? itemIds.filter((id) => currentMembership.get(id) === query.groupId)
+      ? itemIds.filter((id) => liveMembership.get(id) === scopedGroup)
       : itemIds
   )
-    .map(citation)
+    .map(itemCitation)
     .filter((entry): entry is ChangeCitation => entry !== null);
+  // Changed-member classification is independent of the display limit: it
+  // scans all matching content-change rows in the window (bounded), so a
+  // truncated page can never move a genuinely changed member into the
+  // unchanged list.
+  const changedConditions: string[] = [
+    `item_id IN (${itemIds.map(() => "?").join(",")})`,
+    // Development-scoped reads also count grouping corrections as attributable
+    // evidence: a member that moved into this development carries the
+    // membership_assigned event, so it is not reported as an unchanged member
+    // with no evidence (review finding 5). Item-scoped reads still count only
+    // content changes.
+    scoped
+      ? "(kind='content_change' OR kind='grouping_corrected')"
+      : "kind='content_change'",
+  ];
+  const changedParams: (string | number)[] = [...itemIds];
+  if (scoped) {
+    changedConditions.push("group_id=?");
+    changedParams.push(scopedGroup!);
+  }
+  if (query.since !== undefined) {
+    changedConditions.push("observed_at>=?");
+    changedParams.push(query.since);
+  }
+  if (query.until !== undefined) {
+    changedConditions.push("observed_at<?");
+    changedParams.push(query.until);
+  }
   const changedItems = new Set(
-    events
-      .filter((event) => event.kind === "content_change")
-      .map((event) => event.item.itemId),
+    sqlite
+      .query<{ item_id: string }, (string | number)[]>(
+        `SELECT DISTINCT item_id FROM story_change_events WHERE ${changedConditions.map((condition) => `(${condition})`).join(" AND ")} LIMIT ?`,
+      )
+      .all(...changedParams, MEMBER_QUERY_CAP)
+      .map((row) => row.item_id),
   );
   return {
-    groupId: query.groupId ?? currentMembership.get(itemIds[0]!) ?? null,
+    groupId: scopedGroup ?? liveMembership.get(itemIds[0]!) ?? null,
     window: { since: query.since ?? null, until: query.until ?? null },
     events,
     coverage: {

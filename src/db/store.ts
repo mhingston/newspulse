@@ -33,7 +33,11 @@ import {
   type Candidate,
   type PollResult,
 } from "../domain";
-import { boundedTermDiff, recordChangeEvent } from "../dev-changes";
+import {
+  boundedTermDiff,
+  recordChangeEvent,
+  recordedVersionId,
+} from "../dev-changes";
 export interface Source {
   id: string;
   kind: string;
@@ -1414,6 +1418,7 @@ export class Store {
       // observation does not restore it, whether the tombstone came from this
       // source's own purged versions or from the shared purged content.
       const keepPurged = (purged || sourceTombstoned) && !bodyChanged;
+      let changeVersionId: number | null = null;
       if (changed || previous?.backfilled) {
         this.sqlite
           .query(
@@ -1429,9 +1434,18 @@ export class Store {
             now,
             keepPurged ? now : null,
           );
+        changeVersionId = recordedVersionId(this.sqlite);
       }
       if (changed) {
         // Append-only change evidence for the development comparison read.
+        // The term diff is only comparable when the change was actually a
+        // body change between two retained bodies: a title-only update after
+        // the previous body expired, or an omitted body, would otherwise
+        // record the unchanged or missing content as removals. Those cases
+        // mark the comparison unavailable instead.
+        const previousBodyRetained = !!previous && previous.text.trim() !== "";
+        const diffableBody =
+          bodyChanged && previousBodyRetained && candidate.text.trim() !== "";
         recordChangeEvent(this.sqlite, {
           itemId: prior.item_id,
           kind: "content_change",
@@ -1440,11 +1454,26 @@ export class Store {
           observedAt: now,
           sourceId,
           nativeId: candidate.nativeId,
+          versionId: changeVersionId,
           evidence: {
             titleChanged: previous?.title !== candidate.title,
             bodyChanged,
             urlChanged: previous?.url !== originalUrl,
-            ...boundedTermDiff(previous?.text ?? "", candidate.text),
+            ...(diffableBody
+              ? (() => {
+                  const { truncated, ...diff } = boundedTermDiff(
+                    previous!.text,
+                    candidate.text,
+                  );
+                  return {
+                    ...diff,
+                    ...(truncated ? { diffTruncated: true } : {}),
+                  };
+                })()
+              : {
+                  bodyComparison:
+                    "unavailable_previous_body_not_retained" as const,
+                }),
           },
         });
       }
@@ -1542,7 +1571,8 @@ export class Store {
         now,
       );
     // Append-only new-coverage evidence: first observation of this item by
-    // this source, kept even when retention later expires the content.
+    // this source, kept even when retention later expires the content, and
+    // bound to the exact recorded version so the citation stays immutable.
     recordChangeEvent(this.sqlite, {
       itemId: item.id,
       kind: "new_coverage",
@@ -1551,6 +1581,7 @@ export class Store {
       observedAt: now,
       sourceId,
       nativeId: candidate.nativeId,
+      versionId: recordedVersionId(this.sqlite),
       evidence: { reason: "new_coverage" },
     });
     // Digest candidates can arrive before a feed supplies the actual body.

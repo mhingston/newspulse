@@ -324,8 +324,8 @@ export interface BaselineHit {
   /** Canonical item id. */
   itemId: string;
   ingestedAt: number;
-  /** Report date if the source declared one, else the ingestion fallback the baseline would display. */
-  displayedTimelineDate: number;
+  /** The stored report date, preserved as null when the source declared none. */
+  displayedTimelineDate: number | null;
   displayedDateUnknown: boolean;
   groupId: string | null;
   /** No shipped read surface classifies claimed updates versus repeats. */
@@ -347,6 +347,10 @@ export interface AdoptedEvent {
   eventAt: number | null;
   observedAt: number;
   detailAvailable: boolean;
+  detailUnavailableReason: string | null;
+  /** Citation bound to the recorded content version (finding 11 checks it). */
+  citationUrl: string | null;
+  citationNativeId: string | null;
   classifiedAs: "claimed_update" | "new_coverage" | "grouping_correction";
   evidence: unknown;
 }
@@ -398,7 +402,7 @@ export interface HistoryComparisonReport {
         updateRecall: ComparisonMetric;
         /** Window hits presented as changes that are not labeled updates. */
         presentedWithoutEvidence: number;
-        /** Distinct unknown-date items the baseline re-dates from ingestion. */
+        /** Unknown-date items whose chronology the arm invented; shipped reads preserve null dates, so this stays empty unless a fallback is observed. */
         inventedChronology: string[];
         expiredUpdatesRetrievable: ComparisonMetric;
         coverageRecall: ComparisonMetric;
@@ -452,22 +456,26 @@ function baselineArm(
   metrics: HistoryComparisonReport["arms"]["baseline"]["metrics"];
 } {
   const perQuery: BaselineQueryAnswer[] = [];
-  let updateHits = 0;
+  // Recall counts DISTINCT retrieved item ids (review finding 10): a repeated
+  // query or duplicate hit can never mask a missing labeled item.
+  const updateFound = new Set<string>();
+  const coverageFound = new Set<string>();
   let presentedWithoutEvidence = 0;
   const invented = new Set<string>();
-  let coverageHits = 0;
   for (const query of corpus.queries) {
     const results = store.search(query.terms, 20, undefined, since, 0, {
       until: corpus.asOf,
     });
     const hits: BaselineHit[] = results.map((hit) => {
       const item = store.getItem(hit.id)!;
-      if (item.published_at === null)
-        invented.add(reverse.get(hit.id) ?? hit.id);
+      // Preserve the stored report date exactly as the shipped read returns
+      // it (review finding 8): a null date stays null and is reported as
+      // unknown, never substituted with ingestion time, so the baseline is
+      // never credited with a chronology invention it does not perform.
       return {
         itemId: reverse.get(hit.id) ?? hit.id,
         ingestedAt: hit.ingested_at,
-        displayedTimelineDate: item.published_at ?? hit.ingested_at,
+        displayedTimelineDate: item.published_at,
         displayedDateUnknown: item.published_at === null,
         groupId: item.story.current?.group_id ?? null,
         evidenceClassification: "unavailable" as const,
@@ -487,8 +495,10 @@ function baselineArm(
     const labeled = labels(corpus, resolve).get(query.development);
     if (labeled)
       for (const hit of results) {
-        if (labeled.updateItemIds.includes(hit.id)) updateHits += 1;
-        else if (labeled.coverageItemIds.includes(hit.id)) coverageHits += 1;
+        const fixtureId = reverse.get(hit.id) ?? hit.id;
+        if (labeled.updateItemIds.includes(hit.id)) updateFound.add(fixtureId);
+        else if (labeled.coverageItemIds.includes(hit.id))
+          coverageFound.add(fixtureId);
         else
           // Unchanged repeats, broad-topic decoys and unlabeled hits are all
           // presented by the baseline with no classification evidence.
@@ -499,7 +509,7 @@ function baselineArm(
     perQuery,
     metrics: {
       updateRecall: ratio(
-        updateHits,
+        updateFound.size,
         corpus.items.filter((item) => item.expectation === "meaningful_update")
           .length,
       ),
@@ -510,7 +520,7 @@ function baselineArm(
         corpus.items.filter((item) => item.expiredDetail).length,
       ),
       coverageRecall: ratio(
-        coverageHits,
+        coverageFound.size,
         corpus.items.filter((item) => item.expectation === "new_coverage")
           .length,
       ),
@@ -534,11 +544,13 @@ function adoptedArm(
   metrics: HistoryComparisonReport["arms"]["adopted"]["metrics"];
 } {
   const perQuery: AdoptedQueryAnswer[] = [];
-  let updateEvents = 0;
+  // Distinct retrieved ids (review finding 10): repeated queries or multiple
+  // events for one item can never mask a missing labeled item.
+  const updateItems = new Set<string>();
+  const coverageItems = new Set<string>();
+  const expiredItems = new Set<string>();
   const falsePositives = new Set<string>();
   const invented = new Set<string>();
-  let expired = 0;
-  let coverage = 0;
   for (const query of corpus.queries) {
     const anchorGroup =
       store.getItem(resolve(query.anchorItemId))?.story.current?.group_id ??
@@ -572,6 +584,9 @@ function adoptedArm(
       eventAt: event.eventAt,
       observedAt: event.observedAt,
       detailAvailable: event.detailAvailable,
+      detailUnavailableReason: event.detailUnavailableReason,
+      citationUrl: event.item.url,
+      citationNativeId: event.item.nativeId,
       classifiedAs:
         event.kind === "content_change"
           ? ("claimed_update" as const)
@@ -580,6 +595,19 @@ function adoptedArm(
             : ("grouping_correction" as const),
       evidence: event.evidence,
     }));
+    // Chronology gate (review finding 9): no shipped adapter declares an
+    // event time, so any non-null event time in this corpus is invented;
+    // and an item labeled with a missing report date must surface a null
+    // reportedAt, never a substituted clock.
+    for (const event of rawEvents) {
+      const fixtureId = reverse.get(event.item.itemId) ?? event.item.itemId;
+      if (event.eventAt !== null) invented.add(fixtureId);
+      else if (
+        event.reportedAt !== null &&
+        (labeled?.unknownDateItemIds ?? []).includes(event.item.itemId)
+      )
+        invented.add(fixtureId);
+    }
     perQuery.push({
       queryId: query.id,
       development: query.development,
@@ -600,45 +628,51 @@ function adoptedArm(
       for (const event of rawEvents) {
         const rawId = event.item.itemId;
         if (event.kind === "content_change") {
-          if (labeled.updateItemIds.includes(rawId)) updateEvents += 1;
+          if (labeled.updateItemIds.includes(rawId)) updateItems.add(rawId);
           else falsePositives.add(reverse.get(rawId) ?? rawId);
         } else if (event.kind === "new_coverage") {
           // New coverage of the development (including an unchanged
           // verbatim re-publication) is correct output; only an event for
           // an item that was never part of this development counts as a
           // false positive.
-          if (labeled.coverageItemIds.includes(rawId)) coverage += 1;
+          if (labeled.coverageItemIds.includes(rawId)) coverageItems.add(rawId);
           else if (!own.has(rawId))
             falsePositives.add(reverse.get(rawId) ?? rawId);
         }
       }
-    }
-    for (const expiredItem of labeled?.expiredItemIds ?? [])
-      if (
-        rawEvents.some(
-          (event) =>
-            event.item.itemId === expiredItem &&
-            event.kind === "content_change",
+      // Retention gate (review finding 11): counting an expired update
+      // requires the recorded missing-detail marker AND a usable citation
+      // (a URL or source-native id) that survives the purge, not merely the
+      // existence of a content-change event.
+      for (const expiredItem of labeled.expiredItemIds)
+        if (
+          rawEvents.some(
+            (event) =>
+              event.item.itemId === expiredItem &&
+              event.kind === "content_change" &&
+              !event.detailAvailable &&
+              (event.item.url !== null || event.item.nativeId !== null),
+          )
         )
-      )
-        expired += 1;
+          expiredItems.add(expiredItem);
+    }
   }
   return {
     perQuery,
     metrics: {
       updateRecall: ratio(
-        updateEvents,
+        updateItems.size,
         corpus.items.filter((item) => item.expectation === "meaningful_update")
           .length,
       ),
       updateFalsePositives: [...falsePositives].sort(),
       inventedChronology: [...invented].sort(),
       expiredUpdatesRetrievable: ratio(
-        expired,
+        expiredItems.size,
         corpus.items.filter((item) => item.expiredDetail).length,
       ),
       coverageRecall: ratio(
-        coverage,
+        coverageItems.size,
         corpus.items.filter((item) => item.expectation === "new_coverage")
           .length,
       ),
@@ -751,7 +785,7 @@ export function evaluateHistoryComparisons(
           description:
             "Today's baseline capability: windowed search_items (ingested_at window) plus per-hit story/get_item reads; no shipped surface classifies claimed updates, separates report/event/ingestion times per observation, or survives content expiry with change evidence.",
           methodology:
-            "For each recorded query: store.search(terms, since, until), then store.getItem for every hit; report dates fall back to ingested_at exactly as a connector would have to (the shipped read leaves no other anchor); change classification unavailable.",
+            "For each recorded query: store.search(terms, since, until), then store.getItem for every hit. Stored report dates are preserved exactly as the shipped reads return them — a missing date stays null and is flagged displayedDateUnknown, never substituted with ingestion time, so no baseline chronology invention is inferred (review finding 8); the ingested_at window semantics of the shipped search are a separate, explicitly attributed limitation. Change classification is unavailable.",
           perQuery: baseline.perQuery,
           metrics: baseline.metrics,
         },

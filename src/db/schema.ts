@@ -426,6 +426,13 @@ export const storyChangeEvents = sqliteTable(
     reportedAt: integer("reported_at"),
     eventAt: integer("event_at"),
     observedAt: integer("observed_at").notNull(),
+    /**
+     * The content_versions row the event cites, so content-change citations
+     * stay bound to the title/URL/body state observed at change time (issue
+     * #26 review): later item edits and retention tombstones cannot rewrite
+     * what an earlier event reported. Null for grouping-only events.
+     */
+    versionId: integer("version_id").references(() => contentVersions.id),
     evidence: text().notNull(),
   },
   (t) => [

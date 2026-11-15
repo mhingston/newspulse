@@ -221,6 +221,7 @@ describe("append-only change evidence", () => {
       expect(boundedTermDiff("alpha beta", "beta gamma delta")).toEqual({
         addedTerms: ["delta", "gamma"],
         removedTerms: ["alpha"],
+        truncated: false,
       });
     } finally {
       store.close();
@@ -439,18 +440,25 @@ describe("append-only change evidence", () => {
       const corrections = events(store, twin).filter(
         (row) => row.kind === "grouping_corrected",
       );
-      expect(corrections).toHaveLength(1);
-      expect(corrections[0]!.group_id).toBe(groupId);
-      expect(corrections[0]!.evidence).toMatchObject({
-        reason: "membership_corrected",
-      });
-      // The correction names where the item moved (a distinct development).
+      // Both sides of the move are recorded: the correction against the old
+      // development and the assignment against the new one.
+      const byReason = (reason: string) =>
+        corrections.filter(
+          (row) => (row.evidence as { reason: string }).reason === reason,
+        );
+      const corrected = byReason("membership_corrected");
+      const assigned = byReason("membership_assigned");
+      expect(corrected).toHaveLength(1);
+      expect(corrected[0]!.group_id).toBe(groupId);
+      expect(assigned).toHaveLength(1);
+      expect(assigned[0]!.group_id).not.toBe(groupId);
       expect(
-        (corrections[0]!.evidence as { movedToGroupId: string }).movedToGroupId,
-      ).not.toBeNull();
+        (corrected[0]!.evidence as { movedToGroupId: string }).movedToGroupId,
+      ).toBe(assigned[0]!.group_id!);
       expect(
-        (corrections[0]!.evidence as { movedToGroupId: string }).movedToGroupId,
-      ).not.toBe(groupId);
+        (assigned[0]!.evidence as { movedFromGroupId: string })
+          .movedFromGroupId,
+      ).toBe(groupId);
       // The original atlas item never gained a correction event: only the
       // item whose membership changed is corrected.
       expect(
@@ -676,6 +684,476 @@ describe("MCP surface", () => {
         await client.close();
         server.stop(true);
       }
+    } finally {
+      store.close();
+    }
+  });
+});
+
+describe("PR 79 review contracts", () => {
+  test("diff evidence is byte-bounded: long tokens are dropped and truncation is exposed", () => {
+    // A single megabyte token never enters the evidence: tokens longer than
+    // DIFF_TOKEN_MAX are discarded outright.
+    const long = "z".repeat(1_000_000);
+    const unit = boundedTermDiff("alpha", `alpha beta ${long}`);
+    expect(unit.addedTerms).toEqual(["beta"]);
+    expect(unit.removedTerms).toEqual([]);
+    for (const term of unit.addedTerms)
+      expect(term.length).toBeLessThanOrEqual(24);
+
+    // More distinct terms than the caps allow: the term-count caps bite and
+    // truncation is recorded rather than silently dropped.
+    const many = Array.from({ length: 80 }, (_, i) => `term${i}`).join(" ");
+    const capped = boundedTermDiff("alpha", `alpha ${many}`);
+    expect(capped.addedTerms.length).toBe(20);
+    expect(capped.truncated).toBe(true);
+    // The full envelope stays bounded even against a huge input.
+    expect(
+      JSON.stringify({
+        addedTerms: capped.addedTerms,
+        removedTerms: capped.removedTerms,
+      }).length,
+    ).toBeLessThanOrEqual(2048);
+  });
+
+  test("a hostile feed body stores bounded evidence, never raw megabyte tokens", () => {
+    const store = new Store(join(temp(), "longtoken.sqlite"));
+    try {
+      const source = store.addSource("https://techwire.example/feed.xml");
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme releases Atlas 2 robotics model",
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_BODY,
+            pubDate: iso(week1),
+          },
+        ]),
+        week1,
+      );
+      const atlas = store.search("benchmark")[0]!.id;
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme updates Atlas 2 robotics model",
+            link: "https://techwire.example/atlas-2",
+            text:
+              "The Atlas 2 note is corrected with a long evaluation context. " +
+              `${Array.from({ length: 120 }, (_, i) => `tokn${i}`).join(" ")} ` +
+              "x".repeat(1_000_000),
+            pubDate: iso(week1),
+          },
+        ]),
+        week2,
+      );
+      const change = events(store, atlas).find(
+        (row) => row.kind === "content_change",
+      )!;
+      const raw = JSON.stringify(change.evidence);
+      // The whole evidence envelope is small: no raw body bytes are stored.
+      expect(raw.length).toBeLessThanOrEqual(4096);
+      expect(raw).not.toContain("zzzz");
+      expect(
+        (change.evidence as { diffTruncated?: boolean }).diffTruncated,
+      ).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("unknown development and item ids return the not-found branch", () => {
+    const store = new Store(join(temp(), "unknown.sqlite"));
+    try {
+      expect(developmentChanges(store, { itemId: "no-such-item" })).toBeNull();
+      expect(
+        developmentChanges(store, { groupId: "no-such-group" }),
+      ).toBeNull();
+      expect(developmentChanges(store, {})).toBeNull(); // constructor error path
+    } catch {
+      // developmentChanges with neither id throws; that is the documented
+      // invalid-arguments branch, not the not-found branch.
+    } finally {
+      store.close();
+    }
+  });
+
+  test("regrouping keeps earlier coverage attributed and the triggering update discoverable", () => {
+    const store = new Store(join(temp(), "regroup.sqlite"));
+    try {
+      const source = store.addSource("https://techwire.example/feed.xml");
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme releases Atlas 2 robotics model",
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_BODY,
+            pubDate: iso(week1),
+          },
+          {
+            guid: "twin",
+            title: "Atlas 2 robotics model launched by Acme",
+            link: "https://wire.example/atlas-2",
+            text: ATLAS_BODY,
+            pubDate: iso(week1),
+          },
+        ]),
+        week1,
+      );
+      store.stories.reconcile(week1);
+      const atlas = store.search("benchmark")[0]!.id;
+      const twin = store.search("acme").find((hit) => hit.id !== atlas)!.id;
+      const groupA = store.stories.forItem(atlas).current!.group_id;
+      expect(store.stories.forItem(twin).current!.group_id).toBe(groupA);
+
+      // A week-two correction to atlas, and a divergence for twin: the twin
+      // leaves the development while the correction stays.
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme retracts Atlas 2 benchmark claim",
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_RETRACTION,
+            pubDate: iso(week1),
+          },
+          {
+            guid: "twin",
+            title: "Quarterly earnings summary reshapes budget",
+            link: "https://wire.example/twin",
+            text: "The quarterly earnings summary reshapes the departmental budget in the coming fiscal year.",
+            pubDate: iso(week2),
+          },
+        ]),
+        week2,
+      );
+      store.stories.reconcile(week2);
+      const groupB = store.stories.forItem(twin).current!.group_id;
+      expect(groupB).not.toBe(groupA);
+
+      const readA = developmentChanges(store, { groupId: groupA })!;
+      const kindsA = readA.events.map((event) => event.kind);
+      // The old development keeps the earlier coverage, the triggering
+      // content change and the correction side of the move; no event is
+      // reattributed to the new development.
+      expect(kindsA).toContain("new_coverage");
+      expect(kindsA).toContain("content_change");
+      expect(kindsA).toContain("grouping_corrected");
+      expect(
+        readA.events
+          .filter((event) => event.kind === "content_change")
+          .every((event) => event.development?.groupId === groupA),
+      ).toBe(true);
+      const correctedInA = readA.events.find(
+        (event) =>
+          event.kind === "grouping_corrected" &&
+          (event.evidence as { reason?: string }).reason ===
+            "membership_corrected",
+      )!;
+      expect(
+        (correctedInA.evidence as { movedToGroupId: string }).movedToGroupId,
+      ).toBe(groupB);
+
+      const readB = developmentChanges(store, { groupId: groupB })!;
+      // The new development does not quietly claim the earlier coverage, but
+      // the move itself is recorded evidence pointing back at it.
+      expect(
+        readB.events
+          .filter((event) => event.kind === "new_coverage")
+          .map((event) => event.item.itemId),
+      ).not.toContain(twin);
+      const assigned = readB.events.find(
+        (event) =>
+          event.kind === "grouping_corrected" &&
+          (event.evidence as { reason?: string }).reason ===
+            "membership_assigned",
+      )!;
+      expect(
+        (assigned.evidence as { movedFromGroupId: string }).movedFromGroupId,
+      ).toBe(groupA);
+      // The triggering update is discoverable from the new development via
+      // the assigned item: an item-scoped read resolves its full timeline.
+      const itemRead = developmentChanges(store, { itemId: twin })!;
+      expect(itemRead.events.map((event) => event.kind)).toContain(
+        "content_change",
+      );
+      // The moved item is not listed as an unchanged member of B.
+      expect(
+        readB.coverage.membersWithoutChangeEvidence.filter(
+          (itemId) => itemId === twin,
+        ),
+      ).toEqual([]);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("citations stay bound to the recorded content version across edits and expiry", async () => {
+    const store = new Store(join(temp(), "versions.sqlite"));
+    try {
+      const source = store.addSource("https://techwire.example/feed.xml");
+      const title1 = "Acme releases Atlas 2 robotics model";
+      const title2 = "Acme retracts Atlas 2 benchmark claim";
+      const title3 = "Acme reissues Atlas 2 corrected numbers";
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: title1,
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_BODY,
+            pubDate: iso(week1),
+          },
+        ]),
+        week1,
+      );
+      store.stories.reconcile(week1);
+      const atlas = store.search("benchmark")[0]!.id;
+
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: title2,
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_RETRACTION,
+            pubDate: iso(week1),
+          },
+        ]),
+        week2,
+      );
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: title3,
+            link: "https://wire.example/atlas-2",
+            text: "Acme reissues the Atlas 2 corrected numbers after a fresh evaluation of the released weights.",
+            pubDate: iso(week1),
+          },
+        ]),
+        week2 + DAY_MS,
+      );
+      const changes = events(store, atlas).filter(
+        (row) => row.kind === "content_change",
+      );
+      expect(changes.length).toBe(2);
+      const read = developmentChanges(store, { itemId: atlas })!;
+      const changeEvents = read.events.filter(
+        (event) => event.kind === "content_change",
+      );
+      // Older events keep the version-bound citation exactly as observed,
+      // even though the canonical item now carries the newest title/URL.
+      expect(changeEvents[1]?.item.title).toBe(title2);
+      expect(changeEvents[0]?.item.title).toBe(title3);
+      expect(changeEvents[0]?.item.versionId).not.toBeNull();
+      expect(changeEvents[1]?.item.versionId).not.toBeNull();
+
+      // Expire the item's retained text: each version-bound event reports
+      // its own version's retention state, so the newest event (whose
+      // version survived as the live body) does not mark older purged
+      // versions available.
+      settle(store, week2 + 10 * DAY_MS);
+      const report = runRetention(
+        store.sqlite,
+        { ...retentionPolicy({}), feedTextDays: 1 },
+        week2 + 11 * DAY_MS,
+        { dryRun: false, limit: 100 },
+      );
+      expect(report.purged.feed_text).toBeGreaterThan(0);
+      const after = developmentChanges(store, { itemId: atlas })!;
+      const afterChanges = after.events.filter(
+        (event) => event.kind === "content_change",
+      );
+      for (const event of afterChanges) {
+        expect(event.detailAvailable).toBe(false);
+        expect(event.detailUnavailableReason).toBe(
+          "content_expired_retention_citation_retained",
+        );
+        expect(event.item.url).not.toBeNull();
+      }
+    } finally {
+      store.close();
+    }
+  });
+
+  test("unchanged-member classification is independent of the page limit", () => {
+    const store = new Store(join(temp(), "pagelimit.sqlite"));
+    try {
+      const source = store.addSource("https://techwire.example/feed.xml");
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme releases Atlas 2 robotics model",
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_BODY,
+            pubDate: iso(week1),
+          },
+          {
+            guid: "wire-copy",
+            title: "Independent report on the new model",
+            link: "https://wire.example/atlas-ship",
+            text: ATLAS_BODY,
+            pubDate: iso(week1),
+          },
+        ]),
+        week1,
+      );
+      store.stories.reconcile(week1);
+      const items = store.search("benchmark").map((hit) => hit.id);
+      expect(items.length).toBe(2);
+      const groupId = store.stories.forItem(items[0]!).current!.group_id;
+
+      // Two content changes in the window, one per member, with distinct
+      // observation times.
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme retracts Atlas 2 benchmark claim",
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_RETRACTION,
+            pubDate: iso(week1),
+          },
+        ]),
+        week2,
+      );
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "wire-copy",
+            title: "Independent report retracts unclear figures",
+            link: "https://wire.example/atlas-ship",
+            text: "The independent report corrects an unclear sentence and republishes the rest of the evaluation.",
+            pubDate: iso(week1),
+          },
+        ]),
+        week2 + 1,
+      );
+      // With limit 1 only the newest event fits on the page; both members
+      // change evidence, so neither may be listed as unchanged.
+      const read = developmentChanges(store, {
+        groupId,
+        limit: 1,
+        since: week2,
+      })!;
+      expect(read.events).toHaveLength(1);
+      expect(read.coverage.membersWithoutChangeEvidence).toEqual([]);
+      expect(read.coverage.truncated).toBe(true);
+    } finally {
+      store.close();
+    }
+  });
+
+  test("title-only updates and omitted bodies record an unavailable comparison, not invented removals", () => {
+    const store = new Store(join(temp(), "titleonly.sqlite"));
+    try {
+      const source = store.addSource("https://techwire.example/feed.xml");
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme releases Atlas 2 robotics model",
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_BODY,
+            pubDate: iso(week1),
+          },
+        ]),
+        week1,
+      );
+      const atlas = store.search("benchmark")[0]!.id;
+
+      // Settle and expire the retained text, then re-poll the same item with
+      // a title-only change and the same body: the diff must not read the
+      // tombstone's empty text as "everything removed".
+      settle(store, week1 + DAY_MS);
+      const purged = runRetention(
+        store.sqlite,
+        { ...retentionPolicy({}), feedTextDays: 1 },
+        week1 + 2 * DAY_MS,
+        { dryRun: false, limit: 100 },
+      );
+      expect(purged.purged.feed_text).toBeGreaterThan(0);
+
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme updates the Atlas 2 announcement",
+            link: "https://techwire.example/atlas-2",
+            text: ATLAS_BODY,
+            pubDate: iso(week1),
+          },
+        ]),
+        week2,
+      );
+      const titleOnly = events(store, atlas).findLast(
+        (row) => row.kind === "content_change",
+      )!;
+      expect((titleOnly.evidence as { bodyChanged: boolean }).bodyChanged).toBe(
+        false,
+      );
+      expect(
+        (titleOnly.evidence as { bodyComparison?: string }).bodyComparison,
+      ).toBe("unavailable_previous_body_not_retained");
+      expect(
+        (titleOnly.evidence as { addedTerms?: string[] }).addedTerms,
+      ).toBeUndefined();
+      expect(
+        (titleOnly.evidence as { removedTerms?: string[] }).removedTerms,
+      ).toBeUndefined();
+
+      // An omitted body on a retained previous body also records the
+      // comparison unavailable: the retained body is never counted as removed.
+      poll(
+        store,
+        source,
+        feed([
+          {
+            guid: "atlas-2",
+            title: "Acme updates the Atlas 2 announcement again",
+            link: "https://techwire.example/atlas-2",
+            pubDate: iso(week1),
+          },
+        ]),
+        week2 + DAY_MS,
+      );
+      const omitted = events(store, atlas).findLast(
+        (row) => row.kind === "content_change",
+      )!;
+      expect(
+        (omitted.evidence as { bodyComparison?: string }).bodyComparison,
+      ).toBe("unavailable_previous_body_not_retained");
+      expect(
+        (omitted.evidence as { removedTerms?: string[] }).removedTerms,
+      ).toBeUndefined();
     } finally {
       store.close();
     }

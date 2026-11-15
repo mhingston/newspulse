@@ -28,7 +28,7 @@
   "arms": {
     "baseline": {
       "description": "Today's baseline capability: windowed search_items (ingested_at window) plus per-hit story/get_item reads; no shipped surface classifies claimed updates, separates report/event/ingestion times per observation, or survives content expiry with change evidence.",
-      "methodology": "For each recorded query: store.search(terms, since, until), then store.getItem for every hit; report dates fall back to ingested_at exactly as a connector would have to (the shipped read leaves no other anchor); change classification unavailable.",
+      "methodology": "For each recorded query: store.search(terms, since, until), then store.getItem for every hit. Stored report dates are preserved exactly as the shipped reads return them — a missing date stays null and is flagged displayedDateUnknown, never substituted with ingestion time, so no baseline chronology invention is inferred (review finding 8); the ingested_at window semantics of the shipped search are a separate, explicitly attributed limitation. Change classification is unavailable.",
       "perQuery": [
         {
           "queryId": "q-atlas-benchmark",
@@ -37,7 +37,7 @@
             {
               "itemId": "atlas-methods",
               "ingestedAt": 1794780001000,
-              "displayedTimelineDate": 1794780001000,
+              "displayedTimelineDate": null,
               "displayedDateUnknown": true,
               "groupId": "story:3c840c85a4b9be11ba20f611",
               "evidenceClassification": "unavailable",
@@ -81,7 +81,7 @@
             {
               "itemId": "atlas-methods",
               "ingestedAt": 1794780001000,
-              "displayedTimelineDate": 1794780001000,
+              "displayedTimelineDate": null,
               "displayedDateUnknown": true,
               "groupId": "story:3c840c85a4b9be11ba20f611",
               "evidenceClassification": "unavailable",
@@ -97,7 +97,7 @@
           "value": 0
         },
         "presentedWithoutEvidence": 2,
-        "inventedChronology": ["atlas-methods"],
+        "inventedChronology": [],
         "expiredUpdatesRetrievable": {
           "numerator": 0,
           "denominator": 1,
@@ -127,6 +127,9 @@
               "eventAt": null,
               "observedAt": 1794780001000,
               "detailAvailable": true,
+              "detailUnavailableReason": null,
+              "citationUrl": "https://wire.example/atlas-correction",
+              "citationNativeId": "wire-1",
               "classifiedAs": "new_coverage",
               "evidence": {
                 "version": "development-change-v1",
@@ -141,6 +144,9 @@
               "eventAt": null,
               "observedAt": 1794780001000,
               "detailAvailable": true,
+              "detailUnavailableReason": null,
+              "citationUrl": "https://techwire.example/atlas-2",
+              "citationNativeId": "atlas-techwire-1",
               "classifiedAs": "claimed_update",
               "evidence": {
                 "version": "development-change-v1",
@@ -197,6 +203,9 @@
               "eventAt": null,
               "observedAt": 1794780001000,
               "detailAvailable": false,
+              "detailUnavailableReason": "content_expired_retention_citation_retained",
+              "citationUrl": "https://techwire.example/atlas-recall",
+              "citationNativeId": "atlas-techwire-2",
               "classifiedAs": "claimed_update",
               "evidence": {
                 "version": "development-change-v1",
@@ -250,6 +259,9 @@
               "eventAt": null,
               "observedAt": 1794780001000,
               "detailAvailable": true,
+              "detailUnavailableReason": null,
+              "citationUrl": "https://techwire.example/orion-4",
+              "citationNativeId": "atlas-techwire-4",
               "classifiedAs": "new_coverage",
               "evidence": {
                 "version": "development-change-v1",
@@ -275,6 +287,9 @@
               "eventAt": null,
               "observedAt": 1794780001000,
               "detailAvailable": true,
+              "detailUnavailableReason": null,
+              "citationUrl": "https://wire.example/discussion",
+              "citationNativeId": "wire-2",
               "classifiedAs": "new_coverage",
               "evidence": {
                 "version": "development-change-v1",

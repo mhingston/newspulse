@@ -157,9 +157,13 @@ export class StoryStore {
                 "UPDATE story_memberships SET ended_at=? WHERE item_id=? AND ended_at IS NULL",
               )
               .run(now, row.item_id);
-            // Reversible grouping correction: append-only evidence that the
-            // item no longer belongs to this development. Published/frozen
-            // history is never rewritten; the ended membership remains.
+            // Reversible grouping corrections: append-only evidence that the
+            // item's development association changed. Published/frozen
+            // history is never rewritten; the ended membership remains. The
+            // correction is recorded on both sides of a move — against the
+            // old group (the correction) and the new group (the assignment) —
+            // so neither the earlier coverage nor the triggering update is
+            // hidden from either development's read.
             recordChangeEvent(this.sqlite, {
               itemId: row.item_id,
               kind: "grouping_corrected",
@@ -169,12 +173,30 @@ export class StoryStore {
               observedAt: now,
               sourceId: null,
               nativeId: null,
+              versionId: null,
               evidence: {
                 reason: "membership_corrected",
                 ruleVersion: plan.version,
                 movedToGroupId: next?.groupId ?? null,
               },
             });
+            if (next && next.groupId !== row.group_id)
+              recordChangeEvent(this.sqlite, {
+                itemId: row.item_id,
+                kind: "grouping_corrected",
+                groupId: next.groupId,
+                reportedAt: null,
+                eventAt: null,
+                observedAt: now,
+                sourceId: null,
+                nativeId: null,
+                versionId: null,
+                evidence: {
+                  reason: "membership_assigned",
+                  ruleVersion: plan.version,
+                  movedFromGroupId: row.group_id,
+                },
+              });
           }
         }
         const unchanged = new Set(

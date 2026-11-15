@@ -41,8 +41,10 @@ test("the recorded baseline distinguishes baseline capability from gaps and meet
   });
   expect(report.arms.baseline.metrics.presentedWithoutEvidence).toBe(2);
   expect(report.arms.baseline.metrics.expiredUpdatesRetrievable.value).toBe(0);
-  // The dateless item is re-dated from ingestion by any baseline timeline.
-  expect(report.arms.baseline.metrics.inventedChronology.length).toBe(1);
+  // No invented chronology in either arm: the shipped reads preserve a
+  // missing report date as null, and the replay preserves it with them
+  // (PR 79 review finding 8) instead of attributing a fallback to the baseline.
+  expect(report.arms.baseline.metrics.inventedChronology).toEqual([]);
   // Adopted: the recorded evidence read closes every measured gap.
   expect(report.arms.adopted.metrics.updateRecall.value).toBe(1);
   expect(report.arms.adopted.metrics.updateFalsePositives).toEqual([]);
