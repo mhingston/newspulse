@@ -1,0 +1,108 @@
+{
+  "version": 1,
+  "id": "web-interface-corpus-v1",
+  "notes": "Concrete user tasks for the optional discovery-focused web interface evaluation (issue #31): understanding a discovery and its ranking explanation, running a budgeted discovery query, configuring interests, giving explicit feedback (item, query and discovery linkage), and reviewing story developments and edition history. Each task step names the shipped MCP tool that performs it; the replay drives the real tool surface over an in-memory transport with a recorded fake discovery provider. All timestamps are fixed; no provider, network or email is contacted.",
+  "asOf": 1794297600000,
+  "discoveryEnv": {
+    "DISCOVERY_DAILY_QUERIES": "3",
+    "DISCOVERY_RUN_QUERIES": "1",
+    "DISCOVERY_DAILY_RESULTS": "20",
+    "DISCOVERY_RUN_RESULTS": "10",
+    "DISCOVERY_DAILY_MICROS": "3000",
+    "DISCOVERY_RUN_MICROS": "1000",
+    "DISCOVERY_QUERY_MICROS": "100"
+  },
+  "sources": [
+    {
+      "id": "journal",
+      "url": "https://journal.example/atlas-feed.xml",
+      "title": "Journal of Robotics"
+    }
+  ],
+  "interestSeed": {
+    "kind": "interest",
+    "id": "robotics-safety",
+    "version": 1,
+    "description": "Humanoid robotics safety and benchmark developments",
+    "entities": ["ACME Robotics"],
+    "keywords": ["robotics", "humanoid"],
+    "priority": 3,
+    "positive": ["benchmarks", "safety"],
+    "negative": ["gossip"],
+    "queries": ["humanoid robotics safety developments"],
+    "lifetime": "persistent",
+    "feedbackRefs": []
+  },
+  "interestUpdate": {
+    "id": "robotics-safety",
+    "description": "Humanoid robotics safety, benchmark and manipulation developments",
+    "entities": ["ACME Robotics"],
+    "keywords": ["robotics", "humanoid", "dexterous manipulation"],
+    "priority": 3,
+    "positive": ["benchmarks", "safety"],
+    "negative": ["gossip"],
+    "queries": [
+      "humanoid robotics safety developments",
+      "humanoid robotics dexterous manipulation benchmarks"
+    ],
+    "lifetime": "persistent",
+    "feedbackRefs": []
+  },
+  "feedItems": [
+    {
+      "id": "atlas-4",
+      "nativeId": "atlas-4-release",
+      "url": "https://journal.example/atlas-4-update",
+      "title": "ACME Robotics ships Atlas-4 humanoid update",
+      "text": "ACME Robotics released the Atlas-4 humanoid with new benchmark results and torque-limited safety envelopes across repeated manipulation tasks.",
+      "publishedAt": 1794132000000,
+      "observedAt": 1794124800000
+    },
+    {
+      "id": "atlas-4-review",
+      "nativeId": "atlas-4-followup",
+      "url": "https://journal.example/atlas-4-update-recap",
+      "title": "ACME Robotics ships Atlas-4 humanoid safety update",
+      "text": "ACME Robotics released the Atlas-4 humanoid with new benchmark results and torque-limited safety envelopes across repeated manipulation tasks; benchmark results here.",
+      "publishedAt": 1794218400000,
+      "observedAt": 1794211200000
+    }
+  ],
+  "discovery": {
+    "seedQuery": "humanoid robotics safety developments",
+    "triggerQuery": "humanoid robotics dexterous manipulation benchmarks",
+    "provider": {
+      "name": "recorded-fixture",
+      "version": "corpus-v1"
+    },
+    "results": [
+      {
+        "url": "https://news.example/humanoid-safety-report",
+        "title": "Humanoid safety report records rapid progress",
+        "snippet": "A cross-lab safety report finds humanoid robot deployments accelerating with new torque-limiting benchmarks.",
+        "publishedAt": 1794230400000
+      },
+      {
+        "url": "https://lab.example/firmware-advisory",
+        "title": "Humanoid firmware advisory affects bench tests",
+        "snippet": "A vendor advisory describes a firmware defect that skewed humanoid dexterity test bench results.",
+        "publishedAt": 1794241200000
+      }
+    ],
+    "triggerResults": [
+      {
+        "url": "https://lab.example/dexterous-benchmark",
+        "title": "New dexterous manipulation benchmark published",
+        "snippet": "A benchmark suite for dexterous manipulation on humanoids with reproducible protocols.",
+        "publishedAt": 1794264000000
+      }
+    ]
+  },
+  "edition": {
+    "date": "2026-11-10",
+    "subject": "Newspulse",
+    "text": "Today's curated developments with citations and feedback links.",
+    "frozenAt": 1794294000000
+  },
+  "changeWindowDays": 3
+}

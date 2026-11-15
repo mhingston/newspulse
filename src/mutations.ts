@@ -457,6 +457,7 @@ export async function confirmTriggerDiscovery(
   provider: SearchProvider,
   env: Record<string, string | undefined> = process.env,
   dbPath?: string,
+  clock: () => number = Date.now,
 ) {
   const limits = discoveryConfig(env);
   return withDiscoveryDispatch(dbPath, () => {
@@ -473,6 +474,6 @@ export async function confirmTriggerDiscovery(
       payload: { query: preview.query },
       apply: () => ({ query: preview.query as string }),
     });
-    return runDiscovery(store, provider, query, limits);
+    return runDiscovery(store, provider, query, limits, clock);
   });
 }

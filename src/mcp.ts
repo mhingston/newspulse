@@ -36,6 +36,11 @@ export interface McpOptions {
   env?: Record<string, string | undefined>;
   /** Database path, so manual discovery shares the process lock and restore guard. */
   dbPath?: string;
+  /**
+   * Clock for discovery dispatches, injected so offline replays observe a
+   * fixture day instead of the real one; production defaults to Date.now.
+   */
+  clock?: () => number;
 }
 
 export function createMcp(store: Store, options: McpOptions = {}): McpServer {
@@ -505,6 +510,7 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
               discoveryProvider(),
               env,
               options.dbPath,
+              options.clock,
             ),
           );
         return response(previewTriggerDiscovery(store, { query }, env));
