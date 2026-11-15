@@ -9,7 +9,8 @@ const LEASE = 60_000;
 const RETRY = 60_000;
 export interface Delivery {
   id: string;
-  digest_id: string;
+  digest_id: string | null;
+  alert_id: string | null;
   edition_date: string;
   recipient: string;
   sender: string;
@@ -80,7 +81,7 @@ export class DeliveryStore {
       .transaction(() => {
         const prior = this.db
           .query<Delivery, [string, string]>(
-            "SELECT * FROM deliveries WHERE edition_date=? AND recipient=?",
+            "SELECT * FROM deliveries WHERE edition_date=? AND recipient=? AND digest_id IS NOT NULL",
           )
           .get(date, recipient);
         if (prior) return prior;
@@ -101,12 +102,98 @@ export class DeliveryStore {
             .digest("hex");
         this.db
           .query(
-            "INSERT INTO deliveries(id,digest_id,edition_date,recipient,sender,idempotency_key,status,attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,'pending',0,?,?,?)",
+            "INSERT INTO deliveries(id,digest_id,alert_id,edition_date,recipient,sender,idempotency_key,status,attempts,available_at,created_at,updated_at) VALUES(?,?,NULL,?,?,?,?, 'pending',0,?,?,?)",
           )
           .run(id, digest.id, date, recipient, sender, key, now, now, now);
         return this.get(id)!;
       })
       .immediate();
+  }
+
+  /**
+   * Same durable outbox rules for event alerts: the freeze callback must
+   * create the sealed, immutable alert record inside this transaction, and
+   * the outbox row (idempotency key, claim/lease, retry ceilings) is shared
+   * with digest deliveries. `availableAt` lets quiet hours schedule the send
+   * without suppressing the alert.
+   */
+  prepareAlert(
+    alertId: string,
+    date: string,
+    recipient: string,
+    sender: string,
+    freeze: () => { id: string } | null,
+    availableAt: number = Date.now(),
+    now = Date.now(),
+  ): Delivery | null {
+    recipient = validateEmailAddress(recipient);
+    sender = validateEmailAddress(sender);
+    return this.db
+      .transaction(() => {
+        const prior = this.db
+          .query<Delivery, [string, string]>(
+            "SELECT * FROM deliveries WHERE alert_id=? AND recipient=?",
+          )
+          .get(alertId, recipient);
+        if (prior) return prior;
+        const alert = freeze();
+        if (!alert) return null;
+        if (alert.id !== alertId)
+          throw new Error("Alert freeze must be the evaluated alert");
+        const valid = this.db
+          .query<{ id: string }, [string]>(
+            "SELECT id FROM alerts WHERE id=? AND sealed=1",
+          )
+          .get(alertId);
+        if (!valid) throw new Error("Delivery requires a sealed frozen alert");
+        const id = crypto.randomUUID();
+        const key =
+          "newspulse/alert/" +
+          createHash("sha256")
+            .update(JSON.stringify([alert.id, recipient]))
+            .digest("hex");
+        this.db
+          .query(
+            "INSERT INTO deliveries(id,digest_id,alert_id,edition_date,recipient,sender,idempotency_key,status,attempts,available_at,created_at,updated_at) VALUES(?,NULL,?,?,?,?,?, 'pending',0,?,?,?)",
+          )
+          .run(
+            id,
+            alert.id,
+            date,
+            recipient,
+            sender,
+            key,
+            availableAt,
+            now,
+            now,
+          );
+        return this.get(id)!;
+      })
+      .immediate();
+  }
+
+  /**
+   * Cancels a pending alert delivery before the send boundary (e.g. the
+   * cited development was regrouped). Sending/sent rows are never cancelled:
+   * an accepted provider send needs the reconciliation path, not deletion.
+   */
+  cancelPendingAlert(
+    alertId: string,
+    reason: string,
+    now = Date.now(),
+  ): boolean {
+    return (
+      this.db
+        .transaction(
+          () =>
+            this.db
+              .query(
+                "UPDATE deliveries SET status='cancelled',lease_token=NULL,lease_until=NULL,last_error=?,updated_at=? WHERE alert_id=? AND status='pending' AND digest_id IS NULL",
+              )
+              .run(reason, now, alertId).changes === 1,
+        )
+        .immediate() === true
+    );
   }
   claim(now = Date.now()): DeliveryClaim | null {
     return this.db
@@ -154,12 +241,37 @@ export class DeliveryStore {
             now,
             now - DELIVERY_RETRY_WINDOW,
           );
-        if (result.changes === 1) invalidateScores(this.db, now);
+        if (result.changes === 1 && claim.digest_id !== null)
+          // Prior-presentation evidence is a daily-digest concept; an alert
+          // send never reinterprets item scores.
+          invalidateScores(this.db, now);
         return result.changes === 1;
       })
       .immediate();
   }
+  /**
+   * Message assembly resolves through the sealed backing artifact: the daily
+   * digest edition, or a frozen alert for the shared outbox's alert rows.
+   */
   message(claim: DeliveryClaim) {
+    if (claim.alert_id !== null)
+      return this.db
+        .query<
+          {
+            from: string;
+            to: string;
+            subject: string;
+            html: string;
+            text: string;
+            digestId: string;
+            editionDate: string;
+            decisions: string;
+          },
+          [string, string]
+        >(
+          "SELECT d.sender AS 'from',d.recipient AS 'to',a.subject,a.html,a.plain_text AS text,a.id AS digestId,a.local_date AS editionDate,a.decision AS decisions FROM deliveries d JOIN alerts a ON a.id=d.alert_id WHERE d.id=? AND d.lease_token=? AND d.status='sending' AND a.sealed=1",
+        )
+        .get(claim.id, claim.lease_token);
     return this.db
       .query<
         {
@@ -174,7 +286,7 @@ export class DeliveryStore {
         },
         [string, string]
       >(
-        "SELECT d.sender AS 'from',d.recipient AS 'to',g.subject,g.html,g.plain_text AS text,g.id AS digestId,g.edition_date AS editionDate,g.decisions FROM deliveries d JOIN digests g ON g.id=d.digest_id WHERE d.id=? AND d.lease_token=? AND d.status='sending' AND g.sealed=1",
+        "SELECT d.sender AS 'from',d.recipient AS 'to',g.subject,g.html,g.plain_text AS text,g.id AS digestId,g.edition_date AS editionDate,g.decisions AS decisions FROM deliveries d JOIN digests g ON g.id=d.digest_id WHERE d.id=? AND d.lease_token=? AND d.status='sending' AND g.sealed=1",
       )
       .get(claim.id, claim.lease_token);
   }
@@ -190,7 +302,7 @@ export class DeliveryStore {
             )
             .run(providerId, now, claim.id, claim.lease_token, now).changes ===
           1;
-        if (changed) invalidateScores(this.db, now);
+        if (changed && claim.digest_id !== null) invalidateScores(this.db, now);
         return changed;
       })
       .immediate();
@@ -212,7 +324,7 @@ export class DeliveryStore {
               claim.lease_token,
               now,
             ).changes === 1;
-        if (changed) invalidateScores(this.db, now);
+        if (changed && claim.digest_id !== null) invalidateScores(this.db, now);
         return changed;
       })
       .immediate();

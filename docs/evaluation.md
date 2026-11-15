@@ -156,3 +156,34 @@ Interpretation preserved in decision [D18](decisions.md): the baseline answer is
 Not measured here and recorded as unknown: real-world usefulness over the recorded fixture ("what changed" quality on live sources), monetary cost of the local event writes beyond the already-required ingest, and whether connecting agents in practice compose the read correctly. Regrouping-corrected revisions (a membership that later moves developments) are covered by deterministic behavior tests in `tests/dev-changes.test.ts` rather than the replay corpus.
 
 The adoption threshold was fixed in code (`ADOPTION_THRESHOLD`) before the replay result was observed; it requires a measured baseline gap, perfect adopted recall with zero claimed-update false positives, zero invented chronology, full expired-content citability, no coverage regression and zero provider calls — every gate met on this corpus.
+
+## Event alert replay (issue #27)
+
+Issue #27 requires measuring, before adoption, whether the daily digest misses time-sensitive high-value developments. The replay (`evaluateAlerts` in `src/alert-evaluation.ts`) populates a throwaway production-schema database through the shipped ingest paths and replays a labeled corpus of six items across seven recorded observation instants over one ascending timeline — wave ingestion, the shipped daily-digest publication instants (06:00 Europe/London, including the 2026-10-25 BST→GMT fallback) and 30-minute alert ticks. All derived work is settled deterministically at each instant (recorded fixture analysis, shipped grouping, scoring and retention; no providers), and each tick runs the shipped `AlertWorker.evaluate` and the shipped draft digest on the same store. The replay installs a counter-seeded UUID generator for its duration so store ids never perturb curation tie-breaks; a fresh run reproduces the recorded baseline byte-for-byte.
+
+The labeled corpus, [alert-evaluation-corpus-v1](../tests/fixtures/alert-evaluation-corpus-v1.json), contains: a river-defence coordination incident (`incident-1`, labeled `alert_time_sensitive`), a rapidly-updating tremor event (`quake`, labeled `alert_update`, two recorded changed-facts observations), a verbatim republication of that update (`repeat-1`, labeled `repeat_coverage`), a flood-warning update observed inside quiet hours across the DST change (`dst-1`, labeled `alert_time_sensitive`, 12h horizon), a slow low-priority historical piece (`evergreen-1`, labeled `no_alert`) and an off-interest vendor release (`atlas-1`, labeled `no_alert`). The alert candidate settings were fixed in code before the replay ran: `minScore` 75, `minEvidence` 60, quiet hours 22:00–07:00 Europe/London, 12h per-development cooldown, 3/day cap, one opt-in destination.
+
+Reproduce:
+
+```sh
+bun run cli evaluate-alerts tests/fixtures/alert-evaluation-corpus-v1.json
+# Optional local timing observation is emitted to stderr, not the deterministic report:
+bun run cli evaluate-alerts tests/fixtures/alert-evaluation-corpus-v1.json --timing
+```
+
+The [alert-evaluation-v1](baselines/alert-evaluation-v1.json) baseline records the replay deterministically; a test verifies a fresh run matches it exactly and that two runs in one process agree.
+
+Recorded findings (fixture metrics; see the baseline for the corpus hash):
+
+| Measure                                         | Baseline (daily digest only)          | Candidate (opt-in alerts)                                  |
+| ----------------------------------------------- | ------------------------------------- | ---------------------------------------------------------- |
+| Labeled time-sensitive events within horizon    | 1/3 (0.333)                           | 3/3 (1.0)                                                  |
+| Missed time-sensitive events                    | `incident-1` (20.0h), `quake` (21.0h) | none                                                       |
+| False alerts (repeat coverage / no-alert items) | n/a (no alerts exist)                 | 0                                                          |
+| Alert volume vs labeled alert-worthy events     | 0 (frozen, no channel)                | 4 vs 4 (one per recorded event observation)                |
+| Suppressed candidate evaluations, with reasons  | n/a                                   | 6 recorded (2 priority, 1 off-interest, 1 repeat, 2 kinds) |
+| Provider calls                                  | 0                                     | 0                                                          |
+
+Interpretation preserved in decision [D19](decisions.md): the digest cadence itself is the measured gap — everything observed between two editions waits for the next 06:00 publication, and both genuinely urgent developments exceeded their recorded usefulness horizon by more than half a day. The candidate closes the gap without noise: triggers are only the recorded `story_change_events` surface from issue #26, so a high-scoring article with no recorded change evidence never alerts, verbatim republication is suppressed as repeat coverage with a recorded reason, and slow news stays below the fixed priority threshold. The quiet-hours development is neither dropped nor suppressed: its alert is frozen immediately and scheduled through the shipped DST-safe publication calendar for 07:00 local after the fallback, and the record shows the quiet end as the delivery instant. Every alert and every suppression persists why it fired or stayed silent (decision snapshot with the recorded evidence, thresholds, score reference and suppression reason per local day).
+
+Not measured here and recorded as unknown: alert usefulness on live sources (the corpus is synthetic), monetary send cost per alert (the replay contacts no provider — cost is recorded as unknown, not zero), and real-client behavior of the opt-in destination. Alert delivery reuses the shipped outbox rules, so crash-after-send, idempotency-expiry, cancellation and default-disabled contracts are covered by focused deterministic tests in `tests/alerts.test.ts` rather than the replay corpus. Normal ingestion availability is unaffected by construction: evaluation reads already-recorded rows in short per-event transactions and runs on the same scheduler stage boundary as polling, never holding a transaction across network work.

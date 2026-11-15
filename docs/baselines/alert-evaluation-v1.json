@@ -1,0 +1,338 @@
+{
+  "evaluation": {
+    "id": "alert-evaluation-corpus",
+    "version": "alert-evaluation-v1"
+  },
+  "corpus": {
+    "id": "alert-evaluation-corpus",
+    "version": 1,
+    "asOf": 1793080800000,
+    "horizonHours": 6,
+    "items": 6,
+    "hash": "a5520625f144af91bc7ec39d01ae72e3393d358672804d13803bfae705af64d6"
+  },
+  "config": {
+    "digest": {
+      "timezone": "Europe/London",
+      "hour": 6,
+      "minute": 0,
+      "minScore": 50,
+      "maxItems": 10,
+      "maxPerInterest": 4
+    },
+    "alerts": {
+      "timezone": "Europe/London",
+      "minScore": 75,
+      "minEvidence": 60,
+      "quietStart": "22:00",
+      "quietEnd": "07:00",
+      "cooldownHours": 12,
+      "dailyCap": 3
+    },
+    "tickMinutes": 30,
+    "groupingVersion": "specific-development-v1",
+    "changeEvidenceVersion": "development-change-v1",
+    "scoringVersion": "deterministic-v3",
+    "alertsDecisionVersion": "event-alerts-v1"
+  },
+  "baseline": {
+    "description": "Today's baseline capability: the shipped daily digest at the configured publication instant (here Europe/London 06:00). A development observed after an edition is included in the next edition; no shipped surface alerts between editions.",
+    "methodology": "For each local publication date: publicationInstant for the digest schedule, then the shipped draftDigest over the store settled as of that instant. Latency for a labeled event runs from the recorded change-evidence trigger observation to the first edition that selected the item; no inclusion within the horizon counts as missed.",
+    "perDay": [
+      {
+        "date": "2026-10-19",
+        "dueAt": 1792386000000,
+        "status": "ready",
+        "reason": null,
+        "selected": ["quake"]
+      },
+      {
+        "date": "2026-10-20",
+        "dueAt": 1792472400000,
+        "status": "ready",
+        "reason": null,
+        "selected": ["incident-1"]
+      },
+      {
+        "date": "2026-10-21",
+        "dueAt": 1792558800000,
+        "status": "ready",
+        "reason": null,
+        "selected": ["quake"]
+      },
+      {
+        "date": "2026-10-22",
+        "dueAt": 1792645200000,
+        "status": "ready",
+        "reason": null,
+        "selected": ["evergreen-1", "quake"]
+      },
+      {
+        "date": "2026-10-23",
+        "dueAt": 1792731600000,
+        "status": "no_digest",
+        "reason": null,
+        "selected": []
+      },
+      {
+        "date": "2026-10-24",
+        "dueAt": 1792818000000,
+        "status": "no_digest",
+        "reason": null,
+        "selected": []
+      },
+      {
+        "date": "2026-10-25",
+        "dueAt": 1792908000000,
+        "status": "no_digest",
+        "reason": null,
+        "selected": []
+      },
+      {
+        "date": "2026-10-26",
+        "dueAt": 1792994400000,
+        "status": "ready",
+        "reason": null,
+        "selected": ["dst-1"]
+      },
+      {
+        "date": "2026-10-27",
+        "dueAt": 1793080800000,
+        "status": "no_digest",
+        "reason": null,
+        "selected": []
+      }
+    ],
+    "metrics": {
+      "timeSensitiveWithinHorizon": {
+        "numerator": 1,
+        "denominator": 3,
+        "value": 0.3333333333333333
+      },
+      "missedTimeSensitive": ["incident-1", "quake"],
+      "digestEmailsSent": 5,
+      "digestItemsVolume": 6,
+      "alertVolume": {
+        "value": null,
+        "note": "The baseline sends no alerts; its only channel is the daily digest."
+      }
+    }
+  },
+  "candidate": {
+    "description": "Opt-in alert candidate: the shipped AlertWorker over recorded change evidence with the recorded thresholds, quiet hours, cooldown, daily cap and per-event deduplication; every delivery persists through the shared durable outbox. The replay contacts no provider.",
+    "methodology": "At each recorded tick (digest instants included) the shipped AlertWorker.evaluate runs with the fixed recorded settings. A fired alert's scheduled send instant (quiet-hours aware, durable outbox row) measures candidate delivery; a scheduled instant beyond the horizon counts as missed. Suppressed evaluations record their reason once per event.",
+    "perEvent": [
+      {
+        "itemId": "incident-1",
+        "development": "bracknell-flood-incident",
+        "expectation": "alert_time_sensitive",
+        "horizonHours": 6,
+        "trigger": {
+          "changeEventId": 3,
+          "kind": "new_coverage",
+          "observedAt": 1792400401000
+        },
+        "baseline": {
+          "deliveredAt": 1792472400000,
+          "latencyHours": 20,
+          "missed": true
+        },
+        "candidate": {
+          "alertIdPresent": true,
+          "deliveredAt": 1792402200000,
+          "latencyHours": 0.5,
+          "missed": false,
+          "quietUntil": null,
+          "suppressionReasons": []
+        }
+      },
+      {
+        "itemId": "atlas-1",
+        "development": "atlas-release",
+        "expectation": "no_alert",
+        "horizonHours": 6,
+        "trigger": {
+          "changeEventId": 2,
+          "kind": "new_coverage",
+          "observedAt": 1792324801000
+        },
+        "baseline": {
+          "deliveredAt": null,
+          "latencyHours": null,
+          "missed": false
+        },
+        "candidate": {
+          "alertIdPresent": false,
+          "deliveredAt": null,
+          "latencyHours": null,
+          "missed": false,
+          "quietUntil": null,
+          "suppressionReasons": ["not_interest_eligible"]
+        }
+      },
+      {
+        "itemId": "quake",
+        "development": "ashfield-quake",
+        "expectation": "alert_update",
+        "horizonHours": 6,
+        "trigger": {
+          "changeEventId": 4,
+          "kind": "content_change",
+          "observedAt": 1792483201000
+        },
+        "baseline": {
+          "deliveredAt": 1792558800000,
+          "latencyHours": 21,
+          "missed": true
+        },
+        "candidate": {
+          "alertIdPresent": true,
+          "deliveredAt": 1792485000000,
+          "latencyHours": 0.5,
+          "missed": false,
+          "quietUntil": null,
+          "suppressionReasons": []
+        }
+      },
+      {
+        "itemId": "repeat-1",
+        "development": "ashfield-quake",
+        "expectation": "repeat_coverage",
+        "horizonHours": 6,
+        "trigger": {
+          "changeEventId": 5,
+          "kind": "new_coverage",
+          "observedAt": 1792490401000
+        },
+        "baseline": {
+          "deliveredAt": 1792558800000,
+          "latencyHours": 19,
+          "missed": false
+        },
+        "candidate": {
+          "alertIdPresent": false,
+          "deliveredAt": null,
+          "latencyHours": null,
+          "missed": false,
+          "quietUntil": null,
+          "suppressionReasons": ["repeat_coverage"]
+        }
+      },
+      {
+        "itemId": "dst-1",
+        "development": "harbor-flood",
+        "expectation": "alert_time_sensitive",
+        "horizonHours": 12,
+        "trigger": {
+          "changeEventId": 10,
+          "kind": "new_coverage",
+          "observedAt": 1792971001000
+        },
+        "baseline": {
+          "deliveredAt": 1792994400000,
+          "latencyHours": 6.5,
+          "missed": false
+        },
+        "candidate": {
+          "alertIdPresent": true,
+          "deliveredAt": 1792998000000,
+          "latencyHours": 7.5,
+          "missed": false,
+          "quietUntil": 1792998000000,
+          "suppressionReasons": []
+        }
+      },
+      {
+        "itemId": "evergreen-1",
+        "development": "harbor-flood-history",
+        "expectation": "no_alert",
+        "horizonHours": 6,
+        "trigger": {
+          "changeEventId": 6,
+          "kind": "new_coverage",
+          "observedAt": 1792576801000
+        },
+        "baseline": {
+          "deliveredAt": 1792645200000,
+          "latencyHours": 19,
+          "missed": false
+        },
+        "candidate": {
+          "alertIdPresent": false,
+          "deliveredAt": null,
+          "latencyHours": null,
+          "missed": false,
+          "quietUntil": null,
+          "suppressionReasons": ["below_priority_threshold"]
+        }
+      }
+    ],
+    "firedAlerts": [
+      {
+        "itemId": "incident-1",
+        "kind": "new_coverage",
+        "changeEventId": 3,
+        "frozenAt": 1792402200000,
+        "localDate": "2026-10-19",
+        "scheduledFor": 1792402200000
+      },
+      {
+        "itemId": "quake",
+        "kind": "content_change",
+        "changeEventId": 4,
+        "frozenAt": 1792485000000,
+        "localDate": "2026-10-20",
+        "scheduledFor": 1792485000000
+      },
+      {
+        "itemId": "quake",
+        "kind": "content_change",
+        "changeEventId": 7,
+        "frozenAt": 1792623600000,
+        "localDate": "2026-10-22",
+        "scheduledFor": 1792648800000
+      },
+      {
+        "itemId": "dst-1",
+        "kind": "new_coverage",
+        "changeEventId": 10,
+        "frozenAt": 1792972800000,
+        "localDate": "2026-10-26",
+        "scheduledFor": 1792998000000
+      }
+    ],
+    "suppressionCounts": {
+      "below_priority_threshold": 2,
+      "not_interest_eligible": 1,
+      "repeat_coverage": 1,
+      "not_alertable_kind": 2
+    },
+    "metrics": {
+      "timeSensitiveWithinHorizon": {
+        "numerator": 3,
+        "denominator": 3,
+        "value": 1
+      },
+      "missedTimeSensitive": [],
+      "falseAlerts": [],
+      "alertVolume": 4,
+      "suppressionVolume": 6
+    }
+  },
+  "adoption": {
+    "adopted": true,
+    "threshold": "Adopt the opt-in selective alert slice only when, on the same labeled corpus, fixed settings and digest cadence: the daily digest baseline leaves at least one labeled time-sensitive event undelivered within its recorded usefulness horizon (a measured cadence gap); replay through the shipped alert evaluation delivers every labeled alert-worthy event within its horizon; alerts fire for no item labeled repeat_coverage or no_alert; total alert volume does not exceed the labeled alert-worthy event count; and the replay makes zero provider calls. Otherwise record a justified non-adoption.",
+    "reason": "measured cadence gap confirmed and closed: the shipped alert evaluation delivered every labeled time-sensitive event within its horizon, alerted nothing labeled repeat coverage or slow news, and alert volume matches the labeled alert-worthy developments",
+    "summary": "Baseline digest missed 2/4 labeled time-sensitive developments; the alert candidate delivered 3/3 within horizon with 0 false alerts at volume 4 (suppressed 6 candidate evaluations)."
+  },
+  "usage": {
+    "providerCalls": 0,
+    "cost": null,
+    "costPerAlert": {
+      "value": null,
+      "note": "Alert evaluation reads recorded evidence only; replay provider calls are zero and monetary cost stays unknown, not zero."
+    }
+  },
+  "latencyMs": null,
+  "latencyReason": "No timing observation recorded; elapsed time is environment-dependent and excluded from deterministic replay."
+}

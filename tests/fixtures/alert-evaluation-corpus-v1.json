@@ -1,0 +1,219 @@
+{
+  "version": 1,
+  "id": "alert-evaluation-corpus",
+  "asOf": 1793080800000,
+  "firstDate": "2026-10-19",
+  "notes": "Labeled time-sensitive fixture for issue #27 replay: an urgent coordination incident, a rapidly-updating quake development (two recorded updates, one observed inside quiet hours), repeat coverage of the updated quake development (unchanged verbatim republication from a second source), a quiet-hours urgent event observed after the clocks return to GMT, and normal slow news. Texts are intentionally repetitive to make bounded substance scoring stable and to make the syndicated-content grouping evidence exact.",
+  "digestSchedule": {
+    "timezone": "Europe/London",
+    "hour": 6,
+    "minute": 0,
+    "minScore": 50,
+    "maxItems": 10,
+    "maxPerInterest": 4
+  },
+  "alertSettings": {
+    "timezone": "Europe/London",
+    "minScore": 75,
+    "minEvidence": 60,
+    "quietStart": "22:00",
+    "quietEnd": "07:00",
+    "cooldownHours": 12,
+    "dailyCap": 3
+  },
+  "tickMinutes": 30,
+  "interest": {
+    "kind": "interest",
+    "id": "regional-watch",
+    "version": 1,
+    "description": "Regional emergency and incident monitoring",
+    "entities": ["Bracknell", "Ashfield", "Harbor"],
+    "keywords": ["flood", "rescue", "quake"],
+    "positive": ["coordination"],
+    "negative": [],
+    "queries": [],
+    "lifetime": "persistent",
+    "feedbackRefs": [],
+    "priority": 3
+  },
+  "sources": [
+    {
+      "id": "county-wire",
+      "url": "https://county-wire.example/feed.xml",
+      "title": "County Wire"
+    },
+    {
+      "id": "mirror-wire",
+      "url": "https://mirror-wire.example/feed.xml",
+      "title": "Mirror Wire"
+    },
+    {
+      "id": "essays",
+      "url": "https://essays.example/feed.xml",
+      "title": "Long Essays"
+    },
+    {
+      "id": "vendor-ticker",
+      "url": "https://vendor-ticker.example/feed.xml",
+      "title": "Vendor Ticker"
+    }
+  ],
+  "items": [
+    {
+      "id": "incident-1",
+      "url": "https://county-wire.example/bracknell-flood-incident",
+      "sourceId": "county-wire",
+      "nativeId": "incident-1",
+      "development": "bracknell-flood-incident",
+      "expectation": "alert_time_sensitive",
+      "horizonHours": 6,
+      "analysis": {
+        "claims": [
+          {
+            "statement": "The county opened a flood incident coordination room on Tuesday morning.",
+            "citation": "https://example.test/record-1"
+          },
+          {
+            "statement": "Rescue teams are stationed at three crossing points.",
+            "citation": "https://example.test/record-2"
+          }
+        ],
+        "uncertainty": ["recorded replay analysis for the labeled fixture only"]
+      },
+      "observations": [
+        {
+          "observedAt": 1792400400000,
+          "title": "Bracknell Flood Incident Coordination Begins",
+          "text": "Bracknell flood incident coordination opened this morning after river gauges passed the county threshold overnight. The county emergency centre has opened a coordination room with flood rescue teams stationed at three crossing points, and public health officers issued precautionary guidance for households on the affected reach. Residents are asked to follow the flood incident coordination notices rather than local speculation, and further updates will follow when the next raft of gauge readings is published. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness.",
+          "publishedAt": 1792398600000
+        }
+      ]
+    },
+    {
+      "id": "atlas-1",
+      "url": "https://vendor-ticker.example/atlas-2-release",
+      "sourceId": "vendor-ticker",
+      "nativeId": "atlas-1",
+      "development": "atlas-release",
+      "expectation": "no_alert",
+      "horizonHours": 6,
+      "analysis": null,
+      "observations": [
+        {
+          "observedAt": 1792324800000,
+          "title": "Atlas 2 Release",
+          "text": "Atlas 2 released: the platform release adds export features unrelated to regional monitoring. The release notes describe tooling for developers.",
+          "publishedAt": 1792321200000
+        }
+      ]
+    },
+    {
+      "id": "quake",
+      "url": "https://county-wire.example/ashfield-quake-watch",
+      "sourceId": "county-wire",
+      "nativeId": "quake-1",
+      "development": "ashfield-quake",
+      "expectation": "alert_update",
+      "horizonHours": 6,
+      "analysis": {
+        "claims": [
+          {
+            "statement": "The Ashfield quake watch recorded revised magnitude estimates for the Harbor Point sequence.",
+            "citation": "https://example.test/record-1"
+          },
+          {
+            "statement": "Public health guidance was extended to residents using private water supplies.",
+            "citation": "https://example.test/record-2"
+          }
+        ],
+        "uncertainty": ["recorded replay analysis for the labeled fixture only"]
+      },
+      "observations": [
+        {
+          "observedAt": 1792324800000,
+          "title": "Ashfield Quake Watch Opens",
+          "text": "The Ashfield quake watch opened after preliminary readings identified a shallow tremor sequence near Harbor Point. Local coordination teams are monitoring the sequence and will publish follow-up guidance when readings stabilise. This initial watch statement lists the observation points used on the first evening.",
+          "publishedAt": 1792323000000
+        },
+        {
+          "observedAt": 1792483200000,
+          "title": "Ashfield Quake Watch Opens",
+          "text": "The Ashfield quake watch published updated measurements after emergency rescue teams completed an overnight assessment near Harbor Point. The update records revised magnitude estimates, additional public health guidance for residents using private water supplies, and revised coordination arrangements between county engineers and volunteer rescue teams. Officials repeated that the arrangements remain precautionary while monitoring continues and that the published figures are provisional. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness.",
+          "publishedAt": 1792481400000
+        },
+        {
+          "observedAt": 1792621800000,
+          "title": "Ashfield Quake Watch Opens",
+          "text": "The Ashfield quake watch issued a further update after volunteer rescue teams re-surveyed the eastern approach road near Harbor Point. The newest statement records public health notices for two additional streets, further coordination contacts for residents, and continued precautionary monitoring of the tremor sequence by the same regional engineers. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness.",
+          "publishedAt": 1792620000000
+        }
+      ]
+    },
+    {
+      "id": "repeat-1",
+      "url": "https://mirror-wire.example/ashfield-quake-watch-in-full",
+      "sourceId": "mirror-wire",
+      "nativeId": "repeat-1",
+      "development": "ashfield-quake",
+      "expectation": "repeat_coverage",
+      "horizonHours": 6,
+      "analysis": null,
+      "observations": [
+        {
+          "observedAt": 1792490400000,
+          "title": "Ashfield Quake Watch Statement Carried In Full",
+          "text": "The Ashfield quake watch published updated measurements after emergency rescue teams completed an overnight assessment near Harbor Point. The update records revised magnitude estimates, additional public health guidance for residents using private water supplies, and revised coordination arrangements between county engineers and volunteer rescue teams. Officials repeated that the arrangements remain precautionary while monitoring continues and that the published figures are provisional. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness.",
+          "publishedAt": 1792489500000
+        }
+      ]
+    },
+    {
+      "id": "dst-1",
+      "url": "https://county-wire.example/harbor-flood-overnight",
+      "sourceId": "county-wire",
+      "nativeId": "dst-1",
+      "development": "harbor-flood",
+      "expectation": "alert_time_sensitive",
+      "horizonHours": 12,
+      "analysis": {
+        "claims": [
+          {
+            "statement": "The harbor flood coordination room remains open overnight.",
+            "citation": "https://example.test/record-1"
+          },
+          {
+            "statement": "Rescue teams are running planned flood damage assessments on the northern quay wall.",
+            "citation": "https://example.test/record-2"
+          }
+        ],
+        "uncertainty": ["recorded replay analysis for the labeled fixture only"]
+      },
+      "observations": [
+        {
+          "observedAt": 1792971000000,
+          "title": "Harbor Flood Incident Coordination Overnight",
+          "text": "Harbor storm flood incident coordination continued through the regional disruption after the weekend surge. Rescue teams are running planned flood damage assessments along the northern quay wall, and public health staff repeated the standing coordination guidance for affected streets. The harbor flood incident room remains open overnight with the same coordination contact routes for residents and businesses. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness.",
+          "publishedAt": 1792969200000
+        }
+      ]
+    },
+    {
+      "id": "evergreen-1",
+      "url": "https://essays.example/harbor-flood-history",
+      "sourceId": "essays",
+      "nativeId": "evergreen-1",
+      "development": "harbor-flood-history",
+      "expectation": "no_alert",
+      "horizonHours": 6,
+      "analysis": null,
+      "observations": [
+        {
+          "observedAt": 1792576800000,
+          "title": "Harbor Flood Defences in History",
+          "text": "Harbor flood defences in history: a long reflective essay on how flood planning, harbor trade and public health guidance evolved along the estuary across three centuries of records. The essay considers archive maps, flood marks, coordination records between the harbour board and county surveyors, and what the long flood record suggests about present planning practice without making predictions about any current incident. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness. Officials confirmed record 1 of the same careful monitoring statement for completeness.",
+          "publishedAt": 1789041600000
+        }
+      ]
+    }
+  ]
+}

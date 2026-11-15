@@ -61,7 +61,7 @@ function plan(db: Database, action: SuppressionAction) {
   if (!edition) throw new Error("No sealed frozen edition for that date");
   const outbox = db
     .query<OutboxRow, [string, string]>(
-      "SELECT id,digest_id,status,provider_id,idempotency_key,sender FROM deliveries WHERE edition_date=? AND recipient=?",
+      "SELECT id,digest_id,status,provider_id,idempotency_key,sender FROM deliveries WHERE edition_date=? AND recipient=? AND digest_id IS NOT NULL",
     )
     .get(action.editionDate, action.recipient);
   const audit = db
