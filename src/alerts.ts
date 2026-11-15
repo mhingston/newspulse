@@ -13,22 +13,28 @@ import { ALERTS_DECISION_VERSION, type AlertConfig } from "./alert-config";
  * Selective high-priority event alerts (issue #27, opt-in). Evaluation reuses
  * exactly one trigger surface — the append-only recorded change evidence from
  * issue #26 (`story_change_events`) — so an alert always represents a
- * meaningful update (recorded changed facts, or the first recorded coverage
- * of a development), never merely a high scoring article. Thresholds
+ * meaningful update: recorded changed facts (body or headline) or the first
+ * recorded coverage of a development. A URL-only edit records no new facts
+ * and never alerts, and a high score alone never alerts. Thresholds
  * (priority/credibility), quiet hours (Europe/London semantics, DST-safe via
  * the shipped publication calendar), per-development cooldowns, a daily cap
  * and per-event deduplication are explicit user configuration; disabled by
  * default an evaluation sends nothing and writes nothing. Delivery reuses the
  * existing durable outbox and idempotency rules; nothing here contacts a
- * provider inside a transaction.
+ * provider inside a transaction. Scores must be current in exactly the sense
+ * the daily digest requires (score job done with a live refresh horizon and
+ * no pending rescore) before any score-based gate runs.
  */
 
 /** Events younger than this may still be awaiting grouping; do not skip them. */
 const UNGROUPED_GRACE_MS = 15 * 60_000;
 const SCAN_LIMIT = 500;
+/** Outbox sends flushed per tick (bounds the loop; rows stay durable). */
+const FLUSH_LIMIT = 50;
 
 export type SuppressionReason =
   | "not_alertable_kind"
+  | "cosmetic_change"
   | "development_ungrouped"
   | "repeat_coverage"
   | "score_unavailable"
@@ -60,11 +66,20 @@ export interface CancelledAlert {
   reason: string;
 }
 
+/** The batch stopped before consuming an event that is not yet decidable. */
+export type DeferReason = "ungrouped" | "scores_pending";
+
 export interface AlertTickResult {
   disabled: boolean;
   evaluated: number;
-  /** Set when an ungrouped young event stops the batch to await grouping. */
-  deferredUngrouped: boolean;
+  /**
+   * Set when the batch stopped with events still pending: a young ungrouped
+   * event awaiting grouping, or an item whose current score is not settled.
+   * A deferred event is NOT suppressed and its cursor does not move — it is
+   * reconsidered in order on the next tick, in the same way the daily digest
+   * reports `processing` for the same inputs.
+   */
+  deferred: DeferReason | null;
   fired: FiredAlert[];
   suppressed: SuppressedCandidate[];
   cancelled: CancelledAlert[];
@@ -182,29 +197,97 @@ export function renderAlert(input: {
   return { subject, html, text };
 }
 
-/** The item's latest completed deterministic score, or null when unfinished. */
-export function latestScore(
+type ScoreFreshness =
+  | {
+      kind: "ready";
+      score: {
+        scoreId: string;
+        criteriaVersion: string;
+        total: number;
+        eligible: boolean;
+        evidenceComponent: number;
+        reasons: string[];
+      };
+    }
+  /** Processing is incomplete or the recorded score is being refreshed. */
+  | { kind: "defer" }
+  /** Terminal: the shipped pipeline will never produce a current score. */
+  | { kind: "terminal"; outcome: string };
+
+/**
+ * The item's score state, with exactly the currency checks the daily digest
+ * applies before using a score (src/digest-service.ts): the latest extraction
+ * generation's score job must be done and scored, the score's refresh row
+ * must still live and not be due, criteria must match the shipped version,
+ * and no global rescore may be pending. Anything else defers the event until
+ * a current score exists; only terminal pipeline outcomes suppress for good.
+ */
+export function scoreState(
   store: Store,
   itemId: string,
-): {
-  scoreId: string;
-  criteriaVersion: string;
-  total: number;
-  eligible: boolean;
-  evidenceComponent: number;
-  reasons: string[];
-} | null {
+  now: number,
+): ScoreFreshness {
   const row = store.sqlite
     .query<
-      { score_id: string; criteria_version: string; result: string },
+      {
+        extract_generation: number | null;
+        extract_status: string | null;
+        score_status: string | null;
+        score_outcome: string | null;
+        criteria_version: string | null;
+        refresh_id: string | null;
+        due_at: number | null;
+        score_id: string | null;
+        result: string | null;
+        invalidation_pending: number | null;
+      },
       [string]
     >(
-      `SELECT s.id AS score_id,s.criteria_version,s.result FROM item_scores s
-       WHERE s.item_id=? AND s.generation=(SELECT max(e.generation) FROM processing_jobs e WHERE e.stage='extract' AND e.item_id=s.item_id)
-       ORDER BY s.created_at DESC,s.rowid DESC LIMIT 1`,
+      `SELECT e.generation AS extract_generation,e.status AS extract_status,
+        j.status AS score_status,j.outcome AS score_outcome,
+        s.criteria_version,r.job_id AS refresh_id,r.due_at,
+        s.id AS score_id,s.result,
+        (SELECT pending FROM score_invalidation WHERE id=1) AS invalidation_pending
+      FROM items i
+      LEFT JOIN processing_jobs e ON e.id=(SELECT x.id FROM processing_jobs x WHERE x.item_id=i.id AND x.stage='extract' ORDER BY x.generation DESC LIMIT 1)
+      LEFT JOIN processing_jobs j ON j.item_id=i.id AND j.stage='score' AND j.generation=e.generation
+      LEFT JOIN score_refresh r ON r.job_id=j.id
+      LEFT JOIN item_scores s ON s.id=(SELECT x.id FROM item_scores x WHERE x.item_id=i.id AND x.generation=e.generation ORDER BY x.created_at DESC,x.rowid DESC LIMIT 1)
+      WHERE i.id=?`,
     )
     .get(itemId);
-  if (!row) return null;
+  if (row?.extract_status === "failed")
+    return { kind: "terminal", outcome: "extract_failed" };
+  if (row?.score_status === "failed")
+    return { kind: "terminal", outcome: "score_failed" };
+  if (row?.score_status === "done" && row.score_outcome === "unavailable")
+    return { kind: "terminal", outcome: "score_unavailable" };
+  // A done score whose criteria version has drifted with no refresh row
+  // scheduled will never become current again.
+  if (
+    row?.score_status === "done" &&
+    row.score_outcome === "scored" &&
+    row.criteria_version !== null &&
+    row.criteria_version !== SCORING_CRITERIA_VERSION &&
+    !row.refresh_id
+  )
+    return {
+      kind: "terminal",
+      outcome: `criteria_${row.criteria_version}`,
+    };
+  if (
+    !row ||
+    !row.extract_generation ||
+    row.invalidation_pending ||
+    row.score_status !== "done" ||
+    row.score_outcome !== "scored" ||
+    !row.score_id ||
+    !row.result ||
+    !row.refresh_id ||
+    row.criteria_version !== SCORING_CRITERIA_VERSION ||
+    (row.due_at !== null && row.due_at <= now)
+  )
+    return { kind: "defer" };
   let parsed: {
     total: number;
     eligible: boolean;
@@ -214,15 +297,18 @@ export function latestScore(
   try {
     parsed = JSON.parse(row.result);
   } catch {
-    return null;
+    return { kind: "terminal", outcome: "unparseable_score" };
   }
   return {
-    scoreId: row.score_id,
-    criteriaVersion: row.criteria_version,
-    total: parsed.total,
-    eligible: parsed.eligible,
-    evidenceComponent: parsed.components?.evidence ?? 0,
-    reasons: parsed.reasons ?? [],
+    kind: "ready",
+    score: {
+      scoreId: row.score_id,
+      criteriaVersion: row.criteria_version,
+      total: parsed.total,
+      eligible: parsed.eligible,
+      evidenceComponent: parsed.components?.evidence ?? 0,
+      reasons: parsed.reasons ?? [],
+    },
   };
 }
 
@@ -270,14 +356,16 @@ export class AlertWorker {
     const fired: FiredAlert[] = [];
     const suppressed: SuppressedCandidate[] = [];
     const cancelled = this.cancelRegrouped();
-    let deferredUngrouped = false;
+    let deferred: DeferReason | null = null;
     let evaluatedCount = 0;
     for (const event of events) {
-      if (deferredUngrouped) break;
+      if (deferred) break;
       const outcome = db.transaction(() => this.decide(event, now)).immediate();
-      if ("immediate" in outcome && outcome.immediate) {
-        // A young ungrouped event stopped the batch before the cursor moved.
-        deferredUngrouped = true;
+      if ("deferred" in outcome) {
+        // Attribution and currency cannot be decided yet: the batch stops and
+        // the event is reconsidered, in order, on the next tick. Nothing was
+        // suppressed and the durable cursor did not move.
+        deferred = outcome.deferred;
         continue;
       }
       evaluatedCount += 1;
@@ -288,7 +376,7 @@ export class AlertWorker {
     return {
       disabled: false,
       evaluated: evaluatedCount,
-      deferredUngrouped,
+      deferred,
       fired,
       suppressed,
       cancelled,
@@ -299,7 +387,7 @@ export class AlertWorker {
     event: EventRow,
     now: number,
   ):
-    | { immediate: true }
+    | { deferred: DeferReason }
     | { immediate: false; suppression: SuppressedCandidate }
     | { immediate: false; fired: FiredAlert } {
     const db = this.store.sqlite;
@@ -322,6 +410,22 @@ export class AlertWorker {
     };
     if (event.kind !== "content_change" && event.kind !== "new_coverage")
       return suppress("not_alertable_kind", { kind: event.kind });
+    if (event.kind === "content_change") {
+      // A URL-only edit records no new facts: without a recorded body or
+      // headline change, re-alerting an unchanged story would only repeat
+      // coverage after the cooldown. The recorded evidence qualifies the
+      // update; a missing or unparsable evidence record stays conservative
+      // and silent.
+      const evidence = parseEvidence(event.evidence);
+      if (evidence.titleChanged !== true && evidence.bodyChanged !== true)
+        return suppress("cosmetic_change", {
+          evidence: {
+            titleChanged: evidence.titleChanged === true,
+            bodyChanged: evidence.bodyChanged === true,
+            urlChanged: evidence.urlChanged === true,
+          },
+        });
+    }
     const groupId =
       event.group_id ??
       db
@@ -332,23 +436,22 @@ export class AlertWorker {
       null;
     if (!groupId)
       return now - event.observed_at < UNGROUPED_GRACE_MS
-        ? { immediate: true }
+        ? { deferred: "ungrouped" }
         : suppress("development_ungrouped");
     if (
       event.kind === "new_coverage" &&
-      db
-        .query<{ n: number }, [string, number]>(
-          "SELECT count(*) AS n FROM story_change_events WHERE group_id=? AND id<?",
-        )
-        .get(groupId, event.id)!.n > 0
+      this.countEarlierDevelopmentCoverage(groupId, event) > 0
     )
       return suppress("repeat_coverage", { groupId });
-    const score = latestScore(this.store, event.item_id);
-    if (!score) return suppress("score_unavailable");
-    if (score.criteriaVersion !== SCORING_CRITERIA_VERSION)
-      return suppress("score_version_stale", {
-        criteriaVersion: score.criteriaVersion,
-      });
+    const freshness = scoreState(this.store, event.item_id, now);
+    // An unfinished or refreshing score defers the batch exactly like the
+    // daily digest reports processing; the event is never retired here, so
+    // alerts that run ahead of the processing stages merely wait for the
+    // current score instead of discarding it permanently.
+    if (freshness.kind === "defer") return { deferred: "scores_pending" };
+    if (freshness.kind === "terminal")
+      return suppress("score_unavailable", { terminal: freshness.outcome });
+    const score = freshness.score;
     if (!score.eligible) return suppress("not_interest_eligible");
     if (score.total < this.config.minScore)
       return suppress("below_priority_threshold", {
@@ -459,6 +562,36 @@ export class AlertWorker {
   }
 
   /**
+   * Counts earlier recorded coverage of the same development that the event
+   * would repeat. First coverage is normally recorded before grouping
+   * resolves, with `group_id=NULL`, so a plain group lookup would miss it and
+   * an unchanged republication could pass as first coverage and alert again
+   * after the cooldown. Earlier unassigned events therefore resolve to a
+   * development through the same membership-history evidence the recorded
+   * change read uses: the event's item's live membership, or a membership
+   * effective at the event's observation time.
+   */
+  private countEarlierDevelopmentCoverage(
+    groupId: string,
+    event: EventRow,
+  ): number {
+    return this.store.sqlite
+      .query<{ n: number }, [number, string, string, string]>(
+        `SELECT count(*) AS n FROM story_change_events e
+         WHERE e.id<? AND e.kind IN ('new_coverage','content_change')
+         AND (e.group_id=?
+           OR (e.group_id IS NULL AND (
+             (SELECT group_id FROM story_memberships m
+              WHERE m.item_id=e.item_id AND m.ended_at IS NULL LIMIT 1)=?
+           OR EXISTS (SELECT 1 FROM story_memberships m2
+              WHERE m2.item_id=e.item_id AND m2.group_id=?
+              AND m2.started_at<=e.observed_at
+              AND (m2.ended_at IS NULL OR m2.ended_at>e.observed_at)))))`,
+      )
+      .get(event.id, groupId, groupId, groupId)!.n;
+  }
+
+  /**
    * Cancels pending alert deliveries whose cited development was regrouped
    * between the evaluate and send stages: the alert's development attribution
    * no longer matches the item's live membership. A sending/sent row is never
@@ -521,8 +654,13 @@ export async function alertsTick(
   const worker = new AlertWorker(store, deliveries, config);
   const result = worker.evaluate(now);
   if (result.disabled) return result;
-  // Flush the shared outbox: any ready pending send (this tick's alerts, plus
-  // quiet-hour rows whose instant has now passed) is claimed exactly once.
-  if (result.fired.length > 0) await sender.send(now);
+  // Flush the shared durable outbox on every enabled tick, whether or not
+  // this evaluation fired anything: quiet-hour rows become due while an alert
+  // tick sleeps, restarts strand pending rows, and one batch can freeze
+  // several alerts. The loop drains every send that is ready NOW; a returned
+  // false means nothing was claimable (all remaining work is scheduled for a
+  // later instant and stays durable).
+  for (let guard = 0; guard < FLUSH_LIMIT; guard += 1)
+    if (!(await sender.send(now))) break;
   return result;
 }

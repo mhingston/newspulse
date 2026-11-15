@@ -164,6 +164,11 @@ const scheduler = schedule(
               baseUrl: delivery.feedbackBaseUrl,
             },
           ),
+          Date.now,
+          // The digest sender claims daily-digest rows only: every digest send
+          // keeps its scoped feedback-link decoration, and alert rows stay
+          // owned by the alerts stage below.
+          "digest",
         ),
         {
           from: delivery.sender,
@@ -206,7 +211,13 @@ const scheduler = schedule(
             new DeliveryStore(store.sqlite),
             new DeliveryWorker(
               new DeliveryStore(store.sqlite),
+              // The shared adapter whitelists outbound email fields, so the
+              // alert's internal decision snapshot never reaches the provider;
+              // the scope keeps this sender off daily-digest rows, whose
+              // feedback-link decoration belongs to the delivery stage.
               new ResendDelivery(alerts.apiKey),
+              Date.now,
+              "alert",
             ),
             alerts,
           ),

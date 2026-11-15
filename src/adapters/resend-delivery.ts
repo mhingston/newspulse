@@ -45,7 +45,17 @@ export class ResendDelivery implements DeliveryEmailProvider {
           "content-type": "application/json",
           "idempotency-key": idempotencyKey,
         },
-        body: JSON.stringify(message),
+        // Enforce the outbound field whitelist in the shared adapter: any
+        // excess DeliveryMessage context (digest ID, edition date, decision
+        // snapshots) never serializes to the provider, whatever decorator the
+        // caller wraps around it.
+        body: JSON.stringify({
+          from: message.from,
+          to: message.to,
+          subject: message.subject,
+          html: message.html,
+          text: message.text,
+        }),
         redirect: "error",
         signal,
       });

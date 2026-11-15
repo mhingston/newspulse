@@ -1221,6 +1221,13 @@ export class Store {
     this.sqlite
       .query("UPDATE story_change_events SET item_id=? WHERE item_id=?")
       .run(winner, loser);
+    // Frozen alerts repoint their canonical item reference only: the frozen
+    // subject, body and decision bytes are untouched. Without this repoint the
+    // losing item's deletion would violate the alerts foreign key and roll
+    // back the whole ingestion transaction.
+    this.sqlite
+      .query("UPDATE alerts SET item_id=? WHERE item_id=?")
+      .run(winner, loser);
     this.sqlite
       .query("UPDATE item_redirects SET item_id=? WHERE item_id=?")
       .run(winner, loser);

@@ -471,6 +471,14 @@ function latencyHours(from: number, to: number | null): number | null {
 }
 
 export interface EventArmOutcome {
+  /**
+   * The labeled observed update this row measures: the item id for single-
+   * event items, or `itemId#n` for the n-th recorded changed-facts update of
+   * a rapidly-updating development ("quake#2" is quake's second update).
+   */
+  eventLabel: string;
+  /** Set only for events the labels count as alert-worthy moments. */
+  alertworthyEvent: boolean;
   itemId: string;
   development: string | null;
   expectation: string;
@@ -606,7 +614,7 @@ function decide(
       ? "measured cadence gap confirmed and closed: the shipped alert evaluation delivered every labeled time-sensitive event within its horizon, alerted nothing labeled repeat coverage or slow news, and alert volume matches the labeled alert-worthy developments"
       : reasons.join("; ") || "threshold not met",
     summary: adopted
-      ? `Baseline digest missed ${baselineMissed.length}/${labeledAlertworthy} labeled time-sensitive developments; the alert candidate delivered ${candidate.timeSensitiveWithinHorizon.numerator}/${candidate.timeSensitiveWithinHorizon.denominator} within horizon with ${candidate.falseAlerts.length} false alerts at volume ${candidate.alertVolume} (suppressed ${candidate.suppressionVolume} candidate evaluations).`
+      ? `Baseline digest missed ${baselineMissed.length}/${labeledAlertworthy} labeled alert-worthy event observations; the alert candidate delivered ${candidate.timeSensitiveWithinHorizon.numerator}/${candidate.timeSensitiveWithinHorizon.denominator} within horizon with ${candidate.falseAlerts.length} false alerts at volume ${candidate.alertVolume} (suppressed ${candidate.suppressionVolume} candidate evaluations).`
       : "Non-adoption recorded on the labeled fixture; revisit requires new recorded evidence.",
   };
 }
@@ -617,19 +625,29 @@ interface ChangeEventRowLite {
   observed_at: number;
 }
 
-/** The stored change event that starts an item's alert-worthiness, if any. */
-function triggerEventFor(
+/**
+ * The stored change events that carry an item's alert-worthiness: every
+ * recorded changed-facts update of an `alert_update` item, or the first
+ * recorded event of every other item. Measuring only the first update of a
+ * rapidly-updating development would hide timeliness misses: a later recorded
+ * update is an equally labeled alert-worthy moment and must be evaluated too.
+ */
+function labeledEventsFor(
   store: Store,
   itemId: string,
   expectation: string,
-): ChangeEventRowLite | null {
-  const query =
-    expectation === "alert_update"
-      ? "SELECT id,kind,observed_at FROM story_change_events WHERE item_id=? AND kind='content_change' ORDER BY id LIMIT 1"
-      : "SELECT id,kind,observed_at FROM story_change_events WHERE item_id=? ORDER BY id LIMIT 1";
-  return (
-    store.sqlite.query<ChangeEventRowLite, [string]>(query).get(itemId) ?? null
-  );
+): ChangeEventRowLite[] {
+  if (expectation === "alert_update")
+    return store.sqlite
+      .query<ChangeEventRowLite, [string]>(
+        "SELECT id,kind,observed_at FROM story_change_events WHERE item_id=? AND kind='content_change' ORDER BY id",
+      )
+      .all(itemId);
+  return store.sqlite
+    .query<ChangeEventRowLite, [string]>(
+      "SELECT id,kind,observed_at FROM story_change_events WHERE item_id=? ORDER BY id LIMIT 1",
+    )
+    .all(itemId);
 }
 
 /**
@@ -749,34 +767,48 @@ function evaluateAlertsReplay(corpusInput: unknown): AlertEvaluationReport {
         item.id,
       ]);
     }
-    // Labeled alert-worthy EVENTS: one for each alert_time_sensitive item
-    // (its first recorded coverage) plus every recorded content_change of an
-    // alert_update item — the moments an alert is supposed to fire.
-    const contentChangesByItem = new Map<string, number>();
+    // Labeled alert-worthy MOMENTS: one labeled event observation per
+    // alert moment the labels define — the first recorded coverage of an
+    // alert_time_sensitive item, and EVERY recorded changed-facts update of
+    // an alert_update item. Timeliness is judged per moment, so a later
+    // update scheduled beyond its horizon is a recorded miss, never hidden
+    // behind the first update's delivery.
+    const labeledMoments: {
+      eventLabel: string;
+      item: AlertEvaluationCorpus["items"][number];
+      event: ChangeEventRowLite | null;
+      alertworthyEvent: boolean;
+    }[] = [];
     for (const item of corpus.items) {
       const storedId = resolve(item.id);
-      const count = store.sqlite
-        .query<{ n: number }, [string]>(
-          "SELECT count(*) AS n FROM story_change_events WHERE item_id=? AND kind='content_change'",
-        )
-        .get(storedId)!.n;
-      contentChangesByItem.set(item.id, count);
+      const events = labeledEventsFor(store, storedId, item.expectation);
+      if (item.expectation === "alert_update") {
+        events.forEach((event, index) =>
+          labeledMoments.push({
+            eventLabel: `${item.id}#${index + 1}`,
+            item,
+            event,
+            alertworthyEvent: true,
+          }),
+        );
+      } else {
+        const event = events[0] ?? null;
+        labeledMoments.push({
+          eventLabel: item.id,
+          item,
+          event,
+          alertworthyEvent: item.expectation === "alert_time_sensitive",
+        });
+      }
     }
-    const labeledAlertworthyEvents = corpus.items.reduce((sum, item) => {
-      if (item.expectation === "alert_time_sensitive") return sum + 1;
-      if (item.expectation === "alert_update")
-        return sum + Math.max(1, contentChangesByItem.get(item.id) ?? 1);
-      return sum;
-    }, 0);
+    const labeledAlertworthyEvents = labeledMoments.filter(
+      (moment) => moment.alertworthyEvent,
+    ).length;
     const perEvent: EventArmOutcome[] = [];
     const falseAlerts = new Set<string>();
     const candidateMissed = new Set<string>();
-    for (const item of corpus.items) {
-      const storedId = resolve(item.id);
-      const trigger = triggerEventFor(store, storedId, item.expectation);
-      const alertworthy =
-        item.expectation === "alert_time_sensitive" ||
-        item.expectation === "alert_update";
+    for (const moment of labeledMoments) {
+      const { eventLabel, item, event: trigger, alertworthyEvent } = moment;
       const horizon = item.horizonHours * 3_600_000;
 
       const covered = (selected: string[]) =>
@@ -785,7 +817,7 @@ function evaluateAlertsReplay(corpusInput: unknown): AlertEvaluationReport {
           (developmentItems.get(item.development) ?? []).some((id) =>
             selected.includes(id),
           ));
-      // Baseline: the next daily edition, chronologically after the trigger,
+      // Baseline: the next daily edition, chronologically after the event,
       // that covered the item or its development.
       const baselineDelivery = trigger
         ? (baselinePerDay.find(
@@ -796,26 +828,28 @@ function evaluateAlertsReplay(corpusInput: unknown): AlertEvaluationReport {
         trigger && baselineDelivery
           ? latencyHours(trigger.observed_at, baselineDelivery.dueAt)
           : null;
-      const baselineMissed =
-        alertworthy &&
+      const baselineMissedEvent =
+        alertworthyEvent &&
         (baselineLatency === null || baselineLatency! > item.horizonHours);
 
-      // Candidate: the alert frozen for the trigger event (quiet hours may
-      // schedule the send later within the same alert).
+      // Candidate: the alert frozen for this event (quiet hours may schedule
+      // the send later within the same alert; every firing is classified).
       const fired = trigger ? firedByEvent.get(trigger.id) : undefined;
       const candidateLatency =
         trigger && fired
           ? latencyHours(trigger.observed_at, fired.scheduledFor)
           : null;
       const candidateMissedEvent =
-        alertworthy &&
+        alertworthyEvent &&
         (!fired ||
           candidateLatency === null ||
           candidateLatency > item.horizonHours);
-      if (fired && !alertworthy) falseAlerts.add(item.id);
-      if (candidateMissedEvent) candidateMissed.add(item.id);
+      if (fired && !alertworthyEvent) falseAlerts.add(item.id);
+      if (candidateMissedEvent) candidateMissed.add(eventLabel);
 
       perEvent.push({
+        eventLabel,
+        alertworthyEvent,
         itemId: item.id,
         development: item.development,
         expectation: item.expectation,
@@ -834,7 +868,7 @@ function evaluateAlertsReplay(corpusInput: unknown): AlertEvaluationReport {
         baseline: {
           deliveredAt: baselineDelivery?.dueAt ?? null,
           latencyHours: baselineLatency,
-          missed: baselineMissed,
+          missed: baselineMissedEvent,
         },
         candidate: {
           alertIdPresent: Boolean(fired),
@@ -852,26 +886,12 @@ function evaluateAlertsReplay(corpusInput: unknown): AlertEvaluationReport {
       });
     }
 
-    const labeledAlertworthyList = corpus.items.filter(
-      (item) =>
-        item.expectation === "alert_time_sensitive" ||
-        item.expectation === "alert_update",
-    );
-    const labeledAlertworthy = labeledAlertworthyList.length;
-    const baselineMissed = labeledAlertworthyList
-      .filter(
-        (item) =>
-          perEvent.find((outcome) => outcome.itemId === item.id)?.baseline
-            .missed,
-      )
-      .map((item) => item.id);
-    const candidateMissedList = labeledAlertworthyList
-      .filter(
-        (item) =>
-          perEvent.find((outcome) => outcome.itemId === item.id)?.candidate
-            .missed,
-      )
-      .map((item) => item.id);
+    const baselineMissed = perEvent
+      .filter((outcome) => outcome.alertworthyEvent && outcome.baseline.missed)
+      .map((outcome) => outcome.eventLabel);
+    const candidateMissedList = perEvent
+      .filter((outcome) => outcome.alertworthyEvent && outcome.candidate.missed)
+      .map((outcome) => outcome.eventLabel);
     const digestEmailsSent = baselinePerDay.filter(
       (day) => day.status === "ready",
     ).length;
@@ -901,8 +921,8 @@ function evaluateAlertsReplay(corpusInput: unknown): AlertEvaluationReport {
 
     const candidateMetrics = {
       timeSensitiveWithinHorizon: ratio(
-        labeledAlertworthy - candidateMissedList.length,
-        labeledAlertworthy,
+        labeledAlertworthyEvents - candidateMissedList.length,
+        labeledAlertworthyEvents,
       ),
       missedTimeSensitive: candidateMissedList,
       falseAlerts: [...falseAlerts].sort(),
@@ -914,8 +934,8 @@ function evaluateAlertsReplay(corpusInput: unknown): AlertEvaluationReport {
     };
     const baselineMetrics = {
       timeSensitiveWithinHorizon: ratio(
-        labeledAlertworthy - baselineMissed.length,
-        labeledAlertworthy,
+        labeledAlertworthyEvents - baselineMissed.length,
+        labeledAlertworthyEvents,
       ),
       missedTimeSensitive: baselineMissed,
       digestEmailsSent,

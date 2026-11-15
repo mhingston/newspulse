@@ -24,43 +24,64 @@ test("a fresh replay reproduces the recorded baseline exactly", () => {
   expect(evaluateAlerts(corpusInput)).toEqual(baseline);
 });
 
-test("the recorded baseline shows the measured cadence gap the alerts close", () => {
+test("the recorded baseline shows the measured cadence gap", () => {
   const report = baseline;
   // Baseline capability: the shipped daily digest only delivers at the
-  // scheduled edition, so two of the labeled time-sensitive developments
-  // miss their recorded usefulness horizon.
+  // scheduled edition. Measured per labeled event observation (every
+  // recorded changed-facts update of an alert_update item included): only
+  // the dst-1 event (12h horizon) makes the next edition in time.
   expect(report.baseline.metrics.timeSensitiveWithinHorizon).toEqual({
     numerator: 1,
-    denominator: 3,
-    value: 1 / 3,
+    denominator: 4,
+    value: 0.25,
   });
   expect(report.baseline.metrics.missedTimeSensitive).toEqual([
     "incident-1",
-    "quake",
+    "quake#1",
+    "quake#2",
   ]);
   // The baseline sends no alerts by construction.
   expect(report.baseline.metrics.alertVolume.value).toBeNull();
 });
 
-test("the adopted candidate meets every gate fixed in code before the replay", () => {
+test("every labeled update is evaluated and classified individually", () => {
   const report = baseline;
-  // Gaps closed: every labeled alert-worthy event is delivered within its
-  // horizon, nothing labeled repeat coverage or slow news alerted, alert
-  // volume stays within the labeled alert-worthy event count, and the
-  // replay makes zero provider calls.
-  expect(report.candidate.metrics.timeSensitiveWithinHorizon.value).toBe(1);
-  expect(report.candidate.metrics.missedTimeSensitive).toEqual([]);
+  const quakeUpdates = report.candidate.perEvent.filter((outcome) =>
+    outcome.eventLabel.startsWith("quake#"),
+  );
+  // Both recorded changed-facts updates of the quake development are
+  // measured, not only the first.
+  expect(quakeUpdates.map((outcome) => outcome.eventLabel)).toEqual([
+    "quake#1",
+    "quake#2",
+  ]);
+  expect(quakeUpdates.every((outcome) => outcome.alertworthyEvent)).toBe(true);
+  // quake#1 delivered in 0.5h; quake#2 (observed inside quiet hours) was
+  // scheduled for the quiet end, 7.5h after its observation — beyond the
+  // recorded 6h horizon and therefore a recorded miss.
+  expect(quakeUpdates[0]!.candidate.latencyHours).toBe(0.5);
+  expect(quakeUpdates[0]!.candidate.missed).toBe(false);
+  expect(quakeUpdates[1]!.candidate.latencyHours).toBe(7.5);
+  expect(quakeUpdates[1]!.candidate.missed).toBe(true);
+  expect(quakeUpdates[1]!.candidate.quietUntil).toBe(
+    quakeUpdates[1]!.candidate.deliveredAt,
+  );
+});
+
+test("the corrected evaluation records non-adoption under the fixed threshold", () => {
+  const report = baseline;
+  // 3 of 4 labeled alert-worthy event observations delivered in horizon.
+  expect(report.candidate.metrics.timeSensitiveWithinHorizon).toEqual({
+    numerator: 3,
+    denominator: 4,
+    value: 0.75,
+  });
+  expect(report.candidate.metrics.missedTimeSensitive).toEqual(["quake#2"]);
+  // No false positives on labeled repeat coverage or slow news, and alert
+  // volume stayed within the labeled alert-worthy event count.
   expect(report.candidate.metrics.falseAlerts).toEqual([]);
   expect(report.candidate.metrics.alertVolume).toBe(4);
   expect(report.candidate.metrics.suppressionVolume).toBe(6);
-  expect(report.usage.providerCalls).toBe(0);
-  expect(report.usage.cost).toBeNull();
-  // The quiet-hours alert is scheduled after the window, never suppressed.
-  const dst = report.candidate.perEvent.find(
-    (event) => event.itemId === "dst-1",
-  )!;
-  expect(dst.candidate.quietUntil).toBe(dst.candidate.deliveredAt);
-  // Suppressions record why each silent candidate stayed silent, once each.
   // The corpus labels 6 candidate evaluations that stay silent, one reason
   // each: quake seed + evergreen below priority; atlas not interest-eligible;
   // repeat-1 repeat coverage; two non-alertable change kinds.
@@ -70,9 +91,15 @@ test("the adopted candidate meets every gate fixed in code before the replay", (
     repeat_coverage: 1,
     not_alertable_kind: 2,
   });
-  // Adopted with a recorded reproducible reason.
-  expect(report.adoption.adopted).toBe(true);
+  // The replay reads recorded evidence only.
+  expect(report.usage.providerCalls).toBe(0);
+  expect(report.usage.cost).toBeNull();
+  // The code-fixed threshold is honestly not met at the recorded settings.
+  expect(report.adoption.adopted).toBe(false);
   expect(report.adoption.threshold).toContain("measured cadence gap");
+  expect(report.adoption.reason).toBe(
+    "the alert candidate still missed quake#2",
+  );
 });
 
 test("replaying twice in one process yields identical reports", () => {

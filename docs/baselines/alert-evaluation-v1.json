@@ -106,10 +106,10 @@
     "metrics": {
       "timeSensitiveWithinHorizon": {
         "numerator": 1,
-        "denominator": 3,
-        "value": 0.3333333333333333
+        "denominator": 4,
+        "value": 0.25
       },
-      "missedTimeSensitive": ["incident-1", "quake"],
+      "missedTimeSensitive": ["incident-1", "quake#1", "quake#2"],
       "digestEmailsSent": 5,
       "digestItemsVolume": 6,
       "alertVolume": {
@@ -123,6 +123,8 @@
     "methodology": "At each recorded tick (digest instants included) the shipped AlertWorker.evaluate runs with the fixed recorded settings. A fired alert's scheduled send instant (quiet-hours aware, durable outbox row) measures candidate delivery; a scheduled instant beyond the horizon counts as missed. Suppressed evaluations record their reason once per event.",
     "perEvent": [
       {
+        "eventLabel": "incident-1",
+        "alertworthyEvent": true,
         "itemId": "incident-1",
         "development": "bracknell-flood-incident",
         "expectation": "alert_time_sensitive",
@@ -147,6 +149,8 @@
         }
       },
       {
+        "eventLabel": "atlas-1",
+        "alertworthyEvent": false,
         "itemId": "atlas-1",
         "development": "atlas-release",
         "expectation": "no_alert",
@@ -171,6 +175,8 @@
         }
       },
       {
+        "eventLabel": "quake#1",
+        "alertworthyEvent": true,
         "itemId": "quake",
         "development": "ashfield-quake",
         "expectation": "alert_update",
@@ -195,6 +201,34 @@
         }
       },
       {
+        "eventLabel": "quake#2",
+        "alertworthyEvent": true,
+        "itemId": "quake",
+        "development": "ashfield-quake",
+        "expectation": "alert_update",
+        "horizonHours": 6,
+        "trigger": {
+          "changeEventId": 7,
+          "kind": "content_change",
+          "observedAt": 1792621801000
+        },
+        "baseline": {
+          "deliveredAt": 1792645200000,
+          "latencyHours": 6.5,
+          "missed": true
+        },
+        "candidate": {
+          "alertIdPresent": true,
+          "deliveredAt": 1792648800000,
+          "latencyHours": 7.5,
+          "missed": true,
+          "quietUntil": 1792648800000,
+          "suppressionReasons": []
+        }
+      },
+      {
+        "eventLabel": "repeat-1",
+        "alertworthyEvent": false,
         "itemId": "repeat-1",
         "development": "ashfield-quake",
         "expectation": "repeat_coverage",
@@ -219,6 +253,8 @@
         }
       },
       {
+        "eventLabel": "dst-1",
+        "alertworthyEvent": true,
         "itemId": "dst-1",
         "development": "harbor-flood",
         "expectation": "alert_time_sensitive",
@@ -243,6 +279,8 @@
         }
       },
       {
+        "eventLabel": "evergreen-1",
+        "alertworthyEvent": false,
         "itemId": "evergreen-1",
         "development": "harbor-flood-history",
         "expectation": "no_alert",
@@ -310,20 +348,20 @@
     "metrics": {
       "timeSensitiveWithinHorizon": {
         "numerator": 3,
-        "denominator": 3,
-        "value": 1
+        "denominator": 4,
+        "value": 0.75
       },
-      "missedTimeSensitive": [],
+      "missedTimeSensitive": ["quake#2"],
       "falseAlerts": [],
       "alertVolume": 4,
       "suppressionVolume": 6
     }
   },
   "adoption": {
-    "adopted": true,
+    "adopted": false,
     "threshold": "Adopt the opt-in selective alert slice only when, on the same labeled corpus, fixed settings and digest cadence: the daily digest baseline leaves at least one labeled time-sensitive event undelivered within its recorded usefulness horizon (a measured cadence gap); replay through the shipped alert evaluation delivers every labeled alert-worthy event within its horizon; alerts fire for no item labeled repeat_coverage or no_alert; total alert volume does not exceed the labeled alert-worthy event count; and the replay makes zero provider calls. Otherwise record a justified non-adoption.",
-    "reason": "measured cadence gap confirmed and closed: the shipped alert evaluation delivered every labeled time-sensitive event within its horizon, alerted nothing labeled repeat coverage or slow news, and alert volume matches the labeled alert-worthy developments",
-    "summary": "Baseline digest missed 2/4 labeled time-sensitive developments; the alert candidate delivered 3/3 within horizon with 0 false alerts at volume 4 (suppressed 6 candidate evaluations)."
+    "reason": "the alert candidate still missed quake#2",
+    "summary": "Non-adoption recorded on the labeled fixture; revisit requires new recorded evidence."
   },
   "usage": {
     "providerCalls": 0,
