@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import type { Database } from "bun:sqlite";
 import { invalidateScores } from "./score-queue";
 import { recordChangeEvent } from "../dev-changes";
@@ -36,10 +35,12 @@ interface CurrentRelation {
 }
 interface PlanSnapshot {
   inputs: StoryInput[];
-  snapshotHash: string;
+  revision: number;
   fingerprint: string;
   coverage: number | null;
 }
+/** Rows read per keyset page; each page is one short statement. */
+const INPUT_PAGE = 200;
 export interface GroupingResult {
   changed: boolean;
   stale?: boolean;
@@ -64,10 +65,6 @@ function extractedText(raw: RawItem): string {
   }
   return raw.body;
 }
-function hash(value: unknown): string {
-  return createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
 /**
  * SQLite adapter for the pure story planner. All writes are idempotent and
  * transactionally reconciled; superseded memberships/relations are retained.
@@ -75,9 +72,22 @@ function hash(value: unknown): string {
 export class StoryStore {
   constructor(private readonly sqlite: Database) {}
 
-  private inputs(): StoryInput[] {
-    const rows = this.sqlite
-      .query<RawItem, []>(
+  private inputRevision(): number {
+    return this.sqlite
+      .query<{ revision: number }, []>(
+        "SELECT revision FROM story_input_revision WHERE id=1",
+      )
+      .get()!.revision;
+  }
+
+  /**
+   * Reads planner inputs in keyset pages, each a short statement with no open
+   * transaction. Pages may straddle a concurrent write, so the result is only
+   * used when the revision is unchanged at commit, which rejects a torn read.
+   */
+  private inputPage(after: { identity: string; id: string } | null): RawItem[] {
+    return this.sqlite
+      .query<RawItem, [string, string, number]>(
         "SELECT i.id,i.identity,i.url,i.title,i.published_at,i.ingested_at," +
           "coalesce(c.text,'') AS body," +
           "(SELECT p.result FROM processing_jobs p WHERE p.item_id=i.id " +
@@ -85,18 +95,23 @@ export class StoryStore {
           "AND p.generation=(SELECT max(latest.generation) FROM processing_jobs latest " +
           "WHERE latest.item_id=i.id AND latest.stage='extract') " +
           "AND p.status='done' AND p.outcome='extracted' LIMIT 1) AS extracted " +
-          "FROM items i LEFT JOIN content c ON c.item_id=i.id ORDER BY i.identity,i.id",
+          "FROM items i LEFT JOIN content c ON c.item_id=i.id " +
+          "WHERE (i.identity,i.id)>(?,?) ORDER BY i.identity,i.id LIMIT ?",
       )
-      .all();
-    return rows.map((row) => ({
-      id: row.id,
-      identity: row.identity,
-      url: row.url,
-      title: row.title,
-      text: extractedText(row),
-      publishedAt: row.published_at,
-      ingestedAt: row.ingested_at,
-    }));
+      .all(after?.identity ?? "", after?.id ?? "", INPUT_PAGE);
+  }
+
+  private inputsFromPage(rows: RawItem[], inputs: StoryInput[]): void {
+    for (const row of rows)
+      inputs.push({
+        id: row.id,
+        identity: row.identity,
+        url: row.url,
+        title: row.title,
+        text: extractedText(row),
+        publishedAt: row.published_at,
+        ingestedAt: row.ingested_at,
+      });
   }
 
   /**
@@ -110,25 +125,61 @@ export class StoryStore {
   }
 
   /**
-   * Same plan and commit as `reconcile`, but planning yields to the event loop
-   * between slices so HTTP and MCP requests keep being served during a replan.
-   * No transaction is open while planning runs.
+   * Same plan and commit as `reconcile`, but reads and planning yield to the
+   * event loop between slices so HTTP and MCP requests keep being served during
+   * a replan. No transaction is open while planning runs.
    */
   async reconcileAsync(now = Date.now()): Promise<GroupingResult> {
-    const snapshot = this.snapshot();
+    const snapshot = await this.snapshotAsync();
     if (!snapshot) return { changed: false, groups: 0, members: 0 };
     return this.commit(snapshot, await planStoriesAsync(snapshot.inputs), now);
   }
 
   private snapshot(): PlanSnapshot | undefined {
-    const prior = this.sqlite
+    const prior = this.startSnapshot();
+    if (prior === undefined) return;
+    const inputs: StoryInput[] = [];
+    let after: { identity: string; id: string } | null = null;
+    for (;;) {
+      const rows = this.inputPage(after);
+      if (rows.length === 0) break;
+      this.inputsFromPage(rows, inputs);
+      const last = rows[rows.length - 1]!;
+      after = { identity: last.identity, id: last.id };
+    }
+    return this.finishSnapshot(prior, inputs);
+  }
+
+  private async snapshotAsync(): Promise<PlanSnapshot | undefined> {
+    const prior = this.startSnapshot();
+    if (prior === undefined) return;
+    const inputs: StoryInput[] = [];
+    let after: { identity: string; id: string } | null = null;
+    for (;;) {
+      await new Promise<void>((resolve) => setImmediate(resolve));
+      const rows = this.inputPage(after);
+      if (rows.length === 0) break;
+      this.inputsFromPage(rows, inputs);
+      const last = rows[rows.length - 1]!;
+      after = { identity: last.identity, id: last.id };
+    }
+    return this.finishSnapshot(prior, inputs);
+  }
+
+  /**
+   * Returns `undefined` when the stored state is already clean for this rule
+   * version. Otherwise returns the prior revision and coverage cut-off.
+   */
+  private startSnapshot():
+    { revision: number; coverage: number | null } | undefined {
+    const state = this.sqlite
       .query<{ fingerprint: string }, []>(
         "SELECT fingerprint FROM story_grouping_state WHERE id=1",
       )
       .get();
     // All evidence mutations mark the snapshot dirty transactionally.
     // Subsequent queued jobs may therefore skip the full library scan.
-    if (prior?.fingerprint.startsWith(STORY_RULE_VERSION + ":")) return;
+    if (state?.fingerprint.startsWith(STORY_RULE_VERSION + ":")) return;
     // Group jobs queued before this read have committed evidence, so one plan
     // covers them. Jobs queued later keep their own pass.
     const coverage = this.sqlite
@@ -136,13 +187,18 @@ export class StoryStore {
         "SELECT max(rowid) AS n FROM processing_jobs WHERE stage='group'",
       )
       .get()!.n;
-    const inputs = this.inputs();
-    const snapshotHash = hash([STORY_RULE_VERSION, inputs]);
+    return { revision: this.inputRevision(), coverage };
+  }
+
+  private finishSnapshot(
+    start: { revision: number; coverage: number | null },
+    inputs: StoryInput[],
+  ): PlanSnapshot {
     return {
       inputs,
-      snapshotHash,
-      fingerprint: STORY_RULE_VERSION + ":" + snapshotHash,
-      coverage,
+      revision: start.revision,
+      fingerprint: STORY_RULE_VERSION + ":r" + start.revision,
+      coverage: start.coverage,
     };
   }
 
@@ -151,10 +207,12 @@ export class StoryStore {
     plan: StoryPlan,
     now: number,
   ): GroupingResult {
-    const { snapshotHash, fingerprint, coverage } = snapshot;
+    const { revision, fingerprint, coverage } = snapshot;
     return this.sqlite
       .transaction(() => {
-        if (hash([STORY_RULE_VERSION, this.inputs()]) !== snapshotHash)
+        // Every planner input is covered by a trigger that bumps the revision,
+        // so an unchanged revision proves the snapshot is still current.
+        if (this.inputRevision() !== revision)
           return {
             changed: false,
             stale: true,
@@ -177,13 +235,22 @@ export class StoryStore {
           string,
           { groupId: string; evidence: string; version: string }
         >();
-        for (const group of plan.groups) {
+        const live = new Set(
           this.sqlite
-            .query(
-              "INSERT INTO story_groups(id,first_seen) VALUES(?,?) " +
-                "ON CONFLICT(id) DO UPDATE SET retired_at=NULL",
+            .query<{ id: string }, []>(
+              "SELECT id FROM story_groups WHERE retired_at IS NULL",
             )
-            .run(group.id, now);
+            .all()
+            .map((row) => row.id),
+        );
+        for (const group of plan.groups) {
+          if (!live.has(group.id))
+            this.sqlite
+              .query(
+                "INSERT INTO story_groups(id,first_seen) VALUES(?,?) " +
+                  "ON CONFLICT(id) DO UPDATE SET retired_at=NULL",
+              )
+              .run(group.id, now);
           for (const member of group.members)
             target.set(member.itemId, {
               groupId: group.id,
