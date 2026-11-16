@@ -114,10 +114,21 @@ export interface Item {
   snippet_provenance?: string;
   analysis_status?: string;
 }
+export interface GroupingBatching {
+  /** Pending inputs that trigger an immediate replan. */
+  batch: number;
+  /** Longest an unplanned input may wait before a replan is forced. */
+  maxDelayMs: number;
+}
+const immediateGrouping: GroupingBatching = { batch: 1, maxDelayMs: 0 };
+
 export class Store {
   readonly sqlite: Database;
   readonly stories: StoryStore;
-  constructor(path: string) {
+  constructor(
+    path: string,
+    private readonly grouping: GroupingBatching = immediateGrouping,
+  ) {
     if (path !== ":memory:") mkdirSync(dirname(path), { recursive: true });
     this.sqlite = new Database(path, { create: true, strict: true });
     this.sqlite.exec(
@@ -527,7 +538,28 @@ export class Store {
     // A pending job will see the latest snapshot. If a job is already running,
     // a new generation ensures that an intervening correction is replayed.
     if (last?.status === "pending") return;
-    this.enqueueProcessing("group", itemId, now, (last?.generation ?? 0) + 1);
+    const waiting = this.sqlite
+      .query<{ n: number; oldest: number | null }, []>(
+        "SELECT count(*) AS n,min(queued_at) AS oldest FROM processing_jobs WHERE stage='group' AND status='pending'",
+      )
+      .get()!;
+    // A batch replans once it reaches `batch` pending inputs, or once its
+    // oldest unplanned input is `maxDelayMs` old. The time bound applies
+    // regardless of batch size, so no input waits longer than that.
+    const batchFull = waiting.n + 1 >= this.grouping.batch;
+    const oldestAt = Math.min(now, waiting.oldest ?? now);
+    this.enqueueProcessing(
+      "group",
+      itemId,
+      batchFull ? now : oldestAt + this.grouping.maxDelayMs,
+      (last?.generation ?? 0) + 1,
+    );
+    if (batchFull)
+      this.sqlite
+        .query(
+          "UPDATE processing_jobs SET available_at=? WHERE stage='group' AND status='pending' AND attempts=0 AND available_at>?",
+        )
+        .run(now, now);
   }
   enqueueProcessing(
     stage: ProcessingStage,

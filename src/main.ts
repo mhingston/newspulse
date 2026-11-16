@@ -14,7 +14,11 @@ import { analysisHandler } from "./analysis-service";
 import { scoringHandler } from "./scoring-service";
 import { stopServices } from "./lifecycle";
 import { config } from "./config";
-import { pollConfig, stageConcurrencyConfig } from "./poll-config";
+import {
+  groupingConfig,
+  pollConfig,
+  stageConcurrencyConfig,
+} from "./poll-config";
 import { Store } from "./db/store";
 import { RssAdapter } from "./adapters/rss";
 import { Worker, ProcessingWorker, schedule, log } from "./worker";
@@ -54,7 +58,7 @@ if (delivery || alerts) {
 if (scheduledDiscovery || githubDiscovery || hnDiscovery) {
   acquireDiscoveryLock(cfg.DB_PATH);
 }
-const store = new Store(cfg.DB_PATH);
+const store = new Store(cfg.DB_PATH, groupingConfig());
 const inboundStore =
   cfg.RESEND_API_KEY && cfg.RESEND_WEBHOOK_SECRET
     ? new InboundStore(store.sqlite)
@@ -106,7 +110,7 @@ const scheduler = schedule(
     {
       score: scoringHandler(store),
       group: async () => {
-        const result = store.stories.reconcile();
+        const result = await store.stories.reconcileAsync();
         if (result.stale)
           throw new Error("Story inputs changed during grouping");
         return { status: "grouped", result: JSON.stringify(result) };

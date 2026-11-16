@@ -4,6 +4,7 @@ import { invalidateScores } from "./score-queue";
 import { recordChangeEvent } from "../dev-changes";
 import {
   planStories,
+  planStoriesAsync,
   STORY_RULE_VERSION,
   type StoryInput,
   type StoryPlan,
@@ -32,6 +33,12 @@ interface CurrentRelation {
   reason: string;
   evidence: string;
   rule_version: string;
+}
+interface PlanSnapshot {
+  inputs: StoryInput[];
+  snapshotHash: string;
+  fingerprint: string;
+  coverage: number | null;
 }
 export interface GroupingResult {
   changed: boolean;
@@ -97,6 +104,23 @@ export class StoryStore {
    * under BEGIN IMMEDIATE so a concurrent writer cannot commit a stale plan.
    */
   reconcile(now = Date.now()): GroupingResult {
+    const snapshot = this.snapshot();
+    if (!snapshot) return { changed: false, groups: 0, members: 0 };
+    return this.commit(snapshot, planStories(snapshot.inputs), now);
+  }
+
+  /**
+   * Same plan and commit as `reconcile`, but planning yields to the event loop
+   * between slices so HTTP and MCP requests keep being served during a replan.
+   * No transaction is open while planning runs.
+   */
+  async reconcileAsync(now = Date.now()): Promise<GroupingResult> {
+    const snapshot = this.snapshot();
+    if (!snapshot) return { changed: false, groups: 0, members: 0 };
+    return this.commit(snapshot, await planStoriesAsync(snapshot.inputs), now);
+  }
+
+  private snapshot(): PlanSnapshot | undefined {
     const prior = this.sqlite
       .query<{ fingerprint: string }, []>(
         "SELECT fingerprint FROM story_grouping_state WHERE id=1",
@@ -104,8 +128,7 @@ export class StoryStore {
       .get();
     // All evidence mutations mark the snapshot dirty transactionally.
     // Subsequent queued jobs may therefore skip the full library scan.
-    if (prior?.fingerprint.startsWith(STORY_RULE_VERSION + ":"))
-      return { changed: false, groups: 0, members: 0 };
+    if (prior?.fingerprint.startsWith(STORY_RULE_VERSION + ":")) return;
     // Group jobs queued before this read have committed evidence, so one plan
     // covers them. Jobs queued later keep their own pass.
     const coverage = this.sqlite
@@ -115,8 +138,20 @@ export class StoryStore {
       .get()!.n;
     const inputs = this.inputs();
     const snapshotHash = hash([STORY_RULE_VERSION, inputs]);
-    const fingerprint = STORY_RULE_VERSION + ":" + snapshotHash;
-    const plan = planStories(inputs);
+    return {
+      inputs,
+      snapshotHash,
+      fingerprint: STORY_RULE_VERSION + ":" + snapshotHash,
+      coverage,
+    };
+  }
+
+  private commit(
+    snapshot: PlanSnapshot,
+    plan: StoryPlan,
+    now: number,
+  ): GroupingResult {
+    const { snapshotHash, fingerprint, coverage } = snapshot;
     return this.sqlite
       .transaction(() => {
         if (hash([STORY_RULE_VERSION, this.inputs()]) !== snapshotHash)

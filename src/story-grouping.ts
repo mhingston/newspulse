@@ -190,10 +190,13 @@ function common(a: string[], b: string[]): string[] {
 function contentHash(item: StoryInput): string | null {
   const normalized = item.text.replace(/\s+/g, " ").trim().toLowerCase();
   // Very short or boilerplate-only feed descriptions are not evidence of syndication.
-  const vocabulary = new Set(words(normalized));
-  return normalized.length >= 160 && vocabulary.size >= 12
-    ? sha(normalized)
-    : null;
+  if (normalized.length < 160) return null;
+  const vocabulary = new Set<string>();
+  for (const word of words(normalized)) {
+    vocabulary.add(word);
+    if (vocabulary.size >= 12) return sha(normalized);
+  }
+  return null;
 }
 /**
  * Per-item features are pure functions of one item, but pair comparison asks
@@ -298,9 +301,55 @@ function followUp(
  * retains superseded groups and memberships rather than deleting provenance.
  */
 export function planStories(items: readonly StoryInput[]): StoryPlan {
+  const steps = planStorySteps(items);
+  let step = steps.next();
+  while (!step.done) step = steps.next();
+  return step.value;
+}
+
+/** Cooperative planning: yields to the event loop between bounded slices. */
+export async function planStoriesAsync(
+  items: readonly StoryInput[],
+): Promise<StoryPlan> {
+  const steps = planStorySteps(items);
+  let step = steps.next();
+  while (!step.done) {
+    await new Promise<void>((resolve) => setImmediate(resolve));
+    step = steps.next();
+  }
+  return step.value;
+}
+
+/**
+ * Planning work between yields, measured in pair comparisons. A budget keeps
+ * one slice short enough that the event loop can answer requests in between,
+ * without changing the plan that is produced.
+ */
+export const PLAN_YIELD_BUDGET = 250;
+
+/**
+ * Resumable planner. Each `yield` marks a point where the caller may run other
+ * work; no state outside this generator is shared, so pausing cannot change
+ * the result. Use `planStoriesAsync` to run it cooperatively.
+ */
+function* planStorySteps(
+  items: readonly StoryInput[],
+): Generator<void, StoryPlan, void> {
   const ordered = [...items].sort(
     (a, b) => a.identity.localeCompare(b.identity) || a.id.localeCompare(b.id),
   );
+  let work = 0;
+  // Feature extraction tokenises whole bodies, so it is the largest single
+  // cost on a real library. Computing it in bounded slices keeps each yield
+  // short; the memoised values are identical to lazy computation.
+  for (const item of ordered) {
+    featuresOf(item);
+    work += 1 + item.text.length / 1024;
+    if (work >= PLAN_YIELD_BUDGET) {
+      work = 0;
+      yield;
+    }
+  }
   const clusters: StoryInput[][] = [];
   // A comparison succeeds only through an equal content hash or an equal action,
   // so a cluster can accept an item only if one of its members shares one of
@@ -327,10 +376,15 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
       ),
     ].sort((a, b) => a - b);
     const index = candidates.find((candidate) =>
-      clusters[candidate]!.every(
-        (member) => sameDevelopment(member, item) !== null,
-      ),
+      clusters[candidate]!.every((member) => {
+        work++;
+        return sameDevelopment(member, item) !== null;
+      }),
     );
+    if (work >= PLAN_YIELD_BUDGET) {
+      work = 0;
+      yield;
+    }
     if (index === undefined) {
       clusters.push([item]);
       indexMember(item, clusters.length - 1);
@@ -339,22 +393,31 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
       indexMember(item, index);
     }
   }
-  const groups = clusters.map((members) => {
+  const groups: StoryGroup[] = [];
+  for (const members of clusters) {
     const anchor = members[0]!;
-    return {
+    const group = {
       id: "story:" + sha(anchor.identity).slice(0, 24),
-      members: members.map((item, index) => ({
-        itemId: item.id,
-        identity: item.identity,
-        evidence:
-          index === 0
-            ? ({ reason: "anchor", canonicalUrl: item.url } as const)
-            : sameDevelopment(anchor, item)!,
-      })),
+      members: members.map((item, index) => {
+        work++;
+        return {
+          itemId: item.id,
+          identity: item.identity,
+          evidence:
+            index === 0
+              ? ({ reason: "anchor", canonicalUrl: item.url } as const)
+              : sameDevelopment(anchor, item)!,
+        };
+      }),
       firstAt: Math.min(...members.map(at)),
       lastAt: Math.max(...members.map(at)),
     };
-  });
+    groups.push(group);
+    if (work >= PLAN_YIELD_BUDGET) {
+      work = 0;
+      yield;
+    }
+  }
   // A canonical-identity anchor can be a later syndicated copy, so use each
   // group's chronological first member when evaluating directional links.
   // Precompute these lookups to keep pair planning quadratic in group count.
@@ -399,6 +462,10 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
       }
   for (const i of [...candidates.keys()].sort((a, b) => a - b))
     for (const j of candidates.get(i)!.sort((a, b) => a - b)) {
+      if (++work >= PLAN_YIELD_BUDGET) {
+        work = 0;
+        yield;
+      }
       const left = groups[i]!;
       const right = groups[j]!;
       const older = left.firstAt <= right.firstAt ? left : right;
