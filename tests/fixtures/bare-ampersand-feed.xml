@@ -1,0 +1,19 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<rss version="2.0">
+  <channel>
+    <title>Bare ampersand feed</title>
+    <link>https://example.com/</link>
+    <item>
+      <title>Strategy &amp; delivery</title>
+      <link>https://example.com/strategy</link>
+      <guid>strategy-1</guid>
+      <description>Your AI transformation partner. We set & execute your enterprise AI strategy & roadmap.</description>
+    </item>
+    <item>
+      <title>Already escaped &#38; numeric</title>
+      <link>https://example.com/numeric</link>
+      <guid>numeric-1</guid>
+      <description><![CDATA[Raw & kept inside CDATA, &amp; not double escaped.]]></description>
+    </item>
+  </channel>
+</rss>

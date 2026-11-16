@@ -69,9 +69,11 @@ export function parseFeed(
   xml: string,
   base: string,
   maxEntries = 1000,
-  diagnostics?: { entryCount: number },
+  diagnostics?: { entryCount: number; xmlRepairs?: number },
 ): Candidate[] {
-  const root = parseXml(xml, base);
+  const xmlDiagnostics = { repairs: 0 };
+  const root = parseXml(xml, base, xmlDiagnostics);
+  if (diagnostics) diagnostics.xmlRepairs = xmlDiagnostics.repairs;
   const atom =
     root.name === "feed" &&
     (root.namespace === "http://www.w3.org/2005/Atom" || root.namespace === "");
@@ -247,7 +249,7 @@ export class RssAdapter implements SourceAdapter {
       bytes.set(c, offset);
       offset += c.length;
     }
-    const diagnostics = { entryCount: 0 };
+    const diagnostics = { entryCount: 0, xmlRepairs: 0 };
     const items = parseFeed(
       decodeFeed(bytes, response.headers.get("content-type")),
       response.url || url,
@@ -257,6 +259,7 @@ export class RssAdapter implements SourceAdapter {
     return {
       items,
       entryCount: diagnostics.entryCount,
+      xmlRepairs: diagnostics.xmlRepairs,
       truncated: diagnostics.entryCount > limits.maxEntries,
       etag: response.headers.get("etag") ?? undefined,
       lastModified: response.headers.get("last-modified") ?? undefined,

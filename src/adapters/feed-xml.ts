@@ -70,11 +70,54 @@ function elements(
     ];
   });
 }
-export function parseXml(xml: string, base: string): XmlElement {
-  if (/<!DOCTYPE|<!ENTITY/i.test(xml) || XMLValidator.validate(xml) !== true)
+const predefinedEntities = new Set(["amp", "lt", "gt", "quot", "apos"]);
+const unsafeDeclaration = /<!DOCTYPE|<!ENTITY/i;
+const isWellFormed = (xml: string) => XMLValidator.validate(xml) === true;
+
+// Escapes only a bare `&` that does not begin a predefined or numeric reference.
+// CDATA sections, comments and processing instructions are copied unchanged.
+export function repairBareAmpersands(xml: string): {
+  xml: string;
+  repairs: number;
+} {
+  let repairs = 0;
+  const repaired = xml.replace(
+    /<!\[CDATA\[[\s\S]*?\]\]>|<!--[\s\S]*?-->|<\?[\s\S]*?\?>|&([A-Za-z_][\w.-]*|#[0-9]+|#x[0-9a-fA-F]+);|&/g,
+    (match, reference: string | undefined) => {
+      if (match.startsWith("<")) return match;
+      if (reference !== undefined && reference.startsWith("#")) return match;
+      if (reference !== undefined && predefinedEntities.has(reference))
+        return match;
+      repairs++;
+      return reference === undefined ? "&amp;" : `&amp;${reference};`;
+    },
+  );
+  return { xml: repaired, repairs };
+}
+
+export function validateXml(xml: string): { xml: string; repairs: number } {
+  if (unsafeDeclaration.test(xml))
     throw new Error("Invalid or unsafe feed XML");
+  if (isWellFormed(xml)) return { xml, repairs: 0 };
+  const repaired = repairBareAmpersands(xml);
+  if (
+    repaired.repairs === 0 ||
+    unsafeDeclaration.test(repaired.xml) ||
+    !isWellFormed(repaired.xml)
+  )
+    throw new Error("Invalid or unsafe feed XML");
+  return repaired;
+}
+
+export function parseXml(
+  xml: string,
+  base: string,
+  diagnostics?: { repairs: number },
+): XmlElement {
+  const checked = validateXml(xml);
+  if (diagnostics) diagnostics.repairs = checked.repairs;
   const root = elements(
-    parser.parse(xml) as OrderedNode[],
+    parser.parse(checked.xml) as OrderedNode[],
     new Map(),
     base,
   ).find((node): node is XmlElement => typeof node !== "string");

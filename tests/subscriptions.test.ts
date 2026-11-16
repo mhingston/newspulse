@@ -94,8 +94,9 @@ test("feed truncation diagnostics persist across 304 and source reimport does no
   const health = s.status().sources[0]!.feed_diagnostics as {
     entry_count: number;
     truncated: number;
+    xml_repairs: number | null;
   };
-  expect(health).toEqual({ entry_count: 3, truncated: 1 });
+  expect(health).toEqual({ entry_count: 3, truncated: 1, xml_repairs: null });
   s.updateSource(source.id, { enabled: false });
   s.addSource(source.url);
   expect(s.source(source.id)?.enabled).toBe(0);

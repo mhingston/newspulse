@@ -28,6 +28,7 @@ export interface PollResult extends PollState {
   items: Candidate[];
   notModified?: boolean;
   entryCount?: number;
+  xmlRepairs?: number;
   truncated?: boolean;
 }
 export interface SourceAdapter {

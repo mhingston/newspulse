@@ -1772,7 +1772,7 @@ export class Store {
         for (const item of result.items) this.insert(item, job.source_id, now);
         this.sqlite
           .query(
-            "INSERT INTO source_state(source_id,etag,last_modified,last_checked,cursor,entry_count,truncated) VALUES(?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,last_checked=excluded.last_checked,cursor=excluded.cursor,entry_count=coalesce(excluded.entry_count,source_state.entry_count),truncated=coalesce(excluded.truncated,source_state.truncated)",
+            "INSERT INTO source_state(source_id,etag,last_modified,last_checked,cursor,entry_count,truncated,xml_repairs) VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(source_id) DO UPDATE SET etag=excluded.etag,last_modified=excluded.last_modified,last_checked=excluded.last_checked,cursor=excluded.cursor,entry_count=coalesce(excluded.entry_count,source_state.entry_count),truncated=coalesce(excluded.truncated,source_state.truncated),xml_repairs=coalesce(excluded.xml_repairs,source_state.xml_repairs)",
           )
           .run(
             job.source_id,
@@ -1786,6 +1786,7 @@ export class Store {
               null,
             result.entryCount ?? null,
             result.truncated === undefined ? null : Number(result.truncated),
+            result.xmlRepairs ?? null,
           );
         this.sqlite
           .query(
@@ -2055,7 +2056,7 @@ export class Store {
         feed_diagnostics:
           this.sqlite
             .query(
-              "SELECT entry_count,truncated FROM source_state WHERE source_id=?",
+              "SELECT entry_count,truncated,xml_repairs FROM source_state WHERE source_id=?",
             )
             .get(source.id) ?? null,
       })),

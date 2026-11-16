@@ -31,6 +31,7 @@ export const sourceState = sqliteTable("source_state", {
   lastChecked: integer("last_checked"),
   entryCount: integer("entry_count"),
   truncated: integer(),
+  xmlRepairs: integer("xml_repairs"),
 });
 export const contentVersions = sqliteTable(
   "content_versions",
