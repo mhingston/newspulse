@@ -151,41 +151,28 @@ function versions(title: string): string[] {
     ),
   ].sort();
 }
-function versionsAgree(left: string, right: string): boolean {
-  const a = versions(left);
-  const b = versions(right);
-  return a.length === b.length && a.every((version, i) => version === b[i]);
-}
 
 /**
  * Shared vendor, number and topic terms alone cannot identify a product.
  * Require at least two agreeing explicit named identifiers, with no conflicts.
  * This deliberately favours splitting ambiguous coverage over false merges.
  */
-function namedSubjectsAgree(left: string, right: string): boolean {
-  const names = (title: string) =>
-    [
-      ...new Set(
-        (title.match(/[\p{L}\p{N}]+/gu) ?? [])
-          .filter(
-            (word) => /^\p{Lu}/u.test(word) || /[\p{Ll}][\p{Lu}]/u.test(word),
-          )
-          .map((word) => word.toLocaleLowerCase("en"))
-          .filter(
-            (word) =>
-              !uninformative.has(word) &&
-              !broadTopic.has(word) &&
-              !actions.has(word),
-          ),
-      ),
-    ].sort();
-  const a = names(left);
-  const b = names(right);
-  return (
-    a.length >= 2 &&
-    a.length === b.length &&
-    a.every((name, i) => name === b[i])
-  );
+function namedSubjects(title: string): string[] {
+  return [
+    ...new Set(
+      (title.match(/[\p{L}\p{N}]+/gu) ?? [])
+        .filter(
+          (word) => /^\p{Lu}/u.test(word) || /[\p{Ll}][\p{Lu}]/u.test(word),
+        )
+        .map((word) => word.toLocaleLowerCase("en"))
+        .filter(
+          (word) =>
+            !uninformative.has(word) &&
+            !broadTopic.has(word) &&
+            !actions.has(word),
+        ),
+    ),
+  ].sort();
 }
 
 function actionOf(title: string): string | null {
@@ -215,7 +202,13 @@ function contentHash(item: StoryInput): string | null {
  */
 const features = new WeakMap<
   StoryInput,
-  { hash: string | null; action: string | null; terms: string[] }
+  {
+    hash: string | null;
+    action: string | null;
+    terms: string[];
+    versions: string[];
+    subjects: string[];
+  }
 >();
 function featuresOf(item: StoryInput) {
   let cached = features.get(item);
@@ -224,10 +217,22 @@ function featuresOf(item: StoryInput) {
       hash: contentHash(item),
       action: actionOf(item.title),
       terms: terms(item.title),
+      versions: versions(item.title),
+      subjects: namedSubjects(item.title),
     };
     features.set(item, cached);
   }
   return cached;
+}
+function sameList(a: readonly string[], b: readonly string[]): boolean {
+  return a.length === b.length && a.every((value, i) => value === b[i]);
+}
+function sameVersions(left: StoryInput, right: StoryInput): boolean {
+  return sameList(featuresOf(left).versions, featuresOf(right).versions);
+}
+function sameSubjects(left: StoryInput, right: StoryInput): boolean {
+  const subjects = featuresOf(left).subjects;
+  return subjects.length >= 2 && sameList(subjects, featuresOf(right).subjects);
 }
 function sameDevelopment(
   left: StoryInput,
@@ -252,8 +257,8 @@ function sameDevelopment(
   const leftTerms = leftFeatures.terms;
   const rightTerms = rightFeatures.terms;
   const shared = common(leftTerms, rightTerms);
-  if (!versionsAgree(left.title, right.title)) return null;
-  if (!namedSubjectsAgree(left.title, right.title)) return null;
+  if (!sameVersions(left, right)) return null;
+  if (!sameSubjects(left, right)) return null;
   if (
     shared.length < 2 ||
     shared.length / Math.max(leftTerms.length, rightTerms.length) < 0.7
@@ -277,8 +282,8 @@ function followUp(
   if (gap < 4 * DAY || gap > 90 * DAY) return null;
   const olderTerms = precomputed?.older ?? terms(earlier.title);
   const newerTerms = precomputed?.newer ?? terms(later.title);
-  if (!versionsAgree(earlier.title, later.title)) return null;
-  if (!namedSubjectsAgree(earlier.title, later.title)) return null;
+  if (!sameVersions(earlier, later)) return null;
+  if (!sameSubjects(earlier, later)) return null;
   const overlap = common(olderTerms, newerTerms);
   return overlap.length >= 2 &&
     overlap.length / Math.max(olderTerms.length, newerTerms.length) >= 0.7
@@ -297,12 +302,42 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
     (a, b) => a.identity.localeCompare(b.identity) || a.id.localeCompare(b.id),
   );
   const clusters: StoryInput[][] = [];
+  // A comparison succeeds only through an equal content hash or an equal action,
+  // so a cluster can accept an item only if one of its members shares one of
+  // those keys. Index clusters by key and test just those, in creation order.
+  const clustersByKey = new Map<string, Set<number>>();
+  const keysOf = (item: StoryInput) => {
+    const { hash, action } = featuresOf(item);
+    return [
+      ...(hash ? ["hash:" + hash] : []),
+      ...(action ? ["action:" + action] : []),
+    ];
+  };
+  const indexMember = (item: StoryInput, cluster: number) => {
+    for (const key of keysOf(item)) {
+      const bucket = clustersByKey.get(key);
+      if (bucket) bucket.add(cluster);
+      else clustersByKey.set(key, new Set([cluster]));
+    }
+  };
   for (const item of ordered) {
-    const cluster = clusters.find((members) =>
-      members.every((member) => sameDevelopment(member, item) !== null),
+    const candidates = [
+      ...new Set(
+        keysOf(item).flatMap((key) => [...(clustersByKey.get(key) ?? [])]),
+      ),
+    ].sort((a, b) => a - b);
+    const index = candidates.find((candidate) =>
+      clusters[candidate]!.every(
+        (member) => sameDevelopment(member, item) !== null,
+      ),
     );
-    if (cluster) cluster.push(item);
-    else clusters.push([item]);
+    if (index === undefined) {
+      clusters.push([item]);
+      indexMember(item, clusters.length - 1);
+    } else {
+      clusters[index]!.push(item);
+      indexMember(item, index);
+    }
   }
   const groups = clusters.map((members) => {
     const anchor = members[0]!;
@@ -338,14 +373,32 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
     ),
   );
   const relations: StoryRelation[] = [];
-  const earliestTerms = new Map(
-    groups.map(
-      (group) =>
-        [group.id, terms(earliestByGroup.get(group.id)!.title)] as const,
-    ),
+  const earliestTerms = groups.map((group) =>
+    terms(earliestByGroup.get(group.id)!.title),
   );
-  for (let i = 0; i < groups.length; i++) {
-    for (let j = i + 1; j < groups.length; j++) {
+  // A follow-up requires identical versions and identical named subjects
+  // across its two titles. Bucket groups on those exact keys so only groups
+  // that could relate are compared.
+  const buckets = new Map<string, number[]>();
+  groups.forEach((group, index) => {
+    const earliest = featuresOf(earliestByGroup.get(group.id)!);
+    const key =
+      earliest.versions.join(",") + "\n" + earliest.subjects.join(",");
+    const bucket = buckets.get(key);
+    if (bucket) bucket.push(index);
+    else buckets.set(key, [index]);
+  });
+  const candidates = new Map<number, number[]>();
+  for (const bucket of buckets.values())
+    for (const i of bucket)
+      for (const j of bucket) {
+        if (j <= i) continue;
+        const pairs = candidates.get(i);
+        if (pairs) pairs.push(j);
+        else candidates.set(i, [j]);
+      }
+  for (const i of [...candidates.keys()].sort((a, b) => a - b))
+    for (const j of candidates.get(i)!.sort((a, b) => a - b)) {
       const left = groups[i]!;
       const right = groups[j]!;
       const older = left.firstAt <= right.firstAt ? left : right;
@@ -353,8 +406,8 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
       const first = earliestByGroup.get(older.id)!;
       const next = earliestByGroup.get(newer.id)!;
       const shared = followUp(first, next, {
-        older: earliestTerms.get(older.id)!,
-        newer: earliestTerms.get(newer.id)!,
+        older: older === left ? earliestTerms[i]! : earliestTerms[j]!,
+        newer: newer === left ? earliestTerms[i]! : earliestTerms[j]!,
       });
       if (shared)
         relations.push({
@@ -364,6 +417,5 @@ export function planStories(items: readonly StoryInput[]): StoryPlan {
           sharedTerms: shared,
         });
     }
-  }
   return { version: STORY_RULE_VERSION, groups, relations };
 }

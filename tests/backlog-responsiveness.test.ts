@@ -7,11 +7,28 @@ import type { Candidate } from "../src/domain";
 
 const token = "backlog-test-token-at-least-24-characters";
 const BACKLOG = 200;
+const LIBRARY = 4000;
 /** Article-sized bodies: grouping hashes the text it compares. */
 const body =
   "Detailed report on the rollout, its measurements and the effect on operators. ".repeat(
     12,
   );
+
+test("a large library replans without stalling the event loop", () => {
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed.xml", "Library feed");
+    store.enqueueDue(1);
+    const poll = store.claim(1)!;
+    expect(store.complete(poll, { items: backlog(LIBRARY) }, 2)).toBe(true);
+    const started = performance.now();
+    const result = store.stories.reconcile();
+    expect(result.groups).toBe(LIBRARY);
+    expect(performance.now() - started).toBeLessThan(2000);
+  } finally {
+    store.close();
+  }
+}, 60_000);
 
 function backlog(count: number): Candidate[] {
   return Array.from({ length: count }, (_, index) => ({
