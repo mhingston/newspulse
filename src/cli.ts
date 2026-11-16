@@ -3,7 +3,10 @@ import {
   discoveryLimitsOrUndefined,
 } from "./discovery-config";
 import { pollConfig } from "./poll-config";
-import { enabledProcessingStages } from "./analysis-config";
+import {
+  analysisDailyLimitOrUndefined,
+  enabledProcessingStages,
+} from "./analysis-config";
 import { runDiscovery } from "./discovery-service";
 import { GdeltSearchProvider } from "./adapters/gdelt";
 import { GithubSearchProvider } from "./adapters/github";
@@ -1181,6 +1184,7 @@ async function main() {
             store.status({
               enabledStages: enabledProcessingStages(),
               discoveryLimits: discoveryLimitsOrUndefined(),
+              analysisDailyLimitMicros: analysisDailyLimitOrUndefined(),
             }),
             null,
             2,

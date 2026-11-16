@@ -7,15 +7,26 @@ export class AnalysisBudget {
     private limits: {
       maxTokens: number;
       maxMicros: number;
+      maxDailyMicros?: number | null;
       maxConcurrent: number;
     },
+    private clock: () => number = Date.now,
   ) {
     if (
       ![limits.maxTokens, limits.maxMicros, limits.maxConcurrent].every(
         (n) => Number.isSafeInteger(n) && n > 0,
-      )
+      ) ||
+      (limits.maxDailyMicros != null &&
+        !(
+          Number.isSafeInteger(limits.maxDailyMicros) &&
+          limits.maxDailyMicros > 0
+        ))
     )
       throw new Error("Invalid budget limits");
+  }
+  /** UTC day index used for the per-day ceiling, matching discovery's budget_day. */
+  private day(): number {
+    return Math.floor(this.clock() / 86_400_000);
   }
   reserve(key: string, tokens: number, micros: number): boolean {
     if (
@@ -23,6 +34,7 @@ export class AnalysisBudget {
       ![tokens, micros].every((n) => Number.isSafeInteger(n) && n > 0)
     )
       throw new Error("Invalid budget reservation");
+    const day = this.day();
     return this.db
       .transaction(() => {
         if (
@@ -44,15 +56,33 @@ export class AnalysisBudget {
           totals.active >= this.limits.maxConcurrent
         )
           return false;
+        if (this.limits.maxDailyMicros != null) {
+          const today = this.db
+            .query<{ micros: number }, [number]>(
+              "SELECT coalesce(sum(micros),0) micros FROM analysis_reservations WHERE budget_day=?",
+            )
+            .get(day)!;
+          if (today.micros + micros > this.limits.maxDailyMicros) return false;
+        }
         return (
           this.db
             .query(
-              "INSERT OR IGNORE INTO analysis_reservations(key,tokens,micros,status) VALUES(?,?,?,'reserved')",
+              "INSERT OR IGNORE INTO analysis_reservations(key,tokens,micros,status,budget_day) VALUES(?,?,?,'reserved',?)",
             )
-            .run(key, tokens, micros).changes === 1
+            .run(key, tokens, micros, day).changes === 1
         );
       })
       .immediate();
+  }
+  /** Read-only UTC-day usage for the current day; zero when no daily ceiling is configured. */
+  dailyUsage(): { day: number; micros: number } {
+    const day = this.day();
+    const row = this.db
+      .query<{ micros: number }, [number]>(
+        "SELECT coalesce(sum(micros),0) micros FROM analysis_reservations WHERE budget_day=?",
+      )
+      .get(day)!;
+    return { day, micros: row.micros };
   }
   /** A purged (retention-removed) result is not a cache entry and is never returned. */
   result(key: string): string | null {

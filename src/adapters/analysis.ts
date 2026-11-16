@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isAllowedAnalysisEndpoint } from "../analysis-config";
 
 const outputSchema = z.strictObject({
   summary: z.string().min(1).max(10000),
@@ -37,13 +38,8 @@ export class OpenAICompatibleAnalysis {
       init: RequestInit,
     ) => Promise<Response> = fetch,
   ) {
-    const url = new URL(settings.endpoint);
     if (
-      url.protocol !== "https:" ||
-      url.username ||
-      url.password ||
-      url.search ||
-      url.hash ||
+      !isAllowedAnalysisEndpoint(settings.endpoint) ||
       !settings.model.trim() ||
       !settings.apiKey.trim()
     )

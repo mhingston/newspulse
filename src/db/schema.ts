@@ -264,6 +264,7 @@ export const analysisReservations = sqliteTable("analysis_reservations", {
   micros: integer().notNull(),
   status: text().notNull(),
   result: text(),
+  budgetDay: integer("budget_day"),
 });
 export const analysisControl = sqliteTable("analysis_control", {
   id: integer().primaryKey(),

@@ -129,6 +129,7 @@ const scheduler = schedule(
             new AnalysisBudget(store.sqlite, {
               maxTokens: analysis.maxTokens,
               maxMicros: analysis.maxMicros,
+              maxDailyMicros: analysis.maxDailyMicros,
               maxConcurrent: 1,
             }),
             {

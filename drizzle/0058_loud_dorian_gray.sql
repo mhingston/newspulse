@@ -1,0 +1,1 @@
+ALTER TABLE `analysis_reservations` ADD `budget_day` integer;

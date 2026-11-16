@@ -27,7 +27,10 @@ import { latestFeedback } from "./feedback";
 import { developmentChanges } from "./dev-changes";
 import { listDiscoveries } from "./discovery-reads";
 import { ProfileStore } from "./profiles";
-import { enabledProcessingStages } from "./analysis-config";
+import {
+  analysisDailyLimitOrUndefined,
+  enabledProcessingStages,
+} from "./analysis-config";
 import { discoveryLimitsOrUndefined } from "./discovery-config";
 
 export interface McpOptions {
@@ -297,6 +300,7 @@ export function createMcp(store: Store, options: McpOptions = {}): McpServer {
         store.status({
           enabledStages: enabledProcessingStages(env),
           discoveryLimits: discoveryLimitsOrUndefined(env),
+          analysisDailyLimitMicros: analysisDailyLimitOrUndefined(env),
         }),
       ),
   );

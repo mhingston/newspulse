@@ -1,23 +1,36 @@
 import { z } from "zod";
+
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]"]);
+
+/** Plain HTTP is allowed only for loopback endpoints, such as a local gateway. */
+export function isAllowedAnalysisEndpoint(s: string): boolean {
+  const u = new URL(s);
+  return (
+    (u.protocol === "https:" ||
+      (u.protocol === "http:" && LOOPBACK_HOSTS.has(u.hostname))) &&
+    !u.username &&
+    !u.password &&
+    !u.search &&
+    !u.hash
+  );
+}
+
 const schema = z
   .object({
-    ANALYSIS_ENDPOINT: z.url().refine((s) => {
-      const u = new URL(s);
-      return (
-        u.protocol === "https:" &&
-        !u.username &&
-        !u.password &&
-        !u.search &&
-        !u.hash
-      );
-    }),
+    ANALYSIS_ENDPOINT: z.url().refine(isAllowedAnalysisEndpoint),
     ANALYSIS_KEY: z.string().trim().min(1),
     ANALYSIS_MODEL: z.string().trim().min(1),
     ANALYSIS_TOTAL_TOKENS: z.coerce.number().int().safe().positive().min(18000),
     ANALYSIS_TOTAL_MICROS: z.coerce.number().int().safe().positive(),
     ANALYSIS_CALL_MICROS: z.coerce.number().int().safe().positive(),
+    ANALYSIS_DAILY_MICROS: z.coerce.number().int().safe().positive().optional(),
   })
-  .refine((x) => x.ANALYSIS_CALL_MICROS <= x.ANALYSIS_TOTAL_MICROS);
+  .refine((x) => x.ANALYSIS_CALL_MICROS <= x.ANALYSIS_TOTAL_MICROS)
+  .refine(
+    (x) =>
+      x.ANALYSIS_DAILY_MICROS === undefined ||
+      x.ANALYSIS_DAILY_MICROS >= x.ANALYSIS_CALL_MICROS,
+  );
 export function analysisConfig(
   env: Record<string, string | undefined> = process.env,
 ) {
@@ -37,9 +50,21 @@ export function analysisConfig(
     model: parsed.ANALYSIS_MODEL,
     maxTokens: parsed.ANALYSIS_TOTAL_TOKENS,
     maxMicros: parsed.ANALYSIS_TOTAL_MICROS,
+    maxDailyMicros: parsed.ANALYSIS_DAILY_MICROS ?? null,
     reserveTokens: 18000,
     reserveMicros: parsed.ANALYSIS_CALL_MICROS,
   };
+}
+
+/** Status-only: a malformed analysis setting must not make status unreadable. */
+export function analysisDailyLimitOrUndefined(
+  env: Record<string, string | undefined> = process.env,
+): number | undefined {
+  try {
+    return analysisConfig(env)?.maxDailyMicros ?? undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** Processing stages that run in this configuration; idle stages are not warned about. */

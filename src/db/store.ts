@@ -2047,6 +2047,7 @@ export class Store {
         maxCostMicrosPerDay: number;
         maxResultsPerDay: number;
       };
+      analysisDailyLimitMicros?: number;
       now?: number;
     } = {},
   ) {
@@ -2120,6 +2121,7 @@ export class Store {
       budgets: this.budgetStatus(
         options.now ?? Date.now(),
         options.discoveryLimits,
+        options.analysisDailyLimitMicros,
       ),
     };
   }
@@ -2134,6 +2136,7 @@ export class Store {
       maxCostMicrosPerDay: number;
       maxResultsPerDay: number;
     },
+    analysisDailyLimitMicros?: number,
   ) {
     const day = Math.floor(now / 86_400_000);
     const discovery = this.sqlite
@@ -2149,6 +2152,11 @@ export class Store {
         "SELECT coalesce(sum(tokens),0) AS tokens,coalesce(sum(micros),0) AS micros,count(*) AS reservations FROM analysis_reservations",
       )
       .get()!;
+    const analysisToday = this.sqlite
+      .query<{ micros: number }, [number]>(
+        "SELECT coalesce(sum(micros),0) AS micros FROM analysis_reservations WHERE budget_day=?",
+      )
+      .get(day)!;
     return {
       discovery: {
         day,
@@ -2161,6 +2169,9 @@ export class Store {
         tokens: analysis.tokens,
         cost_micros: analysis.micros,
         reservations: analysis.reservations,
+        day,
+        today_cost_micros: analysisToday.micros,
+        daily_limit_micros: analysisDailyLimitMicros ?? null,
         envelope_breach: !!this.sqlite
           .query(
             "SELECT 1 FROM analysis_control WHERE id=1 AND envelope_breach=1",
