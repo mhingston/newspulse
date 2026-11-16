@@ -161,7 +161,15 @@ async function pipelineBackup(
     score: scoringHandler(store),
   });
   expect(await worker.drain("extract")).toBe(2);
-  expect(await worker.drain("group")).toBe(2);
+  // One replan covers both queued group jobs; the second is coalesced.
+  expect(await worker.drain("group")).toBe(1);
+  expect(
+    store.sqlite
+      .query<{ n: number }, []>(
+        "SELECT count(DISTINCT item_id) AS n FROM story_memberships WHERE ended_at IS NULL",
+      )
+      .get()!.n,
+  ).toBe(2);
   expect(await worker.drain("analyse")).toBe(2);
   expect(await worker.drain("score")).toBe(2);
 

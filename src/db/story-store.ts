@@ -106,6 +106,13 @@ export class StoryStore {
     // Subsequent queued jobs may therefore skip the full library scan.
     if (prior?.fingerprint.startsWith(STORY_RULE_VERSION + ":"))
       return { changed: false, groups: 0, members: 0 };
+    // Group jobs queued before this read have committed evidence, so one plan
+    // covers them. Jobs queued later keep their own pass.
+    const coverage = this.sqlite
+      .query<{ n: number | null }, []>(
+        "SELECT max(rowid) AS n FROM processing_jobs WHERE stage='group'",
+      )
+      .get()!.n;
     const inputs = this.inputs();
     const snapshotHash = hash([STORY_RULE_VERSION, inputs]);
     const fingerprint = STORY_RULE_VERSION + ":" + snapshotHash;
@@ -119,6 +126,13 @@ export class StoryStore {
             groups: 0,
             members: 0,
           };
+        if (coverage !== null)
+          this.sqlite
+            .query(
+              "UPDATE processing_jobs SET status='done',outcome='coalesced',lease_token=NULL,lease_until=NULL " +
+                "WHERE stage='group' AND status='pending' AND rowid<=?",
+            )
+            .run(coverage);
         const current = this.sqlite
           .query<CurrentMembership, []>(
             "SELECT item_id,group_id,evidence,rule_version FROM story_memberships WHERE ended_at IS NULL",
