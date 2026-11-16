@@ -436,9 +436,14 @@ function* planStorySteps(
     ),
   );
   const relations: StoryRelation[] = [];
-  const earliestTerms = groups.map((group) =>
-    terms(earliestByGroup.get(group.id)!.title),
-  );
+  const earliestTerms: string[][] = [];
+  for (const group of groups) {
+    earliestTerms.push(terms(earliestByGroup.get(group.id)!.title));
+    if (++work >= PLAN_YIELD_BUDGET) {
+      work = 0;
+      yield;
+    }
+  }
   // A follow-up requires identical versions and identical named subjects
   // across its two titles. Bucket groups on those exact keys so only groups
   // that could relate are compared.
@@ -452,16 +457,29 @@ function* planStorySteps(
     else buckets.set(key, [index]);
   });
   const candidates = new Map<number, number[]>();
-  for (const bucket of buckets.values())
+  for (const bucket of buckets.values()) {
     for (const i of bucket)
       for (const j of bucket) {
         if (j <= i) continue;
         const pairs = candidates.get(i);
         if (pairs) pairs.push(j);
         else candidates.set(i, [j]);
+        if (++work >= PLAN_YIELD_BUDGET) {
+          work = 0;
+          yield;
+        }
       }
-  for (const i of [...candidates.keys()].sort((a, b) => a - b))
-    for (const j of candidates.get(i)!.sort((a, b) => a - b)) {
+  }
+  const sortedKeys = [...candidates.keys()].sort((a, b) => a - b);
+  for (const i of sortedKeys) {
+    candidates.get(i)!.sort((a, b) => a - b);
+    if (++work >= PLAN_YIELD_BUDGET) {
+      work = 0;
+      yield;
+    }
+  }
+  for (const i of sortedKeys)
+    for (const j of candidates.get(i)!) {
       if (++work >= PLAN_YIELD_BUDGET) {
         work = 0;
         yield;
