@@ -1203,3 +1203,64 @@ test("search does not load full item histories for every match", async () => {
     store.close();
   }
 });
+
+test("provider tolerates object classification and string uncertainty but never invents a summary", async () => {
+  const drifted = {
+    summary: "A source summary",
+    classification: { type: "paper", domain: "databases" },
+    claims: [{ statement: "A claim", citation: "https://example.com/item" }],
+    uncertainty: "Limited evidence",
+  };
+  const ok = new OpenAICompatibleAnalysis(settings, async () =>
+    Response.json({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { content: JSON.stringify(drifted) },
+        },
+      ],
+    }),
+  );
+  const output = await ok.analyse("text", "https://example.com/item");
+  expect(output.analysis.classification).toBe("paper, databases");
+  expect(output.analysis.uncertainty).toEqual(["Limited evidence"]);
+
+  const missingSummary = new OpenAICompatibleAnalysis(settings, async () =>
+    Response.json({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: JSON.stringify({ ...drifted, summary: undefined }),
+          },
+        },
+      ],
+    }),
+  );
+  await expect(
+    missingSummary.analyse("text", "https://example.com/item"),
+  ).rejects.toThrow();
+});
+
+test("provider repairs a prefixed claim key and an omitted uncertainty list", async () => {
+  const drifted = {
+    summary: "A source summary",
+    classification: "paper",
+    claims: [{ "+statement": "A claim", citation: "https://example.com/item" }],
+  };
+  const client = new OpenAICompatibleAnalysis(settings, async () =>
+    Response.json({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { content: JSON.stringify(drifted) },
+        },
+      ],
+    }),
+  );
+  const output = await client.analyse("text", "https://example.com/item");
+  expect(output.analysis.claims).toEqual([
+    { statement: "A claim", citation: "https://example.com/item" },
+  ]);
+  expect(output.analysis.uncertainty).toEqual([]);
+});
