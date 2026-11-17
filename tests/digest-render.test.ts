@@ -35,3 +35,33 @@ test("digest escapes untrusted content, retains original citations and URL-less 
   ]);
   expect(output.text).toContain("https://example.com/a?x=1&y=2");
 });
+
+test("digest links the title to the primary public source and labels readable sources", () => {
+  const output = renderDigest("2026-11-17", [
+    {
+      itemId: "item-2",
+      title: "Robotics update",
+      why: "Matches robotics interest",
+      summary:
+        "First sentence. Second sentence. Third sentence. Fourth sentence about the result.",
+      uncertainty: [],
+      references: [
+        {
+          source: "RSS",
+          nativeId: "guid-123",
+          url: "https://www.example.com/robotics/",
+        },
+        { source: "Newsletter", nativeId: "message-9", url: null },
+      ],
+    },
+  ]);
+  expect(output.html).toContain(
+    '<h2><a href="https://www.example.com/robotics/">Robotics update</a></h2>',
+  );
+  expect(output.html).toContain(">example.com/robotics</a>");
+  expect(output.html).not.toContain("guid-123)</a>");
+  expect(output.html).toContain("<span>Newsletter (message-9)</span>");
+  expect(output.html).toContain("Model summary (estimate)");
+  expect(output.html.match(/<p>First sentence/g)).toHaveLength(1);
+  expect(output.html).toContain("Fourth sentence about the result.");
+});
