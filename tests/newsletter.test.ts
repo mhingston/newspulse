@@ -151,6 +151,28 @@ describe("newsletter normalization", () => {
     ).toBe(true);
   });
 
+  test("drops newsletter-platform CTA, confirmation and social profile links", () => {
+    const result = normalizeNewsletter(
+      email(`<html><body>
+      <a href="https://example.org/story">Real article title</a>
+      <a href="https://example.org/subscribe/confirm?token=1">Confirm Subscription</a>
+      <a href="https://news.beehiiv.com/confirm?token=2">Confirm Subscription (</a>
+      <a href="https://example.org/offer">Sign up here</a>
+      <a href="https://example.org/latest">latest issue</a>
+      <a href="https://example.org/playbooks">Access all our playbooks here</a>
+      <a href="https://example.org/x">here</a>
+      <a href="https://www.linkedin.com/company/acme">LinkedIn</a>
+      <a href="https://x.com/acme">X</a>
+      <a href="https://www.linkedin.com/posts/acme-123">A LinkedIn post about robotics</a>
+      <a href="https://www.beehiiv.com/?ref=footer">Powered by beehiiv</a>
+      </body></html>`),
+    );
+    expect(result.candidate.children?.map((item) => item.url)).toEqual([
+      "https://example.org/story",
+      "https://www.linkedin.com/posts/acme-123",
+    ]);
+  });
+
   test("preserves balanced URL parentheses and removes surrounding punctuation", () => {
     const result = normalizeNewsletter(
       email(

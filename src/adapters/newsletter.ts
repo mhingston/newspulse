@@ -16,6 +16,12 @@ const opaqueTrackers =
   /(?:^|\.)(?:list-manage\.com|mailchi\.mp|click\.redditmail\.com|email\.mg\.substack\.com)$/i;
 const advertisingHosts =
   /(?:^|\.)(?:doubleclick\.net|googlesyndication\.com|googleadservices\.com|adservice\.google\.com|adnxs\.com|taboola\.com|outbrain\.com)$/i;
+const platformChromeUrl =
+  /^\/(?:confirm|unsubscribe|welcome|subscribe)(?:[\/_.?=&-]|$)/i;
+const socialProfileHosts =
+  /(?:^|\.)(?:linkedin\.com|x\.com|twitter\.com|facebook\.com|instagram\.com|youtube\.com|threads\.net|bsky\.app)$/i;
+const genericLabel =
+  /^(?:here|click here|sign up here|read more|read here|view|latest issue|access all our playbooks here|view image|confirm subscription|powered by.*|linkedin|x|twitter|facebook|instagram|youtube|threads|bluesky)$/i;
 
 function wrapper(parsed: URL): "google" | "facebook" | undefined {
   if (
@@ -63,6 +69,13 @@ function trimUrlPunctuation(raw: string): string {
   return raw.slice(0, end);
 }
 
+function isProfileRoot(parsed: URL): boolean {
+  return (
+    socialProfileHosts.test(parsed.hostname) &&
+    parsed.pathname.split("/").filter(Boolean).length <= 1
+  );
+}
+
 function destination(
   raw: string,
 ): { sourceUrl: string; url: string } | undefined {
@@ -85,6 +98,8 @@ function destination(
       opaqueTrackers.test(parsed.hostname) ||
       advertisingHosts.test(parsed.hostname) ||
       chromeUrl.test(decodeURIComponent(parsed.pathname)) ||
+      platformChromeUrl.test(decodeURIComponent(parsed.pathname)) ||
+      isProfileRoot(parsed) ||
       queryIsChrome(parsed)
     )
       return undefined;
@@ -115,7 +130,7 @@ export function normalizeNewsletter(email: ReceivedEmail): {
     (email.html?.length ?? 0) > MAX_BODY ||
     (email.text?.length ?? 0) > MAX_BODY;
   const consider = (raw: string, label: string) => {
-    if (chrome.test(label)) return;
+    if (chrome.test(label) || genericLabel.test(label.trim())) return;
     const link = destination(raw);
     if (link && !children.has(link.url))
       children.set(link.url, {
@@ -162,7 +177,11 @@ export function normalizeNewsletter(email: ReceivedEmail): {
       const label = (anchor.textContent ?? "").replace(/\s+/g, " ").trim();
       const href = anchor.getAttribute("href") ?? "";
       const attrs = `${anchor.getAttribute("class") ?? ""} ${anchor.getAttribute("id") ?? ""} ${anchor.getAttribute("aria-label") ?? ""}`;
-      if (!label || chrome.test(`${label} ${attrs}`)) {
+      if (
+        !label ||
+        chrome.test(`${label} ${attrs}`) ||
+        genericLabel.test(label)
+      ) {
         anchor.remove();
         continue;
       }
