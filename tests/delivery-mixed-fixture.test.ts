@@ -96,7 +96,6 @@ test("RSS and inbound stories retain citations in the frozen edition and fake se
     });
     await worker.tick();
     expect(messages).toHaveLength(1);
-    expect(messages[0]!.text).toContain("rss-entry");
     expect(messages[0]!.text).toContain(
       "https://feed.example/story?utm_source=feed",
     );

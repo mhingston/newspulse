@@ -39,6 +39,11 @@ function publicUrl(value: string | null): string | null {
     return null;
   }
 }
+/** "interest:<id>@<v>: <term>" becomes a reader-facing match note; other text is kept as written. */
+function matchNote(why: string): string {
+  const match = why.match(/^interest:[^:]+:\s*(.+)$/);
+  return match ? `Matched your interest: ${match[1]}` : why;
+}
 /** Readable label for a public link: host plus path, without query noise. */
 function linkLabel(url: string): string {
   const parsed = new URL(url);
@@ -93,7 +98,7 @@ export function renderDigest(
     const sourceList = links
       .map(({ ref, url }) =>
         url
-          ? `<li><a href="${escapeHtml(url)}">${escapeHtml(linkLabel(url))}</a> <span style="color:#666">· ${escapeHtml(ref.source)}</span></li>`
+          ? `<li><a href="${escapeHtml(url)}">${escapeHtml(linkLabel(url))}</a></li>`
           : `<li><span>${escapeHtml(`${ref.source} (${ref.nativeId})`)}</span></li>`,
       )
       .join("");
@@ -102,14 +107,14 @@ export function renderDigest(
       : "";
     // Delivery injects scoped feedback links between these stable markers;
     // the frozen body itself never carries a token.
-    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${caveats}<p style="color:#444">${escapeHtml(item.why)}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
+    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${caveats}<p style="color:#444">${escapeHtml(matchNote(item.why))}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
   });
   const textItems = items.map((item) => {
     const refs = item.references
-      .map(
-        (ref) =>
-          `${ref.source} (${ref.nativeId})${publicUrl(ref.url) ? `: ${ref.url}` : ""}`,
-      )
+      .map((ref) => {
+        const url = publicUrl(ref.url);
+        return url ? url : `${ref.source} (${ref.nativeId})`;
+      })
       .join("; ");
     return [
       item.title,
@@ -117,7 +122,7 @@ export function renderDigest(
       item.uncertainty.length
         ? `Model uncertainty:\n${item.uncertainty.map((value) => `- ${value}`).join("\n")}`
         : null,
-      item.why,
+      matchNote(item.why),
       `Sources: ${refs}`,
     ]
       .filter(Boolean)

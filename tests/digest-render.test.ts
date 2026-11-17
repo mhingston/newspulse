@@ -65,3 +65,28 @@ test("digest links the title to the primary public source and labels readable so
   expect(output.html.match(/<p>First sentence/g)).toHaveLength(1);
   expect(output.html).toContain("Fourth sentence about the result.");
 });
+
+test("digest turns internal interest reasons into a match note and hides raw IDs beside public links", () => {
+  const output = renderDigest("2026-11-17", [
+    {
+      itemId: "item-3",
+      title: "Agent tooling",
+      why: "interest:ai-coding-agents@1: Codex",
+      summary: null,
+      uncertainty: [],
+      references: [
+        {
+          source: "9c64c499-d0bb-40af-baed-47243e4e0ba7",
+          nativeId: "guid-9",
+          url: "https://openai.com/index/agents/",
+        },
+      ],
+    },
+  ]);
+  expect(output.html).toContain("Matched your interest: Codex");
+  expect(output.html).not.toContain("interest:ai-coding-agents@1");
+  expect(output.html).not.toContain("9c64c499-d0bb-40af-baed-47243e4e0ba7");
+  expect(output.html).toContain(">openai.com/index/agents</a>");
+  expect(output.text).toContain("Matched your interest: Codex");
+  expect(output.text).toContain("Sources: https://openai.com/index/agents/");
+});
