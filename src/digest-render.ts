@@ -39,6 +39,14 @@ function publicUrl(value: string | null): string | null {
     return null;
   }
 }
+/** Show at most three uncertainty notes, each trimmed to a short line, so verbose model output stays readable. */
+function caveatNotes(values: string[]): string[] {
+  return values
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((value) => (value.length > 200 ? `${value.slice(0, 197)}...` : value));
+}
 /** "interest:<id>@<v>: <term>" becomes a reader-facing match note; other text is kept as written. */
 function matchNote(why: string): string {
   const match = why.match(/^interest:[^:]+:\s*(.+)$/);
@@ -90,8 +98,10 @@ export function renderDigest(
           .map((p) => `<p>${escapeHtml(p)}</p>`)
           .join("")}`
       : "";
-    const caveats = item.uncertainty.length
-      ? `<p style="color:#666;font-size:12px;margin:0">Model uncertainty:</p><ul>${item.uncertainty
+    const caveats = caveatNotes(item.uncertainty).length
+      ? `<p style="color:#666;font-size:12px;margin:0">Model uncertainty:</p><ul>${caveatNotes(
+          item.uncertainty,
+        )
           .map((value) => `<li>${escapeHtml(value)}</li>`)
           .join("")}</ul>`
       : "";
@@ -119,8 +129,10 @@ export function renderDigest(
     return [
       item.title,
       item.summary ? `Model summary: ${item.summary}` : null,
-      item.uncertainty.length
-        ? `Model uncertainty:\n${item.uncertainty.map((value) => `- ${value}`).join("\n")}`
+      caveatNotes(item.uncertainty).length
+        ? `Model uncertainty:\n${caveatNotes(item.uncertainty)
+            .map((value) => `- ${value}`)
+            .join("\n")}`
         : null,
       matchNote(item.why),
       `Sources: ${refs}`,

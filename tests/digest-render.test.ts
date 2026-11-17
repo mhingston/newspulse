@@ -90,3 +90,19 @@ test("digest turns internal interest reasons into a match note and hides raw IDs
   expect(output.text).toContain("Matched your interest: Codex");
   expect(output.text).toContain("Sources: https://openai.com/index/agents/");
 });
+
+test("digest shows at most three trimmed uncertainty notes", () => {
+  const output = renderDigest("2026-11-17", [
+    {
+      itemId: "item-4",
+      title: "Verbose caveats",
+      why: "interest:x@1: y",
+      summary: "A summary.",
+      uncertainty: ["One", "  ", "Two", "Three", "Four", "Five"],
+      references: [],
+    },
+  ]);
+  expect(output.text).toContain("Model uncertainty:\n- One\n- Two\n- Three");
+  expect(output.text).not.toContain("Four");
+  expect(output.html).not.toContain("<li>Four</li>");
+});
