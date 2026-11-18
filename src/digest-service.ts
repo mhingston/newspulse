@@ -263,9 +263,13 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
         ? (JSON.parse(row.summary) as {
             summary?: string;
             uncertainty?: string[];
+            claims?: { statement: string }[];
           })
         : null;
       const summary = analysis?.summary ?? null;
+      const keyPoints = Array.isArray(analysis?.claims)
+        ? analysis.claims.map((claim) => claim.statement)
+        : [];
       const provenance = JSON.parse(row.provenance!) as {
         history?: {
           state?: string;
@@ -315,6 +319,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
           .map((reason) => reason.slice(9).split("@")[0]!),
         title: row.title,
         summary,
+        keyPoints,
         uncertainty: analysis?.uncertainty ?? [],
         explanation:
           score.reasons.join("; ") || "No score explanation available",
@@ -399,6 +404,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
             itemId: item.itemId,
             title: item.title,
             summary: item.summary,
+            keyPoints: item.keyPoints,
             uncertainty: item.uncertainty,
             why: item.explanation,
             references: item.citations.map((ref) => ({

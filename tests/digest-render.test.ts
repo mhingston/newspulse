@@ -106,3 +106,33 @@ test("digest shows at most three trimmed uncertainty notes", () => {
   expect(output.text).not.toContain("Four");
   expect(output.html).not.toContain("<li>Four</li>");
 });
+
+test("digest lists key points and hides interest IDs for multi-interest matches", () => {
+  const output = renderDigest("2026-11-18", [
+    {
+      itemId: "item-5",
+      title: "Multi match",
+      why: "interest:developer-tooling@1: self-hosted; interest:llm-models-evaluation@1: model routing",
+      summary: "A summary.",
+      keyPoints: [
+        "First claim",
+        "  ",
+        "Second claim",
+        "Third claim",
+        "Fourth claim",
+      ],
+      uncertainty: [],
+      references: [],
+    },
+  ]);
+  expect(output.text).toContain(
+    "Matched your interest: self-hosted, model routing",
+  );
+  expect(output.text).not.toMatch(/interest:[a-z-]+@/);
+  expect(output.text).toContain(
+    "Key points:\n- First claim\n- Second claim\n- Third claim",
+  );
+  expect(output.text).not.toContain("Fourth claim");
+  expect(output.html).toContain("<li>Third claim</li>");
+  expect(output.html).not.toContain("Fourth claim");
+});

@@ -14,6 +14,7 @@ export interface CurationCandidate {
   interestIds: string[];
   title: string;
   summary: string | null;
+  keyPoints?: string[];
   uncertainty: string[];
   explanation: string;
   citations: CurationCitation[];

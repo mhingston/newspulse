@@ -4,6 +4,7 @@ export interface DigestRenderItem {
   title: string;
   why: string;
   summary: string | null;
+  keyPoints?: string[];
   uncertainty: string[];
   references: { source: string; nativeId: string; url: string | null }[];
 }
@@ -47,10 +48,23 @@ function caveatNotes(values: string[]): string[] {
     .slice(0, 3)
     .map((value) => (value.length > 200 ? `${value.slice(0, 197)}...` : value));
 }
-/** "interest:<id>@<v>: <term>" becomes a reader-facing match note; other text is kept as written. */
+/** Reader-facing match note: interest reasons ("interest:<id>@<v>: <terms>") keep only their terms. */
 function matchNote(why: string): string {
-  const match = why.match(/^interest:[^:]+:\s*(.+)$/);
-  return match ? `Matched your interest: ${match[1]}` : why;
+  const terms = why
+    .split(";")
+    .map((part) => part.trim())
+    .map((part) => part.match(/^interest:[^:]+:\s*(.+)$/)?.[1] ?? part)
+    .filter(Boolean)
+    .join(", ");
+  return terms ? `Matched your interest: ${terms}` : why;
+}
+/** Up to three claim statements, trimmed, so the email reads as a short list of key points. */
+function keyPointList(values: string[] | undefined): string[] {
+  return (values ?? [])
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .slice(0, 3)
+    .map((value) => (value.length > 240 ? `${value.slice(0, 237)}...` : value));
 }
 /** Readable label for a public link: host plus path, without query noise. */
 function linkLabel(url: string): string {
@@ -98,6 +112,10 @@ export function renderDigest(
           .map((p) => `<p>${escapeHtml(p)}</p>`)
           .join("")}`
       : "";
+    const points = keyPointList(item.keyPoints);
+    const keyPoints = points.length
+      ? `<p style="color:#666;font-size:12px;margin:0">Key points</p><ul>${points.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul>`
+      : "";
     const caveats = caveatNotes(item.uncertainty).length
       ? `<p style="color:#666;font-size:12px;margin:0">Model uncertainty:</p><ul>${caveatNotes(
           item.uncertainty,
@@ -117,7 +135,7 @@ export function renderDigest(
       : "";
     // Delivery injects scoped feedback links between these stable markers;
     // the frozen body itself never carries a token.
-    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${caveats}<p style="color:#444">${escapeHtml(matchNote(item.why))}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
+    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}<p style="color:#444">${escapeHtml(matchNote(item.why))}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
   });
   const textItems = items.map((item) => {
     const refs = item.references
@@ -129,6 +147,11 @@ export function renderDigest(
     return [
       item.title,
       item.summary ? `Model summary: ${item.summary}` : null,
+      keyPointList(item.keyPoints).length
+        ? `Key points:\n${keyPointList(item.keyPoints)
+            .map((value) => `- ${value}`)
+            .join("\n")}`
+        : null,
       caveatNotes(item.uncertainty).length
         ? `Model uncertainty:\n${caveatNotes(item.uncertainty)
             .map((value) => `- ${value}`)
