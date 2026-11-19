@@ -56,7 +56,7 @@ test("digest links the title to the primary public source and labels readable so
     },
   ]);
   expect(output.html).toContain(
-    '<h2><a href="https://www.example.com/robotics/">Robotics update</a></h2>',
+    '<h3><a href="https://www.example.com/robotics/">Robotics update</a></h3>',
   );
   expect(output.html).toContain(">example.com/robotics</a>");
   expect(output.html).not.toContain("guid-123)</a>");
@@ -199,4 +199,54 @@ test("digest labels a cited source with its own title", () => {
   );
   // The story's own citation keeps the readable link label.
   expect(output.text).toContain("Sources: https://example.com/main");
+});
+
+test("a metadata label is not used as link text and duplicate pages collapse", () => {
+  const output = renderDigest("2026-11-19", [
+    {
+      itemId: "item-8",
+      title: "Armory Castle exploits BeyondTrust",
+      why: "interest:security@1: self-hosted",
+      summary: null,
+      uncertainty: [],
+      references: [
+        {
+          source: "s1",
+          nativeId: "n1",
+          url: "https://cloud.google.com/blog/topics/armory-castle",
+          title: "published",
+        },
+        {
+          source: "s2",
+          nativeId: "n2",
+          url: "https://cloud.google.com/blog/topics/armory-castle?e=48754805#:~:text=Escalation",
+          title: "repeated",
+        },
+      ],
+    },
+  ]);
+  // The metadata labels are replaced by the readable URL, and the second
+  // citation of the same page is dropped.
+  expect(output.text).toContain(
+    "Sources: https://cloud.google.com/blog/topics/armory-castle",
+  );
+  expect(output.text).not.toContain("published —");
+  expect(output.text).not.toContain("repeated");
+  expect(output.text.match(/cloud\.google\.com/g)).toHaveLength(1);
+});
+
+test("story headings sit under the section heading and the match note stays short", () => {
+  const output = renderDigest("2026-11-19", [
+    {
+      itemId: "item-9",
+      title: "Story",
+      why: "interest:a@1: one; interest:b@1: two; interest:c@1: three; interest:d@1: four",
+      summary: null,
+      uncertainty: [],
+      references: [],
+    },
+  ]);
+  expect(output.html).toContain("<h3>Story</h3>");
+  expect(output.text).toContain("Matched your interest: one, two, three");
+  expect(output.text).not.toContain("four");
 });

@@ -61,6 +61,7 @@ function matchNote(why: string): string {
     .map((part) => part.trim())
     .map((part) => part.match(/^interest:[^:]+:\s*(.+)$/)?.[1] ?? part)
     .filter(Boolean)
+    .slice(0, 3)
     .join(", ");
   return terms ? `Matched your interest: ${terms}` : why;
 }
@@ -72,13 +73,42 @@ function keyPointList(values: string[] | undefined): string[] {
     .slice(0, 3)
     .map((value) => (value.length > 240 ? `${value.slice(0, 237)}...` : value));
 }
+/**
+ * Link text captured from a page is often a label rather than a headline
+ * ("published", "repeated", "read more"). Only a title that reads like one is
+ * used as link text; anything else falls back to the readable URL.
+ */
+function plausibleTitle(value: string | undefined): string | undefined {
+  const title = value?.trim();
+  if (!title || title.split(/\s+/).length < 2) return undefined;
+  return /^[A-Z0-9]/.test(title) ? title : undefined;
+}
 /** Link text for a cited source: its own title when distinct, else the readable URL label. */
 function referenceLabel(
   ref: { title?: string; url: string },
   storyTitle: string,
 ): string {
-  const title = ref.title?.trim();
+  const title = plausibleTitle(ref.title);
   return title && title !== storyTitle ? title : linkLabel(ref.url);
+}
+/**
+ * One entry per page. Grouped stories cite the same article through several
+ * URLs that differ only by tracking parameters or an anchor, and repeating
+ * them makes the source list look broken.
+ */
+function uniqueReferences(
+  references: DigestRenderItem["references"],
+): DigestRenderItem["references"] {
+  const seen = new Set<string>();
+  return references.filter((ref) => {
+    const url = publicUrl(ref.url);
+    if (!url) return true;
+    const parsed = new URL(url);
+    const key = `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname.replace(/\/$/, "")}`;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
 }
 /** Readable label for a public link: host plus path, without query noise. */
 function linkLabel(url: string): string {
@@ -130,14 +160,14 @@ export function renderDigest(
 ): RenderedDigest {
   const subject = `Newspulse — ${date}`;
   const renderHtml = (item: DigestRenderItem) => {
-    const links = item.references.map((ref) => ({
+    const links = uniqueReferences(item.references).map((ref) => ({
       ref,
       url: publicUrl(ref.url),
     }));
     const primary = links.find((link) => link.url)?.url ?? null;
     const heading = primary
-      ? `<h2><a href="${escapeHtml(primary)}">${escapeHtml(item.title)}</a></h2>`
-      : `<h2>${escapeHtml(item.title)}</h2>`;
+      ? `<h3><a href="${escapeHtml(primary)}">${escapeHtml(item.title)}</a></h3>`
+      : `<h3>${escapeHtml(item.title)}</h3>`;
     const paragraphs = item.summary
       ? `<p style="color:#666;font-size:12px;margin:0">Model summary (estimate)</p>${summaryParagraphs(
           displaySummary(item.summary),
@@ -171,7 +201,7 @@ export function renderDigest(
     return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}<p style="color:#444">${escapeHtml(matchNote(item.why))}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
   };
   const renderText = (item: DigestRenderItem) => {
-    const refs = item.references
+    const refs = uniqueReferences(item.references)
       .map((ref) => {
         const url = publicUrl(ref.url);
         if (!url) return `${ref.source} (${ref.nativeId})`;
