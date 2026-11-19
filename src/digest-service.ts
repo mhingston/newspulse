@@ -182,7 +182,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
   // Oversized candidates are explained individually instead of blocking the day.
   const groupReferences = new Map<
     string,
-    { sourceId: string; nativeId: string; url: string | null }[]
+    { sourceId: string; nativeId: string; url: string | null; title: string }[]
   >();
   const oversizedGroups = new Map<string, string>();
   const groupKey = (row: (typeof rows)[number]) =>
@@ -194,8 +194,8 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
     if (groupReferences.has(key) || oversizedGroups.has(key)) continue;
     const query =
       row.group_id === null
-        ? "SELECT source_id,native_id,url FROM item_sources INDEXED BY item_sources_item WHERE item_id=? LIMIT 21"
-        : "SELECT r.source_id,r.native_id,r.url FROM story_memberships m INDEXED BY story_members_group JOIN item_sources r INDEXED BY item_sources_item ON r.item_id=m.item_id WHERE m.group_id=? AND m.ended_at IS NULL LIMIT 21";
+        ? "SELECT r.source_id,r.native_id,r.url,i.title FROM item_sources r INDEXED BY item_sources_item JOIN items i ON i.id=r.item_id WHERE r.item_id=? LIMIT 21"
+        : "SELECT r.source_id,r.native_id,r.url,i.title FROM story_memberships m INDEXED BY story_members_group JOIN item_sources r INDEXED BY item_sources_item ON r.item_id=m.item_id JOIN items i ON i.id=r.item_id WHERE m.group_id=? AND m.ended_at IS NULL LIMIT 21";
     const size = store.sqlite
       .query<{ n: number; bytes: number }, [string]>(
         `SELECT count(*) AS n,coalesce(sum(length(CAST(source_id AS BLOB))+length(CAST(native_id AS BLOB))+coalesce(length(CAST(url AS BLOB)),0)),0) AS bytes FROM (${query})`,
@@ -210,7 +210,12 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
     }
     const refs = store.sqlite
       .query<
-        { source_id: string; native_id: string; url: string | null },
+        {
+          source_id: string;
+          native_id: string;
+          url: string | null;
+          title: string;
+        },
         [string]
       >(query)
       .all(row.group_id ?? row.item_id)
@@ -218,6 +223,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
         sourceId: ref.source_id,
         nativeId: ref.native_id,
         url: ref.url,
+        title: ref.title,
       }));
     groupReferences.set(
       key,
@@ -411,6 +417,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
               source: ref.sourceId,
               nativeId: ref.nativeId,
               url: ref.url,
+              title: ref.title,
             })),
           })),
         )

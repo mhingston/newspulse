@@ -3,6 +3,8 @@ export interface CurationCitation {
   sourceId: string;
   nativeId: string;
   url: string | null;
+  /** Title of the cited item, used to label the source list; absent on older snapshots. */
+  title?: string;
 }
 export interface CurationCandidate {
   itemId: string;

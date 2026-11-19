@@ -6,7 +6,13 @@ export interface DigestRenderItem {
   summary: string | null;
   keyPoints?: string[];
   uncertainty: string[];
-  references: { source: string; nativeId: string; url: string | null }[];
+  references: {
+    source: string;
+    nativeId: string;
+    url: string | null;
+    /** Cited item's title, used as the link text when it differs from the story title. */
+    title?: string;
+  }[];
 }
 export interface RenderedDigest {
   subject: string;
@@ -65,6 +71,14 @@ function keyPointList(values: string[] | undefined): string[] {
     .filter(Boolean)
     .slice(0, 3)
     .map((value) => (value.length > 240 ? `${value.slice(0, 237)}...` : value));
+}
+/** Link text for a cited source: its own title when distinct, else the readable URL label. */
+function referenceLabel(
+  ref: { title?: string; url: string },
+  storyTitle: string,
+): string {
+  const title = ref.title?.trim();
+  return title && title !== storyTitle ? title : linkLabel(ref.url);
 }
 /** Readable label for a public link: host plus path, without query noise. */
 function linkLabel(url: string): string {
@@ -126,7 +140,7 @@ export function renderDigest(
     const sourceList = links
       .map(({ ref, url }) =>
         url
-          ? `<li><a href="${escapeHtml(url)}">${escapeHtml(linkLabel(url))}</a></li>`
+          ? `<li><a href="${escapeHtml(url)}">${escapeHtml(referenceLabel({ title: ref.title, url }, item.title))}</a></li>`
           : `<li><span>${escapeHtml(`${ref.source} (${ref.nativeId})`)}</span></li>`,
       )
       .join("");
@@ -141,7 +155,10 @@ export function renderDigest(
     const refs = item.references
       .map((ref) => {
         const url = publicUrl(ref.url);
-        return url ? url : `${ref.source} (${ref.nativeId})`;
+        if (!url) return `${ref.source} (${ref.nativeId})`;
+        const label = referenceLabel({ title: ref.title, url }, item.title);
+        // Only prefix a distinct title; a bare URL stays as it was.
+        return label === linkLabel(url) ? url : `${label} — ${url}`;
       })
       .join("; ");
     return [

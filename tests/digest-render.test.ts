@@ -136,3 +136,35 @@ test("digest lists key points and hides interest IDs for multi-interest matches"
   expect(output.html).toContain("<li>Third claim</li>");
   expect(output.html).not.toContain("Fourth claim");
 });
+
+test("digest labels a cited source with its own title", () => {
+  const output = renderDigest("2026-11-19", [
+    {
+      itemId: "item-6",
+      title: "Main story",
+      why: "interest:x@1: y",
+      summary: "A summary.",
+      uncertainty: [],
+      references: [
+        {
+          source: "s1",
+          nativeId: "n1",
+          url: "https://example.com/main",
+          title: "Main story",
+        },
+        {
+          source: "s2",
+          nativeId: "n2",
+          url: "https://other.com/coverage",
+          title: "Other coverage of the story",
+        },
+      ],
+    },
+  ]);
+  expect(output.html).toContain(">Other coverage of the story</a>");
+  expect(output.text).toContain(
+    "Other coverage of the story — https://other.com/coverage",
+  );
+  // The story's own citation keeps the readable link label.
+  expect(output.text).toContain("Sources: https://example.com/main");
+});

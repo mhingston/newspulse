@@ -522,6 +522,7 @@ export function historicalDigestDraft(
               source: ref.sourceId,
               nativeId: ref.nativeId,
               url: ref.url,
+              title: ref.title,
             })),
           })),
         )
