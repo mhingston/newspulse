@@ -1264,3 +1264,119 @@ test("provider repairs a prefixed claim key and an omitted uncertainty list", as
   ]);
   expect(output.analysis.uncertainty).toEqual([]);
 });
+
+test("an item that matches no active interest is skipped before a provider call", async () => {
+  const { Store } = await import("../src/db/store");
+  const { ProcessingWorker } = await import("../src/worker");
+  const { AnalysisBudget } = await import("../src/analysis-budget");
+  const { analysisHandler } = await import("../src/analysis-service");
+  const { ProfileStore } = await import("../src/profiles");
+  const store = new Store(":memory:");
+  try {
+    new ProfileStore(store.sqlite).import([
+      {
+        kind: "interest",
+        id: "robotics",
+        version: 1,
+        description: "Robotics",
+        entities: [],
+        keywords: ["robotics"],
+        priority: 3,
+        positive: [],
+        negative: [],
+        queries: [],
+        lifetime: "persistent",
+        feedbackRefs: [],
+      },
+    ]);
+    store.addSource("https://example.com/feed");
+    store.enqueueDue();
+    store.complete(store.claim()!, {
+      items: [
+        {
+          nativeId: "unmatched",
+          title: "Gardening notes",
+          text: "Soil and compost advice",
+          url: "https://example.com/garden",
+        },
+      ],
+    });
+    const item = store.search("Gardening")[0]!;
+    const extract = store.claimProcessing("extract")!;
+    store.completeProcessing(
+      extract,
+      "extracted",
+      Date.now(),
+      JSON.stringify({
+        text: "Soil and compost advice",
+        sourceUrl: "https://example.com/garden",
+      }),
+    );
+    // The deterministic score already knows this matches no interest.
+    store.sqlite
+      .query(
+        "INSERT INTO item_scores(id,item_id,generation,input_hash,criteria_version,provenance,result,created_at) VALUES(?,?,?,?,?,?,?,?)",
+      )
+      .run(
+        "score-1",
+        item.id,
+        extract.generation,
+        "hash",
+        "v1",
+        "{}",
+        JSON.stringify({
+          total: 8,
+          eligible: false,
+          reasons: ["no_interest_match"],
+        }),
+        Date.now(),
+      );
+    let calls = 0;
+    const client = new OpenAICompatibleAnalysis(settings, async () => {
+      calls++;
+      return Response.json({
+        choices: [
+          {
+            finish_reason: "stop",
+            message: { content: JSON.stringify(result) },
+          },
+        ],
+        usage: { prompt_tokens: 10, completion_tokens: 5 },
+      });
+    });
+    const budget = new AnalysisBudget(store.sqlite, {
+      maxTokens: 1000,
+      maxMicros: 1000,
+      maxConcurrent: 1,
+    });
+    const worker = new ProcessingWorker(store, {
+      analyse: analysisHandler(store, client, budget, {
+        provider: "example",
+        model: "model",
+        promptVersion: "1",
+        reserveTokens: 100,
+        reserveMicros: 100,
+      }),
+    });
+    expect(await worker.drain("analyse")).toBe(1);
+    expect(calls).toBe(0);
+    // No budget was reserved, and the job settled without blocking the queue.
+    expect(
+      store.sqlite
+        .query<{ n: number }, []>(
+          "SELECT count(*) AS n FROM analysis_reservations",
+        )
+        .get()!.n,
+    ).toBe(0);
+    expect(
+      store.sqlite
+        .query<{ status: string; outcome: string }, []>(
+          "SELECT status,outcome FROM processing_jobs WHERE stage='analyse'",
+        )
+        .get(),
+    ).toEqual({ status: "done", outcome: "unavailable" });
+    expect(store.getItem(item.id)?.summary).toBeNull();
+  } finally {
+    store.close();
+  }
+});

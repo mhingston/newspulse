@@ -105,6 +105,36 @@ export function analysisHandler(
           cached,
         ) as import("./db/store").AnalysisRecord,
       };
+    /**
+     * Deterministic scoring already decides whether the item matches any
+     * active interest, and analysis cannot change that verdict. Analysing an
+     * unmatched item cannot make it publishable, so it is skipped before a
+     * provider request is reserved. A missing or unreadable score fails open.
+     */
+    if (active.length > 0) {
+      const score = store.sqlite
+        .query<{ result: string }, [string, number]>(
+          "SELECT result FROM item_scores WHERE item_id=? AND generation=? ORDER BY created_at DESC,rowid DESC LIMIT 1",
+        )
+        .get(job.item_id, job.generation);
+      if (score) {
+        let eligible: unknown;
+        try {
+          eligible = (JSON.parse(score.result) as { eligible?: unknown })
+            .eligible;
+        } catch {
+          eligible = undefined;
+        }
+        if (eligible === false)
+          return {
+            status: "unavailable",
+            result: JSON.stringify({
+              status: "unavailable",
+              reason: "no_interest_match",
+            }),
+          };
+      }
+    }
     if (!budget.reserve(key, options.reserveTokens, options.reserveMicros))
       throw new Error(
         "Analysis budget unavailable or dispatch requires reconciliation",
