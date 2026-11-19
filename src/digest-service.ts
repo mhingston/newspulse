@@ -45,6 +45,19 @@ function displayTitle(feedTitle: string, pageTitle: string | null): string {
     ? page
     : feedTitle;
 }
+/**
+ * Newsletter navigation lines sometimes became items before the adapter
+ * filtered them. A title that is a markdown link run or a bare call to action
+ * is not a story, so it is left out of the edition rather than shown as one.
+ */
+function isNavigationTitle(title: string): boolean {
+  const value = title.trim();
+  if (!value) return true;
+  if (/\]\(/.test(value)) return true;
+  return /^(?:join the discussion|more on our site|follow image link|read more|view online|share|reply|comments?)(?:\b|:)/i.test(
+    value,
+  );
+}
 function validateDate(date: string, timezone: string) {
   const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date)
     ? new Date(date + "T00:00:00Z")
@@ -277,6 +290,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
   const priorEditions: PriorEdition[] = [];
   const candidates: CurationCandidate[] = rows
     .filter((row) => !limitedIds.has(row.item_id))
+    .filter((row) => !isNavigationTitle(row.title))
     .map((row) => {
       const score = JSON.parse(row.result) as {
         total: number;

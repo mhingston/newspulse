@@ -234,3 +234,63 @@ test("a fragment feed title is replaced by the fetched page title", async () => 
     store.close();
   }
 });
+
+test("navigation link lines are not published as stories", async () => {
+  const store = new Store(":memory:");
+  try {
+    new ProfileStore(store.sqlite).import([
+      {
+        kind: "interest",
+        id: "robotics",
+        version: 1,
+        description: "Robotics",
+        entities: [],
+        keywords: ["robotics"],
+        priority: 3,
+        positive: [],
+        negative: [],
+        queries: [],
+        lifetime: "persistent",
+        feedbackRefs: [],
+      },
+    ]);
+    store.addSource("https://example.com/feed");
+    store.enqueueDue();
+    store.complete(store.claim()!, {
+      items: [
+        {
+          nativeId: "junk-1",
+          title:
+            "[Join the discussion](https://example.com/thread) · [More on our site](",
+          text: "Robotics discussion and site navigation ".repeat(30),
+        },
+        {
+          nativeId: "real-1",
+          title: "Robotics platform release",
+          text: "Robotics platform release details and implementation ".repeat(
+            30,
+          ),
+        },
+      ],
+    });
+    const worker = new ProcessingWorker(store, {
+      score: scoringHandler(store),
+    });
+    for (
+      let job = store.claimProcessing("extract");
+      job;
+      job = store.claimProcessing("extract")
+    )
+      store.completeProcessing(job, "unavailable");
+    await worker.drain("score");
+    store.stories.reconcile();
+    await worker.drain("score");
+    const draft = draftDigest(store, { ...digestDefaults(today), minScore: 0 });
+    if (draft.status !== "ready") throw new Error(draft.status);
+    expect(draft.selected.map((item) => item.title)).toEqual([
+      "Robotics platform release",
+    ]);
+  } finally {
+    store.close();
+  }
+});

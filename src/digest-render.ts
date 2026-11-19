@@ -89,12 +89,11 @@ function linkLabel(url: string): string {
 }
 /** Keep the email summary to at most three sentences and roughly 600 characters. */
 function displaySummary(value: string): string {
-  const sentences =
-    value
-      .trim()
-      .match(/[^.!?]+(?:[.!?]+|$)/g)
-      ?.map((sentence) => sentence.trim())
-      .filter(Boolean) ?? [];
+  const sentences = value
+    .trim()
+    .split(/(?<=[.!?])\s+/)
+    .map((sentence) => sentence.trim())
+    .filter(Boolean);
   const kept: string[] = [];
   let length = 0;
   for (const sentence of sentences) {
@@ -114,9 +113,9 @@ function summaryParagraphs(value: string): string[] {
   if (explicit.length > 1) return explicit;
   const sentences = value
     .trim()
-    .match(/[^.!?]+(?:[.!?]+|$)/g)
-    ?.map((s) => s.trim())
-    .filter(Boolean) ?? [value.trim()];
+    .split(/(?<=[.!?])\s+/)
+    .map((s) => s.trim())
+    .filter(Boolean);
   const chunks: string[] = [];
   for (let i = 0; i < sentences.length; i += 3)
     chunks.push(sentences.slice(i, i + 3).join(" "));
