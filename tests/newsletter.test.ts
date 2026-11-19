@@ -186,3 +186,24 @@ describe("newsletter normalization", () => {
     ]);
   });
 });
+
+test("markdown CTA lines in plain text do not become item titles", () => {
+  const result = normalizeNewsletter(
+    email(
+      null,
+      `An essay about local models.
+https://example.org/story
+[Join the discussion](https://www.reddit.com/r/x/comments/1/?utm_source=newsletter) · [More on our site](https://example.org/more?utm_source=newsletter)`,
+    ),
+  );
+  const children = result.candidate.children ?? [];
+  expect(children.map((child) => child.url)).toEqual([
+    "https://example.org/story",
+  ]);
+  // A bare-URL line has no label, so the URL is the title; the CTA line is dropped entirely.
+  expect(children[0]!.title).toBe("https://example.org/story");
+  for (const child of children) {
+    expect(child.title).not.toContain("](");
+    expect(child.title).not.toContain("Join the discussion");
+  }
+});

@@ -21,7 +21,21 @@ const platformChromeUrl =
 const socialProfileHosts =
   /(?:^|\.)(?:linkedin\.com|x\.com|twitter\.com|facebook\.com|instagram\.com|youtube\.com|threads\.net|bsky\.app)$/i;
 const genericLabel =
-  /^(?:here|click here|sign up here|read more|read here|view|latest issue|access all our playbooks here|view image|confirm subscription|powered by.*|linkedin|x|twitter|facebook|instagram|youtube|threads|bluesky)$/i;
+  /^(?:here|click here|sign up here|read more|read here|view|latest issue|access all our playbooks here|view image|confirm subscription|powered by.*|linkedin|x|twitter|facebook|instagram|youtube|threads|bluesky|join the discussion|more on our site|discussion|comments?|reply|share|forward|view online|browse the archive)$/i;
+
+/**
+ * Plain-text newsletters often carry a whole markdown line as the label.
+ * Split it into readable parts so a run of CTAs cannot become an item title.
+ */
+function labelParts(label: string): string[] {
+  return label
+    .replace(/!?\[([^\]]*)\]\([^)]*\)?/g, "$1")
+    .replace(/https?:\/\/\S+/gi, " ")
+    .replace(/[\[\]()]/g, " ")
+    .split(/[·|•]+/)
+    .map((part) => part.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+}
 
 function wrapper(parsed: URL): "google" | "facebook" | undefined {
   if (
@@ -129,13 +143,21 @@ export function normalizeNewsletter(email: ReceivedEmail): {
   let linksTruncated =
     (email.html?.length ?? 0) > MAX_BODY ||
     (email.text?.length ?? 0) > MAX_BODY;
-  const consider = (raw: string, label: string) => {
-    if (chrome.test(label) || genericLabel.test(label.trim())) return;
+  const consider = (raw: string, rawLabel: string) => {
+    const parts = labelParts(rawLabel);
+    // A line made only of CTAs is navigation, not an item.
+    if (
+      parts.length > 0 &&
+      parts.every((part) => chrome.test(part) || genericLabel.test(part))
+    )
+      return;
+    const label = parts.join(" ");
+    if (label && (chrome.test(label) || genericLabel.test(label))) return;
     const link = destination(raw);
     if (link && !children.has(link.url))
       children.set(link.url, {
         ...link,
-        title: label.trim().slice(0, MAX_TITLE) || link.url,
+        title: label.slice(0, MAX_TITLE) || link.url,
       });
   };
   const parsePlain = () => {
