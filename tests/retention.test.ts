@@ -951,3 +951,103 @@ describe("retention review hardening", () => {
     expect(report.problems.join(" ")).toContain("orphaned search index");
   });
 });
+
+describe("failed job retention", () => {
+  test("old failed jobs are discarded while pending and successful jobs survive", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const itemId = populatedItem(store, "Alpha", "alphaword", DAY0);
+      const generation = store.sqlite
+        .query<{ n: number }, [string]>(
+          "SELECT max(generation) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+        )
+        .get(itemId)!.n;
+      // A failed analysis attempt recorded alongside the settled one.
+      store.enqueueProcessing("analyse", itemId, DAY0, generation + 1);
+      const failed = store.claimProcessing("analyse", DAY0)!;
+      store.failProcessing(failed, "provider exploded", DAY0);
+      // failProcessing retries below the attempt ceiling; a terminal failure is a settled row.
+      store.sqlite
+        .query("UPDATE processing_jobs SET status='failed' WHERE id=?")
+        .run(failed.id);
+      const policy = retentionPolicy({ RETENTION_FAILED_JOB_DAYS: "7" });
+
+      const dry = store.retention(policy, {
+        dryRun: true,
+        now: DAY0 + 6 * DAY_MS,
+      });
+      expect(dry.failedJobs).toEqual({ eligible: 0, purged: 0 });
+
+      const applied = store.retention(policy, {
+        dryRun: false,
+        now: DAY0 + 8 * DAY_MS,
+      });
+      expect(applied.failedJobs).toEqual({ eligible: 1, purged: 1 });
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM processing_jobs WHERE status='failed'",
+          )
+          .get()!.n,
+      ).toBe(0);
+      // Settled work and the item itself are untouched.
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM processing_jobs WHERE status='done'",
+          )
+          .get()!.n,
+      ).toBeGreaterThan(0);
+      expect(store.search("alphaword")).toHaveLength(1);
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM retention_purges WHERE class='failed_job'",
+          )
+          .get()!.n,
+      ).toBe(1);
+      // A second pass is idempotent.
+      expect(
+        store.retention(policy, { dryRun: false, now: DAY0 + 9 * DAY_MS })
+          .failedJobs,
+      ).toEqual({ eligible: 0, purged: 0 });
+    } finally {
+      store.close();
+    }
+  });
+
+  test("an unset failed job window retains every failure", () => {
+    const dir = temp();
+    const store = new Store(join(dir, "db.sqlite"));
+    try {
+      const itemId = populatedItem(store, "Beta", "betaword", DAY0);
+      const generation = store.sqlite
+        .query<{ n: number }, [string]>(
+          "SELECT max(generation) AS n FROM processing_jobs WHERE item_id=? AND stage='extract'",
+        )
+        .get(itemId)!.n;
+      store.enqueueProcessing("analyse", itemId, DAY0, generation + 1);
+      const failed = store.claimProcessing("analyse", DAY0)!;
+      store.failProcessing(failed, "provider exploded", DAY0);
+      // failProcessing retries below the attempt ceiling; a terminal failure is a settled row.
+      store.sqlite
+        .query("UPDATE processing_jobs SET status='failed' WHERE id=?")
+        .run(failed.id);
+      const report = store.retention(retentionPolicy({}), {
+        dryRun: false,
+        now: DAY0 + 3650 * DAY_MS,
+      });
+      expect(report.failedJobs).toEqual({ eligible: 0, purged: 0 });
+      expect(
+        store.sqlite
+          .query<{ n: number }, []>(
+            "SELECT count(*) n FROM processing_jobs WHERE status='failed'",
+          )
+          .get()!.n,
+      ).toBe(1);
+    } finally {
+      store.close();
+    }
+  });
+});

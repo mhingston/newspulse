@@ -4,6 +4,7 @@ import { HttpError } from "./adapters/rss";
 import { Store } from "./db/store";
 import { normalizeNewsletter } from "./adapters/newsletter";
 import { pruneHistoricalDigestActivity } from "./historical-digest";
+import { retentionPolicy } from "./retention";
 export function log(event: string, details: Record<string, unknown> = {}) {
   console.error(
     JSON.stringify({ at: new Date().toISOString(), event, ...details }),
@@ -137,6 +138,7 @@ export function schedule(
   const stageActive = new Map<string, Promise<unknown>>();
   let inboundNext = 0;
   let digestHistoryPruneNext = 0;
+  let retentionNext = 0;
   const tick = () => {
     if (stopping) return;
     const now = Date.now();
@@ -146,6 +148,28 @@ export function schedule(
         pruneHistoricalDigestActivity(store, now);
       } catch (error) {
         log("digest_history_prune_error", { error: String(error) });
+      }
+    }
+    // Configured retention windows apply automatically once a day; an unset
+    // window still retains that class indefinitely.
+    if (now >= retentionNext) {
+      retentionNext = now + 86_400_000;
+      const policy = retentionPolicy();
+      if (Object.values(policy).some((value) => value !== undefined)) {
+        try {
+          const report = store.retention(policy, {
+            dryRun: false,
+            limit: Number(process.env.RETENTION_BATCH ?? 500),
+            now,
+          });
+          log("retention_applied", {
+            purged: report.purged,
+            failed_jobs: report.failedJobs,
+            inbound_bodies: report.inboundBodies,
+          });
+        } catch (error) {
+          log("retention_error", { error: String(error) });
+        }
       }
     }
     try {

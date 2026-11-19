@@ -51,6 +51,8 @@ export interface RetentionReport {
   purged: Record<RetentionClass, number>;
   /** Indexed inbound bodies selected for, or purged by, this pass. */
   inboundBodies: { eligible: number; purged: number };
+  /** Failed processing jobs older than the window, selected for or purged by this pass. */
+  failedJobs: { eligible: number; purged: number };
   /** Items skipped because processing, grouping, scoring or analysis was not settled. */
   deferred: number;
   /** True when an analysis reservation is in flight, which blocks summary purges. */
@@ -128,6 +130,34 @@ function analysisCandidates(
       itemId: row.item_id,
       generation: row.generation,
       class: "analysis_summary",
+    }));
+}
+
+/**
+ * Failed processing jobs old enough to discard. Only settled failures are
+ * eligible: a leased row is never removed, and success or pending work is
+ * never touched. Removing a failure discards its retry record, so the item
+ * reads as not analysed again; accounting lives in the budget ledger.
+ */
+function failedJobCandidates(
+  db: Database,
+  cutoff: number,
+  limit: number,
+): { id: string; itemId: string; generation: number }[] {
+  return db
+    .query<
+      { id: string; item_id: string; generation: number },
+      [number, number]
+    >(
+      `SELECT id,item_id,generation FROM processing_jobs
+        WHERE status='failed' AND lease_until IS NULL AND created_at<=?
+        ORDER BY created_at,id LIMIT ?`,
+    )
+    .all(cutoff, limit)
+    .map((row) => ({
+      id: row.id,
+      itemId: row.item_id,
+      generation: row.generation,
     }));
 }
 
@@ -414,6 +444,7 @@ export function runRetention(
   const summaryCutoff = retentionCutoff(policy, "analysis_summary", now);
   const bodyCutoff = retentionCutoff(policy, "inbound_body", now);
   const feedTextCutoff = retentionCutoff(policy, "feed_text", now);
+  const failedJobCutoff = retentionCutoff(policy, "failed_job", now);
   const reservationsActive = activeAnalysisReservation(db);
   const budget = options.fingerprintBudget ?? {
     versions: FINGERPRINT_VERSION_LIMIT,
@@ -426,6 +457,7 @@ export function runRetention(
     eligible: { extracted_payload: 0, analysis_summary: 0, feed_text: 0 },
     purged: { extracted_payload: 0, analysis_summary: 0, feed_text: 0 },
     inboundBodies: { eligible: 0, purged: 0 },
+    failedJobs: { eligible: 0, purged: 0 },
     deferred: 0,
     analysisReservationsActive: reservationsActive,
     scanned: 0,
@@ -505,12 +537,31 @@ export function runRetention(
       report.purged[candidate.class] += 1;
       rebuildItemSearch(db, candidate.itemId);
     }
+    const failed =
+      failedJobCutoff === null
+        ? []
+        : failedJobCandidates(db, failedJobCutoff, options.limit);
+    report.failedJobs.eligible = failed.length;
+    if (!options.dryRun)
+      for (const job of failed) {
+        const removed = db
+          .query(
+            "DELETE FROM processing_jobs WHERE id=? AND status='failed' AND lease_until IS NULL",
+          )
+          .run(job.id).changes;
+        if (!removed) continue;
+        db.query(
+          "INSERT OR IGNORE INTO retention_purges(item_id,generation,class,purged_at,reason) VALUES(?,?,'failed_job',?,'retention')",
+        ).run(job.itemId, job.generation, now);
+        report.failedJobs.purged += 1;
+      }
     report.scanned = items.size;
     report.complete =
       extracted.length < options.limit &&
       summaries.length < options.limit &&
       bodies.length < options.limit &&
       feedText.length < options.limit &&
+      failed.length < options.limit &&
       fingerprintDeferred === 0;
   });
   work.immediate();

@@ -16,6 +16,7 @@ export interface RetentionPolicy {
   analysisSummaryDays?: number;
   inboundBodyDays?: number;
   feedTextDays?: number;
+  failedJobDays?: number;
 }
 
 export const DAY_MS = 86_400_000;
@@ -51,12 +52,16 @@ export function retentionPolicy(
       "RETENTION_FEED_TEXT_DAYS",
       env.RETENTION_FEED_TEXT_DAYS,
     ),
+    failedJobDays: days(
+      "RETENTION_FAILED_JOB_DAYS",
+      env.RETENTION_FAILED_JOB_DAYS,
+    ),
   };
 }
 
 export function retentionCutoff(
   policy: RetentionPolicy,
-  cls: RetentionClass | "inbound_body",
+  cls: RetentionClass | "inbound_body" | "failed_job",
   now: number,
 ): number | null {
   const window =
@@ -66,7 +71,9 @@ export function retentionCutoff(
         ? policy.analysisSummaryDays
         : cls === "feed_text"
           ? policy.feedTextDays
-          : policy.inboundBodyDays;
+          : cls === "failed_job"
+            ? policy.failedJobDays
+            : policy.inboundBodyDays;
   if (window === undefined) return null;
   return now - window * DAY_MS;
 }
