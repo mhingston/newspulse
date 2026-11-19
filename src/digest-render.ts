@@ -87,6 +87,24 @@ function linkLabel(url: string): string {
     parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/$/, "");
   return `${parsed.hostname.replace(/^www\./, "")}${path}`;
 }
+/** Keep the email summary to at most three sentences and roughly 600 characters. */
+function displaySummary(value: string): string {
+  const sentences =
+    value
+      .trim()
+      .match(/[^.!?]+(?:[.!?]+|$)/g)
+      ?.map((sentence) => sentence.trim())
+      .filter(Boolean) ?? [];
+  const kept: string[] = [];
+  let length = 0;
+  for (const sentence of sentences) {
+    if (kept.length >= 3) break;
+    if (kept.length > 0 && length + sentence.length > 600) break;
+    kept.push(sentence);
+    length += sentence.length + 1;
+  }
+  return kept.join(" ") || value.trim();
+}
 /** Split a model summary into short paragraphs for reading, without changing its words. */
 function summaryParagraphs(value: string): string[] {
   const explicit = value
@@ -104,13 +122,15 @@ function summaryParagraphs(value: string): string[] {
     chunks.push(sentences.slice(i, i + 3).join(" "));
   return chunks.filter(Boolean);
 }
+/** The email leads with a short list, then a longer section, as a readable daily brief. */
+const TOP_STORIES = 5;
 /** Pure renderer. No feedback links are fabricated; delivery may provide scoped links later. */
 export function renderDigest(
   date: string,
   items: DigestRenderItem[],
 ): RenderedDigest {
   const subject = `Newspulse — ${date}`;
-  const htmlItems = items.map((item) => {
+  const renderHtml = (item: DigestRenderItem) => {
     const links = item.references.map((ref) => ({
       ref,
       url: publicUrl(ref.url),
@@ -121,7 +141,7 @@ export function renderDigest(
       : `<h2>${escapeHtml(item.title)}</h2>`;
     const paragraphs = item.summary
       ? `<p style="color:#666;font-size:12px;margin:0">Model summary (estimate)</p>${summaryParagraphs(
-          item.summary,
+          displaySummary(item.summary),
         )
           .map((p) => `<p>${escapeHtml(p)}</p>`)
           .join("")}`
@@ -150,8 +170,8 @@ export function renderDigest(
     // Delivery injects scoped feedback links between these stable markers;
     // the frozen body itself never carries a token.
     return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}<p style="color:#444">${escapeHtml(matchNote(item.why))}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
-  });
-  const textItems = items.map((item) => {
+  };
+  const renderText = (item: DigestRenderItem) => {
     const refs = item.references
       .map((ref) => {
         const url = publicUrl(ref.url);
@@ -163,7 +183,7 @@ export function renderDigest(
       .join("; ");
     return [
       item.title,
-      item.summary ? `Model summary: ${item.summary}` : null,
+      item.summary ? `Model summary: ${displaySummary(item.summary)}` : null,
       keyPointList(item.keyPoints).length
         ? `Key points:\n${keyPointList(item.keyPoints)
             .map((value) => `- ${value}`)
@@ -179,11 +199,24 @@ export function renderDigest(
     ]
       .filter(Boolean)
       .join("\n");
-  });
+  };
+  const top = items.slice(0, TOP_STORIES);
+  const rest = items.slice(TOP_STORIES);
+  const section = (heading: string, values: DigestRenderItem[]) =>
+    values.length
+      ? `<h2>${heading}</h2>${values.map(renderHtml).join("<hr>")}`
+      : "";
+  const textSection = (heading: string, values: DigestRenderItem[]) =>
+    values.length ? [heading, ...values.map(renderText)].join("\n\n") : "";
   return {
     subject,
-    html: `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:640px;margin:0 auto;line-height:1.5;color:#111"><h1>${escapeHtml(subject)}</h1>${htmlItems.join("<hr>")}</body></html>`,
-    text: [subject, ...textItems].join("\n\n"),
+    html: `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:640px;margin:0 auto;line-height:1.5;color:#111"><h1>${escapeHtml(subject)}</h1>${rest.length ? `${section("Top stories", top)}${section("More coverage", rest)}` : top.map(renderHtml).join("<hr>")}</body></html>`,
+    text: [
+      subject,
+      rest.length
+        ? `${textSection("Top stories", top)}\n\n${textSection("More coverage", rest)}`
+        : top.map(renderText).join("\n\n"),
+    ].join("\n\n"),
     feedbackTargets: items.map(({ itemId }) => ({
       itemId,
       actions: ["useful", "not_useful"],

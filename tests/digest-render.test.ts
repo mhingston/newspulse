@@ -63,7 +63,39 @@ test("digest links the title to the primary public source and labels readable so
   expect(output.html).toContain("<span>Newsletter (message-9)</span>");
   expect(output.html).toContain("Model summary (estimate)");
   expect(output.html.match(/<p>First sentence/g)).toHaveLength(1);
-  expect(output.html).toContain("Fourth sentence about the result.");
+  // The email keeps the first three sentences; the rest stays in the stored analysis.
+  expect(output.html).toContain(
+    "First sentence. Second sentence. Third sentence.",
+  );
+  expect(output.html).not.toContain("Fourth sentence about the result.");
+});
+
+test("a longer digest is split into top stories and more coverage", () => {
+  const item = (n: number) => ({
+    itemId: `item-${n}`,
+    title: `Story ${n}`,
+    why: "interest:x@1: y",
+    summary: "A summary.",
+    uncertainty: [],
+    references: [],
+  });
+  const output = renderDigest(
+    "2026-11-19",
+    Array.from({ length: 7 }, (_, i) => item(i + 1)),
+  );
+  expect(output.text).toContain("Top stories");
+  expect(output.text).toContain("More coverage");
+  expect(output.text.indexOf("Story 1")).toBeLessThan(
+    output.text.indexOf("More coverage"),
+  );
+  expect(output.text.indexOf("Story 6")).toBeGreaterThan(
+    output.text.indexOf("More coverage"),
+  );
+  expect(output.html).toContain("<h2>Top stories</h2>");
+  expect(output.html).toContain("<h2>More coverage</h2>");
+  // A short digest stays a single list without section headings.
+  const short = renderDigest("2026-11-19", [item(1), item(2)]);
+  expect(short.text).not.toContain("Top stories");
 });
 
 test("digest turns internal interest reasons into a match note and hides raw IDs beside public links", () => {

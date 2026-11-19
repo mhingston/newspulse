@@ -26,8 +26,8 @@ export const digestDefaults = (
   timezone: "Europe/London",
   now,
   minScore: 50,
-  maxItems: 10,
-  maxPerInterest: 4,
+  maxItems: 20,
+  maxPerInterest: 8,
 });
 /**
  * Feed titles are sometimes only a fragment ("Switzerland", "dozen software
