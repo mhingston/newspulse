@@ -829,3 +829,39 @@ test("processing queue queries use indexes for reclaim and due work", () => {
   expect(due.some((row) => row.detail.includes("TEMP B-TREE"))).toBe(false);
   store.close();
 });
+
+test("analysis backfill queues only generations that never had an analyse job", () => {
+  const store = new Store(":memory:");
+  try {
+    store.addSource("https://example.com/feed");
+    store.enqueueDue();
+    store.complete(store.claim()!, {
+      items: [
+        {
+          nativeId: "missing-analysis",
+          title: "Backfill me",
+          text: "Body text for backfill",
+          url: "https://example.com/backfill",
+        },
+      ],
+    });
+    const item = store.search("Backfill")[0]!;
+    const extract = store.claimProcessing("extract")!;
+    store.completeProcessing(extract, "unavailable");
+    // Simulate an item extracted while analysis was switched off.
+    store.sqlite
+      .query("DELETE FROM processing_jobs WHERE stage='analyse'")
+      .run();
+    expect(store.ensureAnalysisJobs(Date.now() - 86_400_000, 10)).toBe(1);
+    // Idempotent: the queued job is not duplicated.
+    expect(store.ensureAnalysisJobs(Date.now() - 86_400_000, 10)).toBe(0);
+    // Outside the window nothing is queued.
+    store.sqlite
+      .query("DELETE FROM processing_jobs WHERE stage='analyse'")
+      .run();
+    expect(store.ensureAnalysisJobs(Date.now() + 60_000, 10)).toBe(0);
+    expect(store.getItem(item.id)).not.toBeNull();
+  } finally {
+    store.close();
+  }
+});

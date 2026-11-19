@@ -725,6 +725,7 @@ export class Store {
       })
       .immediate();
   }
+  /** Requeue the current failed analysis job for an item; never creates one. */
   retryFailedAnalysis(itemId: string, now = Date.now()): boolean {
     return (
       this.sqlite
@@ -781,6 +782,27 @@ export class Store {
         return true;
       })
       .immediate();
+  }
+  /**
+   * Bounded repair for generations that never received an analyse job, such as
+   * items ingested while analysis was switched off. Only the latest completed
+   * extraction of an item ingested since `since` is considered.
+   */
+  ensureAnalysisJobs(since: number, limit: number, now = Date.now()): number {
+    if (!Number.isSafeInteger(limit) || limit < 1)
+      throw new Error("Analysis backfill limit must be a positive integer");
+    return this.sqlite
+      .query(
+        `INSERT OR IGNORE INTO processing_jobs(id,stage,item_id,generation,available_at,queued_at,created_at)
+        SELECT lower(hex(randomblob(16))),'analyse',e.item_id,e.generation,?,?,?
+        FROM processing_jobs e JOIN items i ON i.id=e.item_id
+        WHERE e.stage='extract' AND e.status='done' AND e.outcome IN ('extracted','unavailable')
+          AND i.ingested_at>=?
+          AND e.generation=(SELECT max(x.generation) FROM processing_jobs x WHERE x.item_id=e.item_id AND x.stage='extract')
+          AND NOT EXISTS (SELECT 1 FROM processing_jobs a WHERE a.item_id=e.item_id AND a.stage='analyse' AND a.generation=e.generation)
+        ORDER BY i.ingested_at DESC LIMIT ?`,
+      )
+      .run(now, now, now, since, limit).changes;
   }
   completeAnalysis(
     job: ProcessingJob,
