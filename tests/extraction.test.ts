@@ -671,3 +671,28 @@ test("plain-text pages record no feed links", async () => {
   expect(result.status).toBe("extracted");
   expect(result.feedLinks).toBeUndefined();
 });
+
+test("captures the declared page title for fragment feed titles", async () => {
+  const withOg = new HttpContentExtractor(
+    async () => ["93.184.216.34"],
+    async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: '<html><head><title>Fallback</title><meta property="og:title" content="Swiss AI regulation enters force"></head><body><article><p>Body text</p></article></body></html>',
+    }),
+  );
+  expect((await withOg.extract("https://example.com/a")).title).toBe(
+    "Swiss AI regulation enters force",
+  );
+  const withTitleOnly = new HttpContentExtractor(
+    async () => ["93.184.216.34"],
+    async () => ({
+      status: 200,
+      headers: { "content-type": "text/html" },
+      body: "<html><head><title>  Spaced\n title </title></head><body><article><p>Body text</p></article></body></html>",
+    }),
+  );
+  expect((await withTitleOnly.extract("https://example.com/a")).title).toBe(
+    "Spaced title",
+  );
+});

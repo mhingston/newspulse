@@ -9,6 +9,8 @@ import { resolvedUrl, parseHackerNewsSource } from "../domain";
 export type Extraction = {
   status: "extracted" | "unavailable";
   text?: string;
+  /** Page title (og:title, else <title>), used when a feed title is only a fragment. */
+  title?: string;
   resolvedUrl?: string;
   reason?: string;
   retryable?: boolean;
@@ -268,8 +270,18 @@ export class HttpContentExtractor implements ContentExtractor {
         );
         let feedLinks: string[] | undefined;
         let interstitial = false;
+        let pageTitle: string | undefined;
         if (type === "text/html") {
           const { document } = parseHTML(text);
+          // Record the declared title before any node removal mutates the tree.
+          const declared =
+            document
+              .querySelector('meta[property="og:title"],meta[name="og:title"]')
+              ?.getAttribute("content") ??
+            document.querySelector("title")?.textContent ??
+            "";
+          pageTitle =
+            declared.replace(/\s+/g, " ").trim().slice(0, 300) || undefined;
           // Record feed declarations before any node removal mutates the tree.
           feedLinks = captureFeedLinks(document, url.href);
           const article = document.querySelector("article,main");
@@ -313,6 +325,7 @@ export class HttpContentExtractor implements ContentExtractor {
         return {
           status: "extracted",
           text,
+          ...(pageTitle ? { title: pageTitle } : {}),
           resolvedUrl: url.href,
           method: "http",
           ...(feedLinks && feedLinks.length > 0 ? { feedLinks } : {}),

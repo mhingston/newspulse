@@ -29,6 +29,22 @@ export const digestDefaults = (
   maxItems: 10,
   maxPerInterest: 4,
 });
+/**
+ * Feed titles are sometimes only a fragment ("Switzerland", "dozen software
+ * vendors have now validated"). Prefer the fetched page's declared title when
+ * the feed title looks incomplete and the page title says more.
+ */
+function displayTitle(feedTitle: string, pageTitle: string | null): string {
+  const feed = feedTitle.trim();
+  const page = pageTitle?.replace(/\s+/g, " ").trim() ?? "";
+  if (!page || page === feed) return feedTitle;
+  const fragment =
+    !feed || /^[a-z]/.test(feed) || feed.split(/\s+/).length <= 2;
+  if (!fragment) return feedTitle;
+  return page.split(/\s+/).length >= 3 && page.length > feed.length
+    ? page
+    : feedTitle;
+}
 function validateDate(date: string, timezone: string) {
   const parsed = /^\d{4}-\d{2}-\d{2}$/.test(date)
     ? new Date(date + "T00:00:00Z")
@@ -166,11 +182,13 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
         result: string;
         provenance: string | null;
         summary: string | null;
+        page_title: string | null;
       },
       string[]
     >(
       `SELECT i.id AS item_id,i.title,m.group_id,s.id AS score_id,s.result,CASE WHEN length(CAST(s.provenance AS BLOB))<=200000 THEN s.provenance ELSE NULL END AS provenance,
-    (SELECT a.result FROM analyses a WHERE a.item_id=i.id AND a.generation=j.generation ORDER BY a.created_at DESC,a.rowid DESC LIMIT 1) AS summary
+    (SELECT a.result FROM analyses a WHERE a.item_id=i.id AND a.generation=j.generation ORDER BY a.created_at DESC,a.rowid DESC LIMIT 1) AS summary,
+    (SELECT json_extract(e.result,'$.title') FROM processing_jobs e WHERE e.item_id=i.id AND e.stage='extract' AND e.status='done' AND e.outcome='extracted' AND e.generation=j.generation LIMIT 1) AS page_title
     FROM items i JOIN processing_jobs j ON j.item_id=i.id AND j.stage='score'
     JOIN item_scores s ON s.id=(SELECT x.id FROM item_scores x WHERE x.item_id=i.id AND x.generation=j.generation ORDER BY x.created_at DESC,x.rowid DESC LIMIT 1)
     LEFT JOIN story_memberships m ON m.item_id=i.id AND m.ended_at IS NULL
@@ -323,7 +341,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
         interestIds: score.reasons
           .filter((reason) => reason.startsWith("interest:"))
           .map((reason) => reason.slice(9).split("@")[0]!),
-        title: row.title,
+        title: displayTitle(row.title, row.page_title),
         summary,
         keyPoints,
         uncertainty: analysis?.uncertainty ?? [],

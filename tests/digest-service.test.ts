@@ -176,3 +176,61 @@ test("current scored item can be drafted and frozen without delivery, retaining 
     store.close();
   }
 });
+
+test("a fragment feed title is replaced by the fetched page title", async () => {
+  const store = new Store(":memory:");
+  try {
+    new ProfileStore(store.sqlite).import([
+      {
+        kind: "interest",
+        id: "ai-regulation",
+        version: 1,
+        description: "AI regulation",
+        entities: [],
+        keywords: ["regulation"],
+        priority: 3,
+        positive: [],
+        negative: [],
+        queries: [],
+        lifetime: "persistent",
+        feedbackRefs: [],
+      },
+    ]);
+    store.addSource("https://example.com/feed");
+    store.enqueueDue();
+    store.complete(store.claim()!, {
+      items: [
+        {
+          nativeId: "fragment-1",
+          title: "Switzerland",
+          text: "AI regulation guidance and implementation details ".repeat(30),
+        },
+      ],
+    });
+    const itemId = store.search("regulation")[0]!.id;
+    store.completeProcessing(
+      store.claimProcessing("extract")!,
+      "extracted",
+      Date.now(),
+      JSON.stringify({
+        status: "extracted",
+        text: "AI regulation guidance and implementation details ".repeat(30),
+        title: "Swiss AI regulation enters force",
+      }),
+    );
+    const worker = new ProcessingWorker(store, {
+      score: scoringHandler(store),
+    });
+    await worker.drain("score");
+    store.stories.reconcile();
+    await worker.drain("score");
+    const draft = draftDigest(store, { ...digestDefaults(today), minScore: 0 });
+    expect(draft.status).toBe("ready");
+    if (draft.status !== "ready") throw new Error("missing draft");
+    expect(draft.selected[0]!.title).toBe("Swiss AI regulation enters force");
+    expect(draft.rendered!.text).toContain("Swiss AI regulation enters force");
+    expect(draft.selected[0]!.itemId).toBe(itemId);
+  } finally {
+    store.close();
+  }
+});
