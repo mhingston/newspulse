@@ -102,13 +102,22 @@ function uniqueReferences(
   const seen = new Set<string>();
   return references.filter((ref) => {
     const url = publicUrl(ref.url);
-    if (!url) return true;
+    if (!url) {
+      const key = `none:${ref.source}:${ref.nativeId}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    }
     const parsed = new URL(url);
     const key = `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname.replace(/\/$/, "")}`;
     if (seen.has(key)) return false;
     seen.add(key);
     return true;
   });
+}
+/** A citation with no public link keeps its source name and native id so it stays traceable. */
+function unlinkedLabel(ref: { source: string; nativeId: string }): string {
+  return `${ref.source} (${ref.nativeId})`;
 }
 /** Readable label for a public link: host plus path, without query noise. */
 function linkLabel(url: string): string {
@@ -190,7 +199,7 @@ export function renderDigest(
       .map(({ ref, url }) =>
         url
           ? `<li><a href="${escapeHtml(url)}">${escapeHtml(referenceLabel({ title: ref.title, url }, item.title))}</a></li>`
-          : `<li><span>${escapeHtml(`${ref.source} (${ref.nativeId})`)}</span></li>`,
+          : `<li><span>${escapeHtml(unlinkedLabel(ref))}</span></li>`,
       )
       .join("");
     const sources = sourceList
@@ -204,7 +213,7 @@ export function renderDigest(
     const refs = uniqueReferences(item.references)
       .map((ref) => {
         const url = publicUrl(ref.url);
-        if (!url) return `${ref.source} (${ref.nativeId})`;
+        if (!url) return unlinkedLabel(ref);
         const label = referenceLabel({ title: ref.title, url }, item.title);
         // Only prefix a distinct title; a bare URL stays as it was.
         return label === linkLabel(url) ? url : `${label} — ${url}`;

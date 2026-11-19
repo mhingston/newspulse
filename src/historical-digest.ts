@@ -519,7 +519,7 @@ export function historicalDigestDraft(
             uncertainty: item.uncertainty,
             why: item.explanation,
             references: item.citations.map((ref) => ({
-              source: ref.sourceId,
+              source: ref.sourceName ?? ref.sourceId,
               nativeId: ref.nativeId,
               url: ref.url,
               title: ref.title,

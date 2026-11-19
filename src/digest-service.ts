@@ -213,7 +213,13 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
   // Oversized candidates are explained individually instead of blocking the day.
   const groupReferences = new Map<
     string,
-    { sourceId: string; nativeId: string; url: string | null; title: string }[]
+    {
+      sourceId: string;
+      sourceName: string;
+      nativeId: string;
+      url: string | null;
+      title: string;
+    }[]
   >();
   const oversizedGroups = new Map<string, string>();
   const groupKey = (row: (typeof rows)[number]) =>
@@ -223,10 +229,13 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
   for (const row of rows) {
     const key = groupKey(row);
     if (groupReferences.has(key) || oversizedGroups.has(key)) continue;
+    // The source name is reader-facing; the id only orders citations.
+    const selection =
+      "SELECT r.source_id,coalesce(nullif(trim(s.title),''),r.source_id) AS source_name,r.native_id,r.url,i.title";
     const query =
       row.group_id === null
-        ? "SELECT r.source_id,r.native_id,r.url,i.title FROM item_sources r INDEXED BY item_sources_item JOIN items i ON i.id=r.item_id WHERE r.item_id=? LIMIT 21"
-        : "SELECT r.source_id,r.native_id,r.url,i.title FROM story_memberships m INDEXED BY story_members_group JOIN item_sources r INDEXED BY item_sources_item ON r.item_id=m.item_id JOIN items i ON i.id=r.item_id WHERE m.group_id=? AND m.ended_at IS NULL LIMIT 21";
+        ? `${selection} FROM item_sources r INDEXED BY item_sources_item JOIN items i ON i.id=r.item_id LEFT JOIN sources s ON s.id=r.source_id WHERE r.item_id=? LIMIT 21`
+        : `${selection} FROM story_memberships m INDEXED BY story_members_group JOIN item_sources r INDEXED BY item_sources_item ON r.item_id=m.item_id JOIN items i ON i.id=r.item_id LEFT JOIN sources s ON s.id=r.source_id WHERE m.group_id=? AND m.ended_at IS NULL LIMIT 21`;
     const size = store.sqlite
       .query<{ n: number; bytes: number }, [string]>(
         `SELECT count(*) AS n,coalesce(sum(length(CAST(source_id AS BLOB))+length(CAST(native_id AS BLOB))+coalesce(length(CAST(url AS BLOB)),0)),0) AS bytes FROM (${query})`,
@@ -243,6 +252,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
       .query<
         {
           source_id: string;
+          source_name: string;
           native_id: string;
           url: string | null;
           title: string;
@@ -252,6 +262,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
       .all(row.group_id ?? row.item_id)
       .map((ref) => ({
         sourceId: ref.source_id,
+        sourceName: ref.source_name,
         nativeId: ref.native_id,
         url: ref.url,
         title: ref.title,
@@ -446,7 +457,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
             uncertainty: item.uncertainty,
             why: item.explanation,
             references: item.citations.map((ref) => ({
-              source: ref.sourceId,
+              source: ref.sourceName ?? ref.sourceId,
               nativeId: ref.nativeId,
               url: ref.url,
               title: ref.title,

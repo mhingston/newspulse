@@ -5,6 +5,8 @@ export interface CurationCitation {
   url: string | null;
   /** Title of the cited item, used to label the source list; absent on older snapshots. */
   title?: string;
+  /** Human-readable source name; absent on older snapshots, which fall back to the id. */
+  sourceName?: string;
 }
 export interface CurationCandidate {
   itemId: string;

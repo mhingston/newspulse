@@ -294,3 +294,60 @@ test("navigation link lines are not published as stories", async () => {
     store.close();
   }
 });
+
+test("a citation without a public link is labelled with the source name, not its id", async () => {
+  const store = new Store(":memory:");
+  try {
+    new ProfileStore(store.sqlite).import([
+      {
+        kind: "interest",
+        id: "robotics",
+        version: 1,
+        description: "Robotics",
+        entities: [],
+        keywords: ["robotics"],
+        priority: 3,
+        positive: [],
+        negative: [],
+        queries: [],
+        lifetime: "persistent",
+        feedbackRefs: [],
+      },
+    ]);
+    store.addSource("https://example.com/feed", "Example Robotics Feed");
+    store.enqueueDue();
+    store.complete(store.claim()!, {
+      items: [
+        {
+          nativeId: "msg-7",
+          title: "Robotics tool release",
+          text: "Robotics release news ".repeat(40),
+        },
+      ],
+    });
+    const itemId = store.search("robotics")[0]!.id;
+    const worker = new ProcessingWorker(store, {
+      score: scoringHandler(store),
+    });
+    for (
+      let job = store.claimProcessing("extract");
+      job;
+      job = store.claimProcessing("extract")
+    )
+      store.completeProcessing(job, "unavailable");
+    await worker.drain("score");
+    store.stories.reconcile();
+    await worker.drain("score");
+    const draft = draftDigest(store, { ...digestDefaults(today), minScore: 0 });
+    if (draft.status !== "ready") throw new Error(draft.status);
+    const sourceId = store.sqlite
+      .query<{ source_id: string }, [string]>(
+        "SELECT source_id FROM item_sources WHERE item_id=?",
+      )
+      .get(itemId)!.source_id;
+    expect(draft.rendered!.text).toContain("Example Robotics Feed (msg-7)");
+    expect(draft.rendered!.text).not.toContain(`${sourceId} (`);
+  } finally {
+    store.close();
+  }
+});

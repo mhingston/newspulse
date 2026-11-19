@@ -250,3 +250,25 @@ test("story headings sit under the section heading and the match note stays shor
   expect(output.text).toContain("Matched your interest: one, two, three");
   expect(output.text).not.toContain("four");
 });
+
+test("a citation without a public link keeps its source name and native id", () => {
+  const output = renderDigest("2026-11-19", [
+    {
+      itemId: "item-10",
+      title: "Email-only story",
+      why: "interest:a@1: reading",
+      summary: null,
+      uncertainty: [],
+      references: [
+        {
+          source: "d6c299e0-b722-459d-90b6-9c943142dc95",
+          nativeId: "4c49e37a-8f3a-4b0f-b9fb-452e2124cca5",
+          url: null,
+        },
+      ],
+    },
+  ]);
+  expect(output.text).toBe(
+    "Newspulse — 2026-11-19\n\nEmail-only story\nMatched your interest: reading\nSources: d6c299e0-b722-459d-90b6-9c943142dc95 (4c49e37a-8f3a-4b0f-b9fb-452e2124cca5)",
+  );
+});
