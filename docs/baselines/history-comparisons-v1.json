@@ -16,7 +16,7 @@
       "since": 1794204000000,
       "until": 1794808800000
     },
-    "groupingVersion": "specific-development-v1",
+    "groupingVersion": "specific-development-v2",
     "changeEvidenceVersion": "development-change-v1",
     "labelledDevelopments": [
       "atlas-benchmark",

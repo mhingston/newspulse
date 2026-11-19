@@ -37,7 +37,7 @@
     }
   ],
   "story_evaluation": {
-    "version": "specific-development-v1",
+    "version": "specific-development-v2",
     "cases": [
       {
         "id": "atlas-release",

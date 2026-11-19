@@ -66,8 +66,17 @@ test("indexed planning matches the reference planner on varied corpora", () => {
   for (let seed = 1; seed <= 60; seed++) {
     const items = corpus(seed, 3 + ((seed * 7) % 60));
     const indexed = planStories(items);
-    expect(JSON.stringify(indexed)).toBe(
-      JSON.stringify(reference.planStories(items)),
+    // v2 intentionally allows additional named context in one headline when
+    // at least two named subjects and the existing event checks still agree.
+    // The frozen v1 reference remains useful for verifying the other planner
+    // paths and deterministic plan structure.
+    const referencePlan = reference.planStories(items);
+    const { version: _referenceVersion, ...referenceWithoutVersion } =
+      referencePlan;
+    const { version: _indexedVersion, ...indexedWithoutVersion } = indexed;
+    expect(indexed.version).toBe("specific-development-v2");
+    expect(JSON.stringify(indexedWithoutVersion)).toBe(
+      JSON.stringify(referenceWithoutVersion),
     );
     relations += indexed.relations.length;
     multiMemberGroups += indexed.groups.filter(
@@ -86,7 +95,13 @@ test("indexed planning matches the reference planner on varied corpora", () => {
 test("indexed planning matches the reference for ingestion-order variants", () => {
   const items = corpus(42, 80);
   const reversed = [...items].reverse();
-  expect(JSON.stringify(planStories(reversed))).toBe(
-    JSON.stringify(reference.planStories(reversed)),
+  const indexed = planStories(reversed);
+  const referencePlan = reference.planStories(reversed);
+  const { version: _indexedVersion, ...indexedWithoutVersion } = indexed;
+  const { version: _referenceVersion, ...referenceWithoutVersion } =
+    referencePlan;
+  expect(indexed.version).toBe("specific-development-v2");
+  expect(JSON.stringify(indexedWithoutVersion)).toBe(
+    JSON.stringify(referenceWithoutVersion),
   );
 });

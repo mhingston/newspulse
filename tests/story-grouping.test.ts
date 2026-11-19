@@ -40,6 +40,13 @@ test("specific release coverage groups without losing member identities", () => 
       .reason,
   ).toBe("specific_event");
 });
+test("additional named context does not block otherwise specific coverage", () => {
+  const a = item("a", "Acme releases Atlas 2 robotics model");
+  const b = item("b", "Acme releases Atlas 2 robotics model with Northstar");
+  const plan = planStories([a, b]);
+  expect(partition([a, b])).toEqual(["a,b"]);
+  expect(plan.groups[0]?.members[1]?.evidence.reason).toBe("specific_event");
+});
 test("same long syndicated text groups regardless of headline and publication order", () => {
   const content =
     "The research team published its benchmark methodology, hardware latency measurements, evaluation harness, reproducible weights and licensing details. ".repeat(

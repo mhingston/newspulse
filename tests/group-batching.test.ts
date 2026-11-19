@@ -113,7 +113,7 @@ test("a lone dirty input is replanned at the maximum delay", () => {
     expect(store.completeProcessing(job!, "grouped", ingestedAt + 30_001)).toBe(
       true,
     );
-    expect(groupingState(store)).toStartWith("specific-development-v1:");
+    expect(groupingState(store)).toStartWith("specific-development-v2:");
   } finally {
     store.close();
   }

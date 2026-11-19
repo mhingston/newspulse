@@ -24,7 +24,7 @@ test("adaptation replay is deterministic and matches the checked-in baseline", (
   expect(first.config).toMatchObject({
     k: 5,
     criteriaVersion: "deterministic-v3",
-    groupingVersion: "specific-development-v1",
+    groupingVersion: "specific-development-v2",
     profiles: [{ id: "synthetic-robotics", version: 1 }],
   });
   expect(first.usage).toEqual({

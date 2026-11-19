@@ -17,7 +17,7 @@ test("synthetic replay is deterministic and keeps unknown evidence explicit", ()
   expect(evaluateCorpus(corpus, { k: 5 })).toEqual(first);
   expect(first.config).toMatchObject({
     criteriaVersion: "deterministic-v3",
-    groupingVersion: "specific-development-v1",
+    groupingVersion: "specific-development-v2",
     profiles: [{ id: "synthetic-robotics", version: 1 }],
     models: [],
   });

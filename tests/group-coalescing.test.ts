@@ -92,7 +92,7 @@ test("a backlog of extractions collapses into far fewer group replans", async ()
     expect(pendingGroups).toBe(0);
     expect(replans).toBe(1);
     expect(store.status().grouping.current_memberships).toBe(60);
-    expect(groupingState(store)).toStartWith("specific-development-v1:");
+    expect(groupingState(store)).toStartWith("specific-development-v2:");
     expect(store.stories.reconcile().changed).toBe(false);
   } finally {
     store.close();

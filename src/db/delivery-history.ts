@@ -1,6 +1,7 @@
 import type { Database } from "bun:sqlite";
 import { createHash } from "node:crypto";
 import { observedUpdate, type ObservedUpdate } from "../observed-update";
+import { STORY_RULE_VERSION } from "../story-grouping";
 
 /** Only confirmed provider acceptance is positive evidence. These are not read receipts. */
 export function deliveryHistory(
@@ -682,7 +683,8 @@ export function relatedDeliveryHistory(
   }
   const sharedTerms = (relation as { sharedTerms?: unknown })?.sharedTerms;
   const supported =
-    row.relation_version === "specific-development-v1" &&
+    (row.relation_version === "specific-development-v1" ||
+      row.relation_version === STORY_RULE_VERSION) &&
     Array.isArray(sharedTerms) &&
     sharedTerms.length >= 2 &&
     sharedTerms.every(

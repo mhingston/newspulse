@@ -5,7 +5,7 @@ import { createHash } from "node:crypto";
  * network or model dependencies. It deliberately favours false negatives over
  * silently merging distinct developments.
  */
-export const STORY_RULE_VERSION = "specific-development-v1";
+export const STORY_RULE_VERSION = "specific-development-v2";
 const HOUR = 60 * 60 * 1000;
 const DAY = 24 * HOUR;
 
@@ -237,6 +237,11 @@ function sameSubjects(left: StoryInput, right: StoryInput): boolean {
   const subjects = featuresOf(left).subjects;
   return subjects.length >= 2 && sameList(subjects, featuresOf(right).subjects);
 }
+function sharesNamedSubject(left: StoryInput, right: StoryInput): boolean {
+  return (
+    common(featuresOf(left).subjects, featuresOf(right).subjects).length >= 2
+  );
+}
 function sameDevelopment(
   left: StoryInput,
   right: StoryInput,
@@ -261,7 +266,10 @@ function sameDevelopment(
   const rightTerms = rightFeatures.terms;
   const shared = common(leftTerms, rightTerms);
   if (!sameVersions(left, right)) return null;
-  if (!sameSubjects(left, right)) return null;
+  // Cross-publication headlines may add different named context. Two shared
+  // named subjects are still required, along with action, version, temporal
+  // and high lexical-overlap agreement.
+  if (!sharesNamedSubject(left, right)) return null;
   if (
     shared.length < 2 ||
     shared.length / Math.max(leftTerms.length, rightTerms.length) < 0.7
