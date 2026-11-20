@@ -178,18 +178,16 @@ export function renderDigest(
       ? `<h3><a href="${escapeHtml(primary)}">${escapeHtml(item.title)}</a></h3>`
       : `<h3>${escapeHtml(item.title)}</h3>`;
     const paragraphs = item.summary
-      ? `<p style="color:#666;font-size:12px;margin:0">Model summary (estimate)</p>${summaryParagraphs(
-          displaySummary(item.summary),
-        )
+      ? summaryParagraphs(displaySummary(item.summary))
           .map((p) => `<p>${escapeHtml(p)}</p>`)
-          .join("")}`
+          .join("")
       : "";
     const points = keyPointList(item.keyPoints);
     const keyPoints = points.length
-      ? `<p style="color:#666;font-size:12px;margin:0">Key points</p><ul>${points.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul>`
+      ? `<ul>${points.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul>`
       : "";
     const caveats = caveatNotes(item.uncertainty).length
-      ? `<p style="color:#666;font-size:12px;margin:0">Model uncertainty:</p><ul>${caveatNotes(
+      ? `<p style="color:#666;font-size:13px;margin:8px 0 0">Caveats</p><ul style="color:#666;font-size:13px">${caveatNotes(
           item.uncertainty,
         )
           .map((value) => `<li>${escapeHtml(value)}</li>`)
@@ -203,11 +201,11 @@ export function renderDigest(
       )
       .join("");
     const sources = sourceList
-      ? `<p style="color:#666;font-size:12px;margin:0">Sources</p><ul>${sourceList}</ul>`
+      ? `<p style="color:#666;font-size:13px;margin:8px 0 0">Sources</p><ul style="font-size:13px">${sourceList}</ul>`
       : "";
     // Delivery injects scoped feedback links between these stable markers;
     // the frozen body itself never carries a token.
-    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}<p style="color:#444">${escapeHtml(matchNote(item.why))}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
+    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}<p style="color:#666;font-size:13px;margin:8px 0 0">${escapeHtml(matchNote(item.why))}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
   };
   const renderText = (item: DigestRenderItem) => {
     const refs = uniqueReferences(item.references)
@@ -221,14 +219,14 @@ export function renderDigest(
       .join("; ");
     return [
       item.title,
-      item.summary ? `Model summary: ${displaySummary(item.summary)}` : null,
+      item.summary ? displaySummary(item.summary) : null,
       keyPointList(item.keyPoints).length
-        ? `Key points:\n${keyPointList(item.keyPoints)
+        ? keyPointList(item.keyPoints)
             .map((value) => `- ${value}`)
-            .join("\n")}`
+            .join("\n")
         : null,
       caveatNotes(item.uncertainty).length
-        ? `Model uncertainty:\n${caveatNotes(item.uncertainty)
+        ? `Caveats:\n${caveatNotes(item.uncertainty)
             .map((value) => `- ${value}`)
             .join("\n")}`
         : null,
@@ -242,17 +240,17 @@ export function renderDigest(
   const rest = items.slice(TOP_STORIES);
   const section = (heading: string, values: DigestRenderItem[]) =>
     values.length
-      ? `<h2>${heading}</h2>${values.map(renderHtml).join("<hr>")}`
+      ? `<h2 style="font-size:18px;border-bottom:1px solid #ddd;padding-bottom:4px">${heading}</h2>${values.map(renderHtml).join("<hr>")}`
       : "";
   const textSection = (heading: string, values: DigestRenderItem[]) =>
     values.length ? [heading, ...values.map(renderText)].join("\n\n") : "";
   return {
     subject,
-    html: `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:640px;margin:0 auto;line-height:1.5;color:#111"><h1>${escapeHtml(subject)}</h1>${rest.length ? `${section("Top stories", top)}${section("More coverage", rest)}` : top.map(renderHtml).join("<hr>")}</body></html>`,
+    html: `<!doctype html><html><body style="font-family:-apple-system,Segoe UI,Helvetica,Arial,sans-serif;max-width:640px;margin:0 auto;line-height:1.5;color:#111"><h1 style="font-size:22px">${escapeHtml(subject)}</h1>${rest.length ? `${section("Top Stories", top)}${section("More Coverage", rest)}` : top.map(renderHtml).join("<hr>")}</body></html>`,
     text: [
       subject,
       rest.length
-        ? `${textSection("Top stories", top)}\n\n${textSection("More coverage", rest)}`
+        ? `${textSection("Top Stories", top)}\n\n${textSection("More Coverage", rest)}`
         : top.map(renderText).join("\n\n"),
     ].join("\n\n"),
     feedbackTargets: items.map(({ itemId }) => ({
