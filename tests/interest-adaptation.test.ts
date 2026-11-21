@@ -23,7 +23,7 @@ test("adaptation replay is deterministic and matches the checked-in baseline", (
   expect(evaluateInterestAdaptation(corpus, history)).toEqual(first);
   expect(first.config).toMatchObject({
     k: 5,
-    criteriaVersion: "deterministic-v3",
+    criteriaVersion: "deterministic-v4",
     groupingVersion: "specific-development-v2",
     profiles: [{ id: "synthetic-robotics", version: 1 }],
   });
@@ -41,29 +41,35 @@ test("adaptation replay is deterministic and matches the checked-in baseline", (
 
 test("checked-in baseline matches a fresh deterministic replay", async () => {
   const baseline = await Bun.file(
-    "docs/baselines/interest-adaptation-v1.json",
+    "docs/baselines/interest-adaptation-v2.json",
   ).json();
   expect(evaluateInterestAdaptation(corpus, history)).toEqual(baseline);
 });
 
-test("recorded evidence: every candidate reduces discovery and diversity, none is adopted", () => {
+test("recorded evidence: no candidate is adopted and the observed deltas are kept", () => {
   const report = evaluateInterestAdaptation(corpus, history);
   expect(report.adoption.adoptedArm).toBeNull();
   for (const arm of ADAPTATION_ARMS) {
     if (arm === "baseline") continue;
     const comparison = report.comparison.perArm[arm]!;
-    // Known relevant developments drop from the top k in every candidate:
-    // recency weighting and boost semantics promote recent duplicate material
-    // over a distinct relevant development, with no precision gain.
     expect(comparison.precisionAtK.delta).toBe(0);
-    expect(comparison.usefulDiscoveries.delta).toBe(-0.25);
-    expect(comparison.developmentDiversity.delta).toBeLessThan(0);
-    // False topic drift does not rise, but the lack of improvement is itself
-    // the recorded reason the baseline is kept.
     expect(comparison.topicDrift.delta).toBe(0);
     expect(report.adoption.perArm[arm].adopted).toBe(false);
+  }
+  // Recency weighting and widening drop a known useful discovery from the top k
+  // and reduce development diversity. The expiring boost is neutral on every axis.
+  for (const arm of [
+    "recency-weighted-feedback",
+    "adjacent-term-widening",
+  ] as const) {
+    const comparison = report.comparison.perArm[arm]!;
+    expect(comparison.usefulDiscoveries.delta).toBe(-0.25);
+    expect(comparison.developmentDiversity.delta).toBeLessThan(0);
     expect(report.adoption.perArm[arm].reason).toContain("regressed");
   }
+  const boostComparison = report.comparison.perArm["expiring-feedback-boost"]!;
+  expect(boostComparison.usefulDiscoveries.delta).toBe(0);
+  expect(boostComparison.developmentDiversity.delta).toBe(0);
 });
 
 test("negative and no-feedback histories cannot erase an explicit interest match", () => {
@@ -121,7 +127,7 @@ test("reweighting and boosting never touch items without recorded events, and si
   for (const change of recency.changes.reweightedFeedback) {
     expect(change.itemId).toBeDefined();
     expect(change.itemId && eventIds.has(change.itemId)).toBe(true);
-    // Bounded by the flat deterministic-v3 step in both directions.
+    // Bounded by the flat deterministic-v4 step in both directions.
     expect(Math.abs(change.adjustment)).toBeLessThanOrEqual(25);
   }
   for (const id of ["orion-release", "discussion", "unknown-label"]) {
@@ -132,14 +138,14 @@ test("reweighting and boosting never touch items without recorded events, and si
   )!;
   // The boost adds on top of the flat judgment adjustment, so the explicit
   // not_useful penalty on atlas-duplicate is still fully applied: it gains
-  // only the bounded temporary step (relevance 60 -> 65, total 58 -> 60),
-  // never a reversal of the explicit judgment.
+  // only the bounded temporary step (total 55 -> 56), never a reversal of the
+  // explicit judgment.
   const boostRow = boost.ranking.find((row) => row.id === "atlas-duplicate")!;
   const baselineRow = report.arms[0]!.ranking.find(
     (row) => row.id === "atlas-duplicate",
   )!;
-  expect(baselineRow.total).toBe(58);
-  expect(boostRow.total).toBe(60);
+  expect(baselineRow.total).toBe(55);
+  expect(boostRow.total).toBe(56);
 });
 
 test("overlapping interests cannot exceed the cumulative per-item boost bound", () => {
@@ -306,7 +312,7 @@ test("future feedback and unknown items are rejected instead of leaking into the
   ).toThrow(/baseline/i);
 });
 
-test("baseline arm scores equal the shipped deterministic-v3 scoring with recorded feedback", async () => {
+test("baseline arm scores equal the shipped deterministic-v4 scoring with recorded feedback", async () => {
   const { scoreItem } = await import("../src/scoring");
   const report = evaluateInterestAdaptation(corpus, history, {
     arms: ["baseline"],

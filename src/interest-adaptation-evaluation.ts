@@ -15,7 +15,7 @@ import {
 
 /**
  * Interest-adaptation evaluation (issue #25): compares the recorded
- * explicit-feedback baseline (`deterministic-v3`, one flat bounded adjustment
+ * explicit-feedback baseline (`deterministic-v4`, one flat bounded adjustment
  * from the latest explicit judgment per item) against bounded, explainable,
  * richer adaptation strategies — recency-weighted feedback, an expiring
  * feedback-driven temporary boost, and adjacent-term widening derived from
@@ -39,7 +39,7 @@ export const ADAPTATION_EVALUATION_VERSION =
 /** One day in milliseconds; limits are configured in days. */
 const DAY_MS = 86_400_000;
 
-/** The flat bounded steps the shipped `deterministic-v3` baseline applies. */
+/** The flat bounded steps the shipped baseline applies. */
 export const FLAT_USEFUL_STEP = 10;
 export const FLAT_NOT_USEFUL_STEP = 25;
 
@@ -96,7 +96,7 @@ export type AdaptationArm = (typeof ADAPTATION_ARMS)[number];
 
 export const INTEREST_ADAPTATION_ARMS: Record<AdaptationArm, string> = {
   baseline:
-    "deterministic-v3: flat +10/-25 adjustment from the latest explicit judgment",
+    "deterministic-v4: flat +10/-25 adjustment from the latest explicit judgment",
   "recency-weighted-feedback":
     "candidate: the judgment adjustment decays linearly with age to zero at the horizon, never exceeding the flat step",
   "expiring-feedback-boost":
@@ -626,7 +626,7 @@ function decideAdoption(
     baseline: {
       metrics: null,
       adopted: true,
-      reason: "Recorded baseline: shipped deterministic-v3 scoring unchanged.",
+      reason: `Recorded baseline: shipped ${SCORING_CRITERIA_VERSION} scoring unchanged.`,
     },
     "recency-weighted-feedback": { ...empty },
     "expiring-feedback-boost": { ...empty },
@@ -679,14 +679,14 @@ function decideAdoption(
     evaluatedVersion: ADAPTATION_EVALUATION_VERSION,
     threshold: {
       statement:
-        "Adopt a candidate only when, on the same labeled corpus, replay instant, profiles and top-k budget: precision@k, important-development recall, useful discoveries, outside-subscription relevance and development diversity are all not lower than the baseline, topic drift is not higher, at least one gated axis strictly improves, and no gated axis is unknown. Otherwise retain the deterministic-v3 baseline and record the observed result.",
+        "Adopt a candidate only when, on the same labeled corpus, replay instant, profiles and top-k budget: precision@k, important-development recall, useful discoveries, outside-subscription relevance and development diversity are all not lower than the baseline, topic drift is not higher, at least one gated axis strictly improves, and no gated axis is unknown. Otherwise retain the shipped baseline and record the observed result.",
       required: [...ADOPTED_AXES, "topicDrift"],
     },
     perArm,
     adoptedArm,
     summary: adoptedArm
       ? `Adopted ${adoptedArm} behind a named scoring version and explicit setting with reversible state.`
-      : "No candidate met the threshold on this corpus; the deterministic-v3 baseline is retained and the observed result is recorded for revisit.",
+      : "No candidate met the threshold on this corpus; the shipped baseline is retained and the observed result is recorded for revisit.",
   };
 }
 
@@ -762,7 +762,7 @@ export function evaluateInterestAdaptation(
   const events = [...history.events].sort((a, b) => a.at - b.at);
   const limits = history.limits;
 
-  // Baseline: exactly the shipped deterministic-v3 pass, including its flat
+  // Baseline: exactly the shipped pass, including its flat
   // bounded adjustment from the latest explicit judgment per item.
   const baselineScores = new Map<string, ScoreResult>();
   for (const [id, entry] of prepared)
