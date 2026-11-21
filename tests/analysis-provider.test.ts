@@ -1380,3 +1380,64 @@ test("an item that matches no active interest is skipped before a provider call"
     store.close();
   }
 });
+
+test("provider accepts per-interest verdicts and still accepts responses without them", async () => {
+  const withVerdicts = {
+    ...result,
+    interestVerdicts: [
+      {
+        interestId: "robotics",
+        verdict: "irrelevant" as const,
+        reason: "Only a sponsor footer mentions robotics",
+      },
+    ],
+  };
+  const client = new OpenAICompatibleAnalysis(settings, async () =>
+    Response.json({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: { content: JSON.stringify(withVerdicts) },
+        },
+      ],
+    }),
+  );
+  const output = await client.analyse("A source", "https://example.com/item");
+  expect(output.analysis.interestVerdicts).toEqual(
+    withVerdicts.interestVerdicts,
+  );
+  const legacy = new OpenAICompatibleAnalysis(settings, async () =>
+    Response.json({
+      choices: [
+        { finish_reason: "stop", message: { content: JSON.stringify(result) } },
+      ],
+    }),
+  );
+  expect(
+    (await legacy.analyse("A source", "https://example.com/item")).analysis
+      .interestVerdicts,
+  ).toBeUndefined();
+});
+
+test("provider rejects an unknown verdict value", async () => {
+  const client = new OpenAICompatibleAnalysis(settings, async () =>
+    Response.json({
+      choices: [
+        {
+          finish_reason: "stop",
+          message: {
+            content: JSON.stringify({
+              ...result,
+              interestVerdicts: [
+                { interestId: "robotics", verdict: "maybe", reason: "x" },
+              ],
+            }),
+          },
+        },
+      ],
+    }),
+  );
+  await expect(
+    client.analyse("A source", "https://example.com/item"),
+  ).rejects.toThrow();
+});

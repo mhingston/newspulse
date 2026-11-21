@@ -149,3 +149,84 @@ describe("deterministic scoring", () => {
     expect(timed.uncertainty).toContain("specialist_failed");
   });
 });
+
+describe("model interest verdicts", () => {
+  const robotics = input.interests[0]!;
+  const analysis = {
+    claims: [],
+    uncertainty: [],
+  };
+  test("an irrelevant verdict vetoes an otherwise eligible lexical match", () => {
+    const vetoed = scoreItem({
+      ...input,
+      analysis: {
+        ...analysis,
+        interestVerdicts: [
+          {
+            interestId: "robotics",
+            verdict: "irrelevant",
+            reason: "Mentions robotics only in a footer",
+          },
+        ],
+      },
+    });
+    expect(vetoed.eligible).toBe(false);
+    expect(vetoed.components.relevance).toBe(0);
+  });
+  test("a relevant or borderline verdict leaves the lexical match unchanged", () => {
+    for (const verdict of ["relevant", "borderline"] as const) {
+      const result = scoreItem({
+        ...input,
+        analysis: {
+          ...analysis,
+          interestVerdicts: [
+            { interestId: "robotics", verdict, reason: "Checked" },
+          ],
+        },
+      });
+      expect(result.eligible).toBe(scoreItem(input).eligible);
+      expect(result.total).toBe(scoreItem(input).total);
+    }
+  });
+  test("a verdict can never create a match the lexical rule rejects", () => {
+    const unmatched = {
+      ...input,
+      title: "Quarterly sales",
+      text: "Revenue grew.",
+    };
+    const baseline = scoreItem(unmatched);
+    const judged = scoreItem({
+      ...unmatched,
+      analysis: {
+        ...analysis,
+        interestVerdicts: [
+          {
+            interestId: "robotics",
+            verdict: "relevant",
+            reason: "Looks related",
+          },
+        ],
+      },
+    });
+    expect(baseline.eligible).toBe(false);
+    expect(judged.eligible).toBe(false);
+    expect(judged.total).toBe(baseline.total);
+  });
+  test("a missing verdict list scores exactly as before", () => {
+    expect(scoreItem({ ...input, analysis }).total).toBe(
+      scoreItem(input).total,
+    );
+  });
+  test("a verdict for another interest does not veto this one", () => {
+    const other = scoreItem({
+      ...input,
+      analysis: {
+        ...analysis,
+        interestVerdicts: [
+          { interestId: "other", verdict: "irrelevant", reason: "Unrelated" },
+        ],
+      },
+    });
+    expect(other.eligible).toBe(scoreItem(input).eligible);
+  });
+});

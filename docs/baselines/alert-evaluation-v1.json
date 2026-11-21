@@ -32,7 +32,7 @@
     "tickMinutes": 30,
     "groupingVersion": "specific-development-v2",
     "changeEvidenceVersion": "development-change-v1",
-    "scoringVersion": "deterministic-v4",
+    "scoringVersion": "deterministic-v5",
     "alertsDecisionVersion": "event-alerts-v1"
   },
   "baseline": {

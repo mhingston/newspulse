@@ -23,7 +23,7 @@ test("adaptation replay is deterministic and matches the checked-in baseline", (
   expect(evaluateInterestAdaptation(corpus, history)).toEqual(first);
   expect(first.config).toMatchObject({
     k: 5,
-    criteriaVersion: "deterministic-v4",
+    criteriaVersion: "deterministic-v5",
     groupingVersion: "specific-development-v2",
     profiles: [{ id: "synthetic-robotics", version: 1 }],
   });
@@ -41,7 +41,7 @@ test("adaptation replay is deterministic and matches the checked-in baseline", (
 
 test("checked-in baseline matches a fresh deterministic replay", async () => {
   const baseline = await Bun.file(
-    "docs/baselines/interest-adaptation-v2.json",
+    "docs/baselines/interest-adaptation-v3.json",
   ).json();
   expect(evaluateInterestAdaptation(corpus, history)).toEqual(baseline);
 });
@@ -127,7 +127,7 @@ test("reweighting and boosting never touch items without recorded events, and si
   for (const change of recency.changes.reweightedFeedback) {
     expect(change.itemId).toBeDefined();
     expect(change.itemId && eventIds.has(change.itemId)).toBe(true);
-    // Bounded by the flat deterministic-v4 step in both directions.
+    // Bounded by the flat deterministic-v5 step in both directions.
     expect(Math.abs(change.adjustment)).toBeLessThanOrEqual(25);
   }
   for (const id of ["orion-release", "discussion", "unknown-label"]) {
@@ -312,7 +312,7 @@ test("future feedback and unknown items are rejected instead of leaking into the
   ).toThrow(/baseline/i);
 });
 
-test("baseline arm scores equal the shipped deterministic-v4 scoring with recorded feedback", async () => {
+test("baseline arm scores equal the shipped deterministic-v5 scoring with recorded feedback", async () => {
   const { scoreItem } = await import("../src/scoring");
   const report = evaluateInterestAdaptation(corpus, history, {
     arms: ["baseline"],

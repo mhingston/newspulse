@@ -15,7 +15,7 @@ import {
 
 /**
  * Interest-adaptation evaluation (issue #25): compares the recorded
- * explicit-feedback baseline (`deterministic-v4`, one flat bounded adjustment
+ * explicit-feedback baseline (`deterministic-v5`, one flat bounded adjustment
  * from the latest explicit judgment per item) against bounded, explainable,
  * richer adaptation strategies — recency-weighted feedback, an expiring
  * feedback-driven temporary boost, and adjacent-term widening derived from
@@ -95,8 +95,7 @@ export const ADAPTATION_ARMS = [
 export type AdaptationArm = (typeof ADAPTATION_ARMS)[number];
 
 export const INTEREST_ADAPTATION_ARMS: Record<AdaptationArm, string> = {
-  baseline:
-    "deterministic-v4: flat +10/-25 adjustment from the latest explicit judgment",
+  baseline: `${SCORING_CRITERIA_VERSION}: flat +10/-25 adjustment from the latest explicit judgment`,
   "recency-weighted-feedback":
     "candidate: the judgment adjustment decays linearly with age to zero at the horizon, never exceeding the flat step",
   "expiring-feedback-boost":

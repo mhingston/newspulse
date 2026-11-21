@@ -1,7 +1,7 @@
 import type { Interest } from "./profiles";
 
 /** Version this whenever a rule, range or weight changes. */
-export const SCORING_CRITERIA_VERSION = "deterministic-v4";
+export const SCORING_CRITERIA_VERSION = "deterministic-v5";
 export type ScoreComponent =
   | "relevance"
   | "novelty"
@@ -15,6 +15,11 @@ export interface ScoringAnalysis {
   classification?: string;
   claims: { statement: string; citation: string }[];
   uncertainty: string[];
+  interestVerdicts?: {
+    interestId: string;
+    verdict: "relevant" | "borderline" | "irrelevant";
+    reason: string;
+  }[];
 }
 export interface ScoringInput {
   itemId: string;
@@ -86,12 +91,21 @@ export function scoreItem(input: ScoringInput): ScoreResult {
   const text = `${title}\n${withoutUrls(input.text)}`;
   const uncertainty: string[] = [];
   const reasons: string[] = [];
+  const modelRejected = new Set(
+    (input.analysis?.interestVerdicts ?? [])
+      .filter((verdict) => verdict.verdict === "irrelevant")
+      .map((verdict) => verdict.interestId),
+  );
   const matches = input.interests.map((interest) => {
     const terms = [...new Set([...interest.entities, ...interest.keywords])];
     const titleHits = terms.filter((term) => contains(title, term));
     const bodyHits = terms.filter((term) => contains(text, term));
+    // A model "irrelevant" verdict vetoes the lexical match; it never adds one.
     const matched =
-      titleHits.length > 0 || bodyHits.length >= 2 ? bodyHits : [];
+      !modelRejected.has(interest.id) &&
+      (titleHits.length > 0 || bodyHits.length >= 2)
+        ? bodyHits
+        : [];
     const positives = interest.positive.filter((term) => contains(text, term));
     const negatives = interest.negative.filter((term) => contains(text, term));
     return { interest, matched, positives, negatives };
