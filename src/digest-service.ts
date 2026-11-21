@@ -34,6 +34,18 @@ export const digestDefaults = (
  * vendors have now validated"). Prefer the fetched page's declared title when
  * the feed title looks incomplete and the page title says more.
  */
+/**
+ * Without a model summary, the feed's own description is the reader's
+ * summary. It is truncated to a short lead rather than summarised.
+ */
+function feedSummary(text: string | null): string | null {
+  const value = text?.replace(/\s+/g, " ").trim() ?? "";
+  if (!value) return null;
+  if (value.length <= 280) return value;
+  const cut = value.slice(0, 280);
+  const end = cut.lastIndexOf(" ");
+  return `${cut.slice(0, end > 200 ? end : 280).trimEnd()}…`;
+}
 function displayTitle(feedTitle: string, pageTitle: string | null): string {
   const feed = feedTitle.trim();
   const page = pageTitle?.replace(/\s+/g, " ").trim() ?? "";
@@ -196,12 +208,14 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
         provenance: string | null;
         summary: string | null;
         page_title: string | null;
+        feed_text: string | null;
       },
       string[]
     >(
       `SELECT i.id AS item_id,i.title,m.group_id,s.id AS score_id,s.result,CASE WHEN length(CAST(s.provenance AS BLOB))<=200000 THEN s.provenance ELSE NULL END AS provenance,
     (SELECT a.result FROM analyses a WHERE a.item_id=i.id AND a.generation=j.generation ORDER BY a.created_at DESC,a.rowid DESC LIMIT 1) AS summary,
-    (SELECT json_extract(e.result,'$.title') FROM processing_jobs e WHERE e.item_id=i.id AND e.stage='extract' AND e.status='done' AND e.outcome='extracted' AND e.generation=j.generation LIMIT 1) AS page_title
+    (SELECT json_extract(e.result,'$.title') FROM processing_jobs e WHERE e.item_id=i.id AND e.stage='extract' AND e.status='done' AND e.outcome='extracted' AND e.generation=j.generation LIMIT 1) AS page_title,
+    (SELECT c.text FROM content c WHERE c.item_id=i.id AND c.purged_at IS NULL AND length(CAST(c.text AS BLOB))<=20000) AS feed_text
     FROM items i JOIN processing_jobs j ON j.item_id=i.id AND j.stage='score'
     JOIN item_scores s ON s.id=(SELECT x.id FROM item_scores x WHERE x.item_id=i.id AND x.generation=j.generation ORDER BY x.created_at DESC,x.rowid DESC LIMIT 1)
     LEFT JOIN story_memberships m ON m.item_id=i.id AND m.ended_at IS NULL
@@ -315,7 +329,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
             claims?: { statement: string }[];
           })
         : null;
-      const summary = analysis?.summary ?? null;
+      const summary = analysis?.summary ?? feedSummary(row.feed_text);
       const keyPoints = Array.isArray(analysis?.claims)
         ? analysis.claims.map((claim) => claim.statement)
         : [];

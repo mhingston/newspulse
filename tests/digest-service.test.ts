@@ -177,7 +177,7 @@ test("current scored item can be drafted and frozen without delivery, retaining 
   }
 });
 
-test("a fragment feed title is replaced by the fetched page title", async () => {
+test("without an analysis the feed description leads the summary, truncated at a word boundary", async () => {
   const store = new Store(":memory:");
   try {
     new ProfileStore(store.sqlite).import([
@@ -188,6 +188,61 @@ test("a fragment feed title is replaced by the fetched page title", async () => 
         description: "AI regulation",
         entities: [],
         keywords: ["regulation"],
+        priority: 3,
+        positive: [],
+        negative: [],
+        queries: [],
+        lifetime: "persistent",
+        feedbackRefs: [],
+      },
+    ]);
+    store.addSource("https://example.com/feed");
+    store.enqueueDue();
+    const description = `AI regulation guidance explained. ${"Implementation detail follows here. ".repeat(20)}`;
+    store.complete(store.claim()!, {
+      items: [
+        { nativeId: "feed-summary-1", title: "Regulation", text: description },
+      ],
+    });
+    const itemId = store.search("regulation")[0]!.id;
+    store.completeProcessing(
+      store.claimProcessing("extract")!,
+      "extracted",
+      Date.now(),
+      JSON.stringify({ status: "extracted", text: description }),
+    );
+    const worker = new ProcessingWorker(store, {
+      score: scoringHandler(store),
+    });
+    await worker.drain("score");
+    store.stories.reconcile();
+    await worker.drain("score");
+    const draft = draftDigest(store, { ...digestDefaults(today), minScore: 0 });
+    expect(draft.status).toBe("ready");
+    if (draft.status !== "ready") throw new Error("missing draft");
+    expect(draft.selected[0]!.itemId).toBe(itemId);
+    const summary = draft.selected[0]!.summary!;
+    expect(summary.startsWith("AI regulation guidance explained.")).toBe(true);
+    expect(summary.endsWith("…")).toBe(true);
+    expect(summary.length).toBeLessThanOrEqual(281);
+    expect(draft.rendered!.html).toContain("AI regulation guidance explained.");
+    expect(draft.rendered!.html).not.toContain("Matched your interest");
+  } finally {
+    store.close();
+  }
+});
+
+test("a fragment feed title is replaced by the fetched page title", async () => {
+  const store = new Store(":memory:");
+  try {
+    new ProfileStore(store.sqlite).import([
+      {
+        kind: "interest",
+        id: "ai-regulation",
+        version: 1,
+        description: "AI regulation",
+        entities: [],
+        keywords: ["regulation", "guidance"],
         priority: 3,
         positive: [],
         negative: [],

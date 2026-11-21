@@ -54,17 +54,6 @@ function caveatNotes(values: string[]): string[] {
     .slice(0, 3)
     .map((value) => (value.length > 200 ? `${value.slice(0, 197)}...` : value));
 }
-/** Reader-facing match note: interest reasons ("interest:<id>@<v>: <terms>") keep only their terms. */
-function matchNote(why: string): string {
-  const terms = why
-    .split(";")
-    .map((part) => part.trim())
-    .map((part) => part.match(/^interest:[^:]+:\s*(.+)$/)?.[1] ?? part)
-    .filter(Boolean)
-    .slice(0, 3)
-    .join(", ");
-  return terms ? `Matched your interest: ${terms}` : why;
-}
 /** Up to three claim statements, trimmed, so the email reads as a short list of key points. */
 function keyPointList(values: string[] | undefined): string[] {
   return (values ?? [])
@@ -205,7 +194,7 @@ export function renderDigest(
       : "";
     // Delivery injects scoped feedback links between these stable markers;
     // the frozen body itself never carries a token.
-    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}<p style="color:#666;font-size:13px;margin:8px 0 0">${escapeHtml(matchNote(item.why))}</p>${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
+    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
   };
   const renderText = (item: DigestRenderItem) => {
     const refs = uniqueReferences(item.references)
@@ -230,7 +219,6 @@ export function renderDigest(
             .map((value) => `- ${value}`)
             .join("\n")}`
         : null,
-      matchNote(item.why),
       `Sources: ${refs}`,
     ]
       .filter(Boolean)

@@ -115,11 +115,11 @@ test("digest turns internal interest reasons into a match note and hides raw IDs
       ],
     },
   ]);
-  expect(output.html).toContain("Matched your interest: Codex");
+  expect(output.html).not.toContain("Matched your interest");
   expect(output.html).not.toContain("interest:ai-coding-agents@1");
   expect(output.html).not.toContain("9c64c499-d0bb-40af-baed-47243e4e0ba7");
   expect(output.html).toContain(">openai.com/index/agents</a>");
-  expect(output.text).toContain("Matched your interest: Codex");
+  expect(output.text).not.toContain("Matched your interest");
   expect(output.text).toContain("Sources: https://openai.com/index/agents/");
 });
 
@@ -157,9 +157,7 @@ test("digest lists key points and hides interest IDs for multi-interest matches"
       references: [],
     },
   ]);
-  expect(output.text).toContain(
-    "Matched your interest: self-hosted, model routing",
-  );
+  expect(output.text).not.toContain("Matched your interest");
   expect(output.text).not.toMatch(/interest:[a-z-]+@/);
   expect(output.text).toContain("- First claim\n- Second claim\n- Third claim");
   expect(output.text).not.toContain("Fourth claim");
@@ -245,7 +243,8 @@ test("story headings sit under the section heading and the match note stays shor
     },
   ]);
   expect(output.html).toContain("<h3>Story</h3>");
-  expect(output.text).toContain("Matched your interest: one, two, three");
+  expect(output.html).not.toContain("Matched your interest");
+  expect(output.text).not.toContain("Matched your interest");
   expect(output.text).not.toContain("four");
 });
 
@@ -267,6 +266,6 @@ test("a citation without a public link keeps its source name and native id", () 
     },
   ]);
   expect(output.text).toBe(
-    "Newspulse — 2026-11-19\n\nEmail-only story\nMatched your interest: reading\nSources: d6c299e0-b722-459d-90b6-9c943142dc95 (4c49e37a-8f3a-4b0f-b9fb-452e2124cca5)",
+    "Newspulse — 2026-11-19\n\nEmail-only story\nSources: d6c299e0-b722-459d-90b6-9c943142dc95 (4c49e37a-8f3a-4b0f-b9fb-452e2124cca5)",
   );
 });

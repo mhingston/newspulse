@@ -1,7 +1,7 @@
 import type { Interest } from "./profiles";
 
 /** Version this whenever a rule, range or weight changes. */
-export const SCORING_CRITERIA_VERSION = "deterministic-v3";
+export const SCORING_CRITERIA_VERSION = "deterministic-v4";
 export type ScoreComponent =
   | "relevance"
   | "novelty"
@@ -68,15 +68,30 @@ function contains(text: string, phrase: string): boolean {
   );
 }
 
-/** Transparent lexical baseline. It does not assert that claims are true. */
+/**
+ * Newsletter and feed markup (image, tracking and link URLs) yields tokens that
+ * match interest terms without describing the story, so matching ignores it.
+ */
+function withoutUrls(value: string): string {
+  return value.replace(/https?:\/\/\S+/gi, " ");
+}
+
+/**
+ * Transparent lexical baseline. It does not assert that claims are true.
+ * An interest matches when a term appears in the title or when at least two
+ * distinct terms appear in the body; one passing body mention is not enough.
+ */
 export function scoreItem(input: ScoringInput): ScoreResult {
-  const text = `${input.title}\n${input.text}`;
+  const title = withoutUrls(input.title);
+  const text = `${title}\n${withoutUrls(input.text)}`;
   const uncertainty: string[] = [];
   const reasons: string[] = [];
   const matches = input.interests.map((interest) => {
-    const matched = [...interest.entities, ...interest.keywords].filter(
-      (term) => contains(text, term),
-    );
+    const terms = [...new Set([...interest.entities, ...interest.keywords])];
+    const titleHits = terms.filter((term) => contains(title, term));
+    const bodyHits = terms.filter((term) => contains(text, term));
+    const matched =
+      titleHits.length > 0 || bodyHits.length >= 2 ? bodyHits : [];
     const positives = interest.positive.filter((term) => contains(text, term));
     const negatives = interest.negative.filter((term) => contains(text, term));
     return { interest, matched, positives, negatives };
