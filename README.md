@@ -1,14 +1,14 @@
 # Newspulse
 
-**A self-hosted personal discovery engine.** Newspulse ingests what you already follow, searches outside it on a budget you set, and keeps a durable, source-linked record that you can question through MCP or read in a daily email.
+**A self-hosted personal curation and discovery engine.** Newspulse ingests the feeds, newsletters, repositories and discussions you follow, optionally searches outside them on a budget you set, and keeps a durable, source-linked record that you can question through MCP or read in a daily email.
 
-It is not a feed reader. There is no unread counter and no dashboard: the point of the project is the material you would not have found anyway.
+It is not a traditional feed reader. There is no unread counter and no dashboard: instead of handing back a chronological list to triage, Newspulse ranks, deduplicates and summarizes across your subscriptions and optional discovery sources to surface what actually matters.
 
 ## The problem
 
-Following a few feeds is easy. Keeping up with a field is not. The writing that changes your mind is scattered across newsletters you skim, repositories you never starred, threads you never opened, and publications whose names you do not know yet. A reader solves the plumbing and hands back a longer list.
+Following a few feeds is easy. Keeping up with a field is not. The writing that changes your mind is scattered across blogs, YouTube channels, newsletters you skim, repositories you track, threads you never opened, and publications whose names you do not know yet. A reader solves the plumbing and hands back a longer list.
 
-Newspulse starts from the other end. Your subscriptions are the seed, not the product:
+Newspulse turns that stream into a curated brief and searchable memory:
 
 - **Ingest** — RSS/Atom and OPML, email newsletters, GitHub releases and activity, Hacker News discussions, and URLs you submit yourself.
 - **Process** — article extraction, optional structured summaries, story grouping, and explainable scoring. Every item is searchable the moment it is ingested; extraction, analysis and scoring catch up in the background.
