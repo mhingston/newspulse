@@ -24,6 +24,17 @@ const schema = z
     ANALYSIS_TOTAL_MICROS: z.coerce.number().int().safe().positive(),
     ANALYSIS_CALL_MICROS: z.coerce.number().int().safe().positive(),
     ANALYSIS_DAILY_MICROS: z.coerce.number().int().safe().positive().optional(),
+    ANALYSIS_MAX_OUTPUT_TOKENS: z.coerce
+      .number()
+      .int()
+      .safe()
+      .positive()
+      .max(16000)
+      .optional(),
+    ANALYSIS_REASONING_EFFORT: z
+      .enum(["none", "minimal", "low", "medium", "high"])
+      .optional()
+      .or(z.literal("").transform(() => undefined)),
   })
   .refine((x) => x.ANALYSIS_CALL_MICROS <= x.ANALYSIS_TOTAL_MICROS)
   .refine(
@@ -51,6 +62,8 @@ export function analysisConfig(
     maxTokens: parsed.ANALYSIS_TOTAL_TOKENS,
     maxMicros: parsed.ANALYSIS_TOTAL_MICROS,
     maxDailyMicros: parsed.ANALYSIS_DAILY_MICROS ?? null,
+    maxOutputTokens: parsed.ANALYSIS_MAX_OUTPUT_TOKENS ?? 4000,
+    reasoningEffort: parsed.ANALYSIS_REASONING_EFFORT,
     reserveTokens: 18000,
     reserveMicros: parsed.ANALYSIS_CALL_MICROS,
   };

@@ -101,7 +101,15 @@ const scheduler = schedule(
           adapter: new HackerNewsAdapter(),
         },
       ],
-      new RssAdapter(),
+      new RssAdapter(
+        undefined,
+        undefined,
+        new Set(
+          cfg.RSS_FANOUT_FEEDS.split(",")
+            .map((s) => s.trim())
+            .filter(Boolean),
+        ),
+      ),
     ),
     pollConfig(),
   ),
@@ -123,8 +131,9 @@ const scheduler = schedule(
               model: analysis.model,
               apiKey: analysis.apiKey,
               maxInputChars: 16000,
-              maxOutputTokens: 1000,
-              timeoutMs: 45000,
+              maxOutputTokens: analysis.maxOutputTokens,
+              timeoutMs: 90000,
+              reasoningEffort: analysis.reasoningEffort,
             }),
             new AnalysisBudget(store.sqlite, {
               maxTokens: analysis.maxTokens,

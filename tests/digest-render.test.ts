@@ -152,6 +152,8 @@ test("digest lists key points and hides interest IDs for multi-interest matches"
         "Second claim",
         "Third claim",
         "Fourth claim",
+        "Fifth claim",
+        "Sixth claim",
       ],
       uncertainty: [],
       references: [],
@@ -159,10 +161,12 @@ test("digest lists key points and hides interest IDs for multi-interest matches"
   ]);
   expect(output.text).not.toContain("Matched your interest");
   expect(output.text).not.toMatch(/interest:[a-z-]+@/);
-  expect(output.text).toContain("- First claim\n- Second claim\n- Third claim");
-  expect(output.text).not.toContain("Fourth claim");
-  expect(output.html).toContain("<li>Third claim</li>");
-  expect(output.html).not.toContain("Fourth claim");
+  expect(output.text).toContain(
+    "- First claim\n- Second claim\n- Third claim\n- Fourth claim\n- Fifth claim",
+  );
+  expect(output.text).not.toContain("Sixth claim");
+  expect(output.html).toContain("<li>Fifth claim</li>");
+  expect(output.html).not.toContain("Sixth claim");
 });
 
 test("digest labels a cited source with its own title", () => {

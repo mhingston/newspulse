@@ -7,6 +7,7 @@ const schema = z
     MCP_TOKEN: z.string().trim().min(24),
     ALLOWED_HOSTS: z.string().default("localhost,127.0.0.1"),
     TRUSTED_PRIVATE_FEEDS: z.string().default(""),
+    RSS_FANOUT_FEEDS: z.string().default(""),
     ALLOWED_ORIGINS: z.string().default(""),
     GITHUB_TOKEN: z
       .string()

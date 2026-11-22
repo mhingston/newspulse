@@ -1618,6 +1618,12 @@ export class Store {
         candidate.sourceUrl ?? candidate.url ?? null,
         parentId ?? null,
       );
+    // Passive re-links from newsletters or feed children to an already-ingested
+    // item carry no new body; record provenance without emitting a fresh
+    // observation that would resurrect old items into the 24h digest window.
+    if (owner && parentId && !candidate.text) {
+      return item.id;
+    }
     this.sqlite
       .query(
         "INSERT INTO content_versions(item_id,source_id,native_id,title,text,url,observed_at) VALUES(?,?,?,?,?,?,?)",

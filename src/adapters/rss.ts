@@ -65,11 +65,84 @@ function atomText(node: XmlElement | undefined): TextConstruct {
     return { html: "", text: normalizeText(xmlText(node)) };
   return { html: "", text: "" };
 }
+const MEDIA_NS = "http://search.yahoo.com/mrss/";
+const CHILD_OPAQUE_OR_AD_HOSTS =
+  /(?:^|\.)(?:list-manage\.com|mailchi\.mp|click\.redditmail\.com|email\.mg\.substack\.com|doubleclick\.net|googlesyndication\.com|googleadservices\.com|adservice\.google\.com|adnxs\.com|taboola\.com|outbrain\.com|t\.co)$/i;
+const CHILD_SOCIAL_HOSTS =
+  /(?:^|\.)(?:linkedin\.com|x\.com|twitter\.com|facebook\.com|instagram\.com|youtube\.com|threads\.net|bsky\.app)$/i;
+const CHILD_CHROME_PATH =
+  /(?:^|[\/_.-])(unsubscribe|optout|preferences|privacy|terms|login|signin|signup|account|pricing|careers|advertise|sponsor|tracking|track|pixel|beacon)(?:[\/_.?=&-]|$)/i;
+const CHILD_BINARY_EXT =
+  /\.(?:mp3|mp4|m4a|mov|avi|zip|png|jpg|jpeg|gif|webp|svg|ico)(?:$|\?)/i;
+const CHILD_SPONSORED_OR_CTA =
+  /(?:[\(\[]\s*sponsored\s*[\)\]]|\b(?:sponsored(?:\s+(?:post|content|by|article|listing))?|advertisement|advertorial|partner content|brought to you by)\b|^(?:here|click here|sign up(?: here)?|read more|read here|view(?: online| image)?|subscribe(?: now)?|unsubscribe|manage (?:your )?(?:preferences|subscription)|join the discussion|more on our site|comments?|reply|share|forward|learn more|get started|try it|book a demo|sponsored)$)/i;
+
+export function isYouTubeShortUrl(raw: string | null | undefined): boolean {
+  if (!raw) return false;
+  try {
+    const parsed = new URL(raw);
+    const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+    return (
+      (host === "youtube.com" ||
+        host === "m.youtube.com" ||
+        host === "youtube-nocookie.com") &&
+      /^\/shorts(?:\/|$)/i.test(parsed.pathname)
+    );
+  } catch {
+    return false;
+  }
+}
+
+export function isCandidateChildLink(rawUrl: string, title: string): boolean {
+  if (isYouTubeShortUrl(rawUrl)) return false;
+  const trimmedTitle = title.trim();
+  if (trimmedTitle && CHILD_SPONSORED_OR_CTA.test(trimmedTitle)) return false;
+  let parsed: URL;
+  try {
+    parsed = new URL(rawUrl);
+  } catch {
+    return false;
+  }
+  const host = parsed.hostname.toLowerCase();
+  if (CHILD_OPAQUE_OR_AD_HOSTS.test(host)) return false;
+  const decodedPath = (() => {
+    try {
+      return decodeURIComponent(parsed.pathname);
+    } catch {
+      return parsed.pathname;
+    }
+  })();
+  // Bare root/product homepages (e.g. https://elevenlabs.io/) are not stories.
+  if (
+    (decodedPath === "" || decodedPath === "/") &&
+    parsed.searchParams.size === 0
+  )
+    return false;
+  if (
+    CHILD_SOCIAL_HOSTS.test(host) &&
+    decodedPath.split("/").filter(Boolean).length <= 1
+  )
+    return false;
+  if (CHILD_CHROME_PATH.test(decodedPath) || CHILD_BINARY_EXT.test(decodedPath))
+    return false;
+  return true;
+}
+
+function mediaDescription(entry: XmlElement): TextConstruct {
+  const group = child(entry, "group", MEDIA_NS);
+  const desc =
+    (group ? child(group, "description", MEDIA_NS) : undefined) ??
+    child(entry, "description", MEDIA_NS);
+  const text = normalizeText(xmlText(desc));
+  return { html: "", text };
+}
+
 export function parseFeed(
   xml: string,
   base: string,
   maxEntries = 1000,
   diagnostics?: { entryCount: number; xmlRepairs?: number },
+  options?: { fanout?: boolean },
 ): Candidate[] {
   const xmlDiagnostics = { repairs: 0 };
   const root = parseXml(xml, base, xmlDiagnostics);
@@ -88,95 +161,108 @@ export function parseFeed(
       ? childElements(channel, "item")
       : childElements(root, "item", "http://purl.org/rss/1.0/");
   if (diagnostics) diagnostics.entryCount = entries.length;
-  return entries.slice(0, maxEntries).map((e) => {
-    const linkNode = atom
-      ? childElements(e, "link").find(
-          (l) => !l.attributes.rel || l.attributes.rel === "alternate",
-        )
-      : child(e, "link");
-    const sourceUrl = urlOrUndefined(
-      atom ? (linkNode?.attributes.href ?? "") : xmlText(linkNode),
-      linkNode?.base ?? e.base,
-    );
-    const url = sourceUrl ? canonicalUrl(sourceUrl) : undefined;
-    const contentNode = atom ? child(e, "content") : undefined;
-    const inline = atom ? atomText(contentNode) : undefined;
-    const summaryNode = atom ? child(e, "summary") : undefined;
-    const body: TextConstruct = atom
-      ? inline?.text
-        ? inline
-        : atomText(summaryNode)
-      : (() => {
-          const html = xmlText(
-            child(e, "encoded", "http://purl.org/rss/1.0/modules/content/") ??
-              child(e, "content") ??
-              child(e, "description") ??
-              child(e, "summary"),
-          );
-          return { html, text: cleanText(html) };
-        })();
-    const title =
-      (atom
-        ? atomText(child(e, "title")).text
-        : cleanText(xmlText(child(e, "title")))) ||
-      url ||
-      "Untitled";
-    const date = Date.parse(
-      xmlText(
-        child(e, atom ? "published" : "pubDate") ??
-          child(e, "updated") ??
-          child(e, "date", "http://purl.org/dc/elements/1.1/"),
-      ),
-    );
-    const nativeId =
-      xmlText(child(e, atom ? "id" : "guid")).trim() ||
-      (rdf
-        ? identifierOrUndefined(
-            e.attributes[
-              "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about"
-            ] ?? "",
-            e.base,
+  const fanoutEnabled = options?.fanout ?? true;
+  return entries
+    .slice(0, maxEntries)
+    .map((e) => {
+      const linkNode = atom
+        ? childElements(e, "link").find(
+            (l) => !l.attributes.rel || l.attributes.rel === "alternate",
           )
-        : undefined) ||
-      url ||
-      `sha256:${createHash("sha256")
-        .update(title + "\n" + (body.html || body.text))
-        .digest("hex")}`;
-    const links = new Map<
-      string,
-      { url: string; sourceUrl: string; title: string }
-    >();
-    const linkBase = atom
-      ? ((inline?.text ? contentNode : summaryNode)?.base ?? e.base)
-      : (sourceUrl ?? e.base);
-    for (const m of body.html.matchAll(
-      /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
-    )) {
-      const original = urlOrUndefined(decodeHTMLAttribute(m[1]!), linkBase);
-      if (!original) continue;
-      const canonical = canonicalUrl(original);
-      if (canonical !== url && !links.has(canonical))
-        links.set(canonical, {
-          url: canonical,
-          sourceUrl: original,
-          title: cleanText(m[2]!) || original,
-        });
-    }
-    const children =
-      links.size >= 5 &&
-      new Set([...links.keys()].map((x) => new URL(x).hostname)).size >= 3
-        ? [...links.values()].slice(0, 50)
-        : [];
-    return {
-      nativeId,
-      url,
-      sourceUrl,
-      title,
-      text: body.text,
-      publishedAt: Number.isFinite(date) ? date : undefined,
-      children,
-    };
-  });
+        : child(e, "link");
+      const sourceUrl = urlOrUndefined(
+        atom ? (linkNode?.attributes.href ?? "") : xmlText(linkNode),
+        linkNode?.base ?? e.base,
+      );
+      if (isYouTubeShortUrl(sourceUrl)) return null;
+      const url = sourceUrl ? canonicalUrl(sourceUrl) : undefined;
+      const contentNode = atom ? child(e, "content") : undefined;
+      const inline = atom ? atomText(contentNode) : undefined;
+      const summaryNode = atom ? child(e, "summary") : undefined;
+      const atomSummary = atom ? atomText(summaryNode) : undefined;
+      const body: TextConstruct = atom
+        ? inline?.text
+          ? inline
+          : atomSummary?.text
+            ? atomSummary
+            : mediaDescription(e)
+        : (() => {
+            const html = xmlText(
+              child(e, "encoded", "http://purl.org/rss/1.0/modules/content/") ??
+                child(e, "content") ??
+                child(e, "description") ??
+                child(e, "summary"),
+            );
+            return { html, text: cleanText(html) };
+          })();
+      const title =
+        (atom
+          ? atomText(child(e, "title")).text
+          : cleanText(xmlText(child(e, "title")))) ||
+        url ||
+        "Untitled";
+      const date = Date.parse(
+        xmlText(
+          child(e, atom ? "published" : "pubDate") ??
+            child(e, "updated") ??
+            child(e, "date", "http://purl.org/dc/elements/1.1/"),
+        ),
+      );
+      const nativeId =
+        xmlText(child(e, atom ? "id" : "guid")).trim() ||
+        (rdf
+          ? identifierOrUndefined(
+              e.attributes[
+                "{http://www.w3.org/1999/02/22-rdf-syntax-ns#}about"
+              ] ?? "",
+              e.base,
+            )
+          : undefined) ||
+        url ||
+        `sha256:${createHash("sha256")
+          .update(title + "\n" + (body.html || body.text))
+          .digest("hex")}`;
+      const links = new Map<
+        string,
+        { url: string; sourceUrl: string; title: string }
+      >();
+      if (fanoutEnabled && body.html) {
+        const linkBase = atom
+          ? ((inline?.text ? contentNode : summaryNode)?.base ?? e.base)
+          : (sourceUrl ?? e.base);
+        for (const m of body.html.matchAll(
+          /<a\b[^>]*href\s*=\s*["']([^"']+)["'][^>]*>([\s\S]*?)<\/a>/gi,
+        )) {
+          const original = urlOrUndefined(decodeHTMLAttribute(m[1]!), linkBase);
+          if (!original) continue;
+          const anchorTitle = cleanText(m[2]!);
+          if (!isCandidateChildLink(original, anchorTitle)) continue;
+          const canonical = canonicalUrl(original);
+          if (canonical !== url && !links.has(canonical))
+            links.set(canonical, {
+              url: canonical,
+              sourceUrl: original,
+              title: anchorTitle || original,
+            });
+        }
+      }
+      const children =
+        fanoutEnabled &&
+        links.size >= 5 &&
+        new Set([...links.keys()].map((x) => new URL(x).hostname)).size >= 3
+          ? [...links.values()].slice(0, 50)
+          : [];
+      return {
+        nativeId,
+        url,
+        sourceUrl,
+        title,
+        text: body.text,
+        publishedAt: Number.isFinite(date) ? date : undefined,
+        children,
+      };
+    })
+    .filter((item): item is NonNullable<typeof item> => item !== null);
 }
 export class HttpError extends Error {
   constructor(
@@ -196,6 +282,7 @@ export class RssAdapter implements SourceAdapter {
       maxEntries: 1000,
       maxBytes: 5000000,
     },
+    private fanoutFeeds?: ReadonlySet<string>,
   ) {}
   async poll(
     url: string,
@@ -250,11 +337,17 @@ export class RssAdapter implements SourceAdapter {
       offset += c.length;
     }
     const diagnostics = { entryCount: 0, xmlRepairs: 0 };
+    const fanout =
+      this.fanoutFeeds === undefined
+        ? true
+        : this.fanoutFeeds.has(url) ||
+          (response.url ? this.fanoutFeeds.has(response.url) : false);
     const items = parseFeed(
       decodeFeed(bytes, response.headers.get("content-type")),
       response.url || url,
       limits.maxEntries,
       diagnostics,
+      { fanout },
     );
     return {
       items,

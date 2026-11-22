@@ -54,12 +54,12 @@ function caveatNotes(values: string[]): string[] {
     .slice(0, 3)
     .map((value) => (value.length > 200 ? `${value.slice(0, 197)}...` : value));
 }
-/** Up to three claim statements, trimmed, so the email reads as a short list of key points. */
+/** Up to five claim statements, trimmed, so the email reads as a concise list of key points. */
 function keyPointList(values: string[] | undefined): string[] {
   return (values ?? [])
     .map((value) => value.trim())
     .filter(Boolean)
-    .slice(0, 3)
+    .slice(0, 5)
     .map((value) => (value.length > 240 ? `${value.slice(0, 237)}...` : value));
 }
 /**
@@ -182,16 +182,19 @@ export function renderDigest(
           .map((value) => `<li>${escapeHtml(value)}</li>`)
           .join("")}</ul>`
       : "";
-    const sourceList = links
-      .map(({ ref, url }) =>
-        url
-          ? `<li><a href="${escapeHtml(url)}">${escapeHtml(referenceLabel({ title: ref.title, url }, item.title))}</a></li>`
-          : `<li><span>${escapeHtml(unlinkedLabel(ref))}</span></li>`,
-      )
-      .join("");
-    const sources = sourceList
-      ? `<p style="color:#666;font-size:13px;margin:8px 0 0">Sources</p><ul style="font-size:13px">${sourceList}</ul>`
-      : "";
+    const singlePrimary =
+      links.length === 1 && links[0]!.url !== null && links[0]!.url === primary;
+    const sources = singlePrimary
+      ? `<p style="color:#666;font-size:13px;margin:6px 0 0"><a href="${escapeHtml(links[0]!.url!)}" style="color:#666">${escapeHtml(referenceLabel({ title: links[0]!.ref.title, url: links[0]!.url! }, item.title))}</a></p>`
+      : links.length
+        ? `<p style="color:#666;font-size:13px;margin:8px 0 0">Sources</p><ul style="font-size:13px">${links
+            .map(({ ref, url }) =>
+              url
+                ? `<li><a href="${escapeHtml(url)}">${escapeHtml(referenceLabel({ title: ref.title, url }, item.title))}</a></li>`
+                : `<li><span>${escapeHtml(unlinkedLabel(ref))}</span></li>`,
+            )
+            .join("")}</ul>`
+        : "";
     // Delivery injects scoped feedback links between these stable markers;
     // the frozen body itself never carries a token.
     return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;

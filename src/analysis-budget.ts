@@ -130,14 +130,33 @@ export class AnalysisBudget {
         .run().changes === 1
     );
   }
-  reconcile(key: string): boolean {
-    return (
-      this.db
-        .query(
-          "UPDATE analysis_reservations SET key=?,status='reconciled' WHERE key=? AND status='reserved'",
-        )
-        .run(`${key}:reconciled:${crypto.randomUUID()}`, key).changes === 1
-    );
+  reconcile(key: string, tokens: number | null = null): boolean {
+    if (tokens !== null && (!Number.isSafeInteger(tokens) || tokens < 0))
+      throw new Error("Invalid usage");
+    return this.db
+      .transaction(() => {
+        const reservation = this.db
+          .query<{ tokens: number }, [string]>(
+            "SELECT tokens FROM analysis_reservations WHERE key=? AND status='reserved'",
+          )
+          .get(key);
+        if (!reservation) return false;
+        if (tokens !== null && tokens > reservation.tokens)
+          this.db
+            .query(
+              "INSERT INTO analysis_control(id,envelope_breach) VALUES(1,1) ON CONFLICT(id) DO UPDATE SET envelope_breach=1",
+            )
+            .run();
+        return (
+          this.db
+            .query(
+              "UPDATE analysis_reservations SET key=?,tokens=coalesce(?,tokens),status='reconciled' WHERE key=? AND status='reserved'",
+            )
+            .run(`${key}:reconciled:${crypto.randomUUID()}`, tokens, key)
+            .changes === 1
+        );
+      })
+      .immediate();
   }
   settle(key: string, usage: { tokens: number; micros: number }): boolean {
     if (

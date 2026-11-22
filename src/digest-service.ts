@@ -8,6 +8,7 @@ import {
 } from "./curation";
 import { renderDigest } from "./digest-render";
 import { SCORING_CRITERIA_VERSION } from "./scoring";
+import { isYouTubeShortUrl } from "./adapters/rss";
 
 const MAX_CANDIDATES = 500;
 export interface DigestOptions {
@@ -38,9 +39,14 @@ export const digestDefaults = (
  * Without a model summary, the feed's own description is the reader's
  * summary. It is truncated to a short lead rather than summarised.
  */
+function isBoilerplateText(value: string): boolean {
+  return /About\s*Press\s*Copyright\s*Contact us\s*Creator(?:s)?\s*Advertise/i.test(
+    value,
+  );
+}
 function feedSummary(text: string | null): string | null {
   const value = text?.replace(/\s+/g, " ").trim() ?? "";
-  if (!value) return null;
+  if (!value || isBoilerplateText(value)) return null;
   if (value.length <= 280) return value;
   const cut = value.slice(0, 280);
   const end = cut.lastIndexOf(" ");
@@ -68,6 +74,19 @@ function isNavigationTitle(title: string): boolean {
   if (/\]\(/.test(value)) return true;
   return /^(?:join the discussion|more on our site|follow image link|read more|view online|share|reply|comments?)(?:\b|:)/i.test(
     value,
+  );
+}
+/** Explicit sponsorship labels (e.g. "(Sponsored)", "Sponsored: ...") are excluded. */
+function isSponsoredTitle(title: string): boolean {
+  const value = title.trim();
+  return (
+    /[\(\[]\s*(?:sponsored|partner\s+content|advertisement|ad)\s*[\)\]]/i.test(
+      value,
+    ) ||
+    /^(?:sponsored|advertisement|advertorial|partner\s+content)\s*[:\-–—]/i.test(
+      value,
+    ) ||
+    /\bsponsored\s+(?:post|content|by|article|listing)\b/i.test(value)
   );
 }
 function validateDate(date: string, timezone: string) {
@@ -202,19 +221,22 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
       {
         item_id: string;
         title: string;
+        url: string | null;
         group_id: string | null;
         score_id: string;
         result: string;
         provenance: string | null;
         summary: string | null;
         page_title: string | null;
+        extracted_text: string | null;
         feed_text: string | null;
       },
       string[]
     >(
-      `SELECT i.id AS item_id,i.title,m.group_id,s.id AS score_id,s.result,CASE WHEN length(CAST(s.provenance AS BLOB))<=200000 THEN s.provenance ELSE NULL END AS provenance,
+      `SELECT i.id AS item_id,i.title,i.url,m.group_id,s.id AS score_id,s.result,CASE WHEN length(CAST(s.provenance AS BLOB))<=200000 THEN s.provenance ELSE NULL END AS provenance,
     (SELECT a.result FROM analyses a WHERE a.item_id=i.id AND a.generation=j.generation ORDER BY a.created_at DESC,a.rowid DESC LIMIT 1) AS summary,
     (SELECT json_extract(e.result,'$.title') FROM processing_jobs e WHERE e.item_id=i.id AND e.stage='extract' AND e.status='done' AND e.outcome='extracted' AND e.generation=j.generation LIMIT 1) AS page_title,
+    (SELECT substr(json_extract(e.result,'$.text'),1,1000) FROM processing_jobs e WHERE e.item_id=i.id AND e.stage='extract' AND e.status='done' AND e.outcome='extracted' AND e.generation=j.generation LIMIT 1) AS extracted_text,
     (SELECT c.text FROM content c WHERE c.item_id=i.id AND c.purged_at IS NULL AND length(CAST(c.text AS BLOB))<=20000) AS feed_text
     FROM items i JOIN processing_jobs j ON j.item_id=i.id AND j.stage='score'
     JOIN item_scores s ON s.id=(SELECT x.id FROM item_scores x WHERE x.item_id=i.id AND x.generation=j.generation ORDER BY x.created_at DESC,x.rowid DESC LIMIT 1)
@@ -316,6 +338,8 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
   const candidates: CurationCandidate[] = rows
     .filter((row) => !limitedIds.has(row.item_id))
     .filter((row) => !isNavigationTitle(row.title))
+    .filter((row) => !isSponsoredTitle(row.title))
+    .filter((row) => !isYouTubeShortUrl(row.url))
     .map((row) => {
       const score = JSON.parse(row.result) as {
         total: number;
@@ -329,7 +353,10 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
             claims?: { statement: string }[];
           })
         : null;
-      const summary = analysis?.summary ?? feedSummary(row.feed_text);
+      const summary =
+        analysis?.summary ??
+        feedSummary(row.feed_text) ??
+        feedSummary(row.extracted_text);
       const keyPoints = Array.isArray(analysis?.claims)
         ? analysis.claims.map((claim) => claim.statement)
         : [];

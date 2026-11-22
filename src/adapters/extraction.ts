@@ -184,6 +184,130 @@ function captureFeedLinks(document: Document, base: string): string[] {
   }
   return links;
 }
+function isYouTubeUrl(url: URL): boolean {
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  return (
+    host === "youtube.com" ||
+    host === "m.youtube.com" ||
+    host === "youtube-nocookie.com" ||
+    host === "youtu.be"
+  );
+}
+
+function isYouTubeShortUrl(url: URL): boolean {
+  const host = url.hostname.toLowerCase().replace(/^www\./, "");
+  return (
+    (host === "youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "youtube-nocookie.com") &&
+    /^\/shorts(?:\/|$)/i.test(url.pathname)
+  );
+}
+
+function isYouTubeBoilerplateText(value: string): boolean {
+  return /About\s*Press\s*Copyright\s*Contact us\s*Creator(?:s)?\s*Advertise/i.test(
+    value,
+  );
+}
+
+/**
+ * Extract structured JSON assigned to a JS variable in a YouTube watch page
+ * by matching balanced braces so nested strings/objects parse cleanly.
+ */
+function extractAssignedJson(html: string, marker: string): unknown | null {
+  const idx = html.indexOf(marker);
+  if (idx < 0) return null;
+  const start = html.indexOf("{", idx + marker.length);
+  if (start < 0) return null;
+  let depth = 0;
+  let inString = false;
+  let escaped = false;
+  for (let i = start; i < html.length; i++) {
+    const ch = html[i]!;
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === "\\") escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === "{") depth++;
+    else if (ch === "}") {
+      depth--;
+      if (depth === 0) {
+        try {
+          return JSON.parse(html.slice(start, i + 1));
+        } catch {
+          return null;
+        }
+      }
+    }
+  }
+  return null;
+}
+
+function extractYouTubeMetadata(
+  html: string,
+): { title?: string; text: string } | null {
+  const player = extractAssignedJson(html, "ytInitialPlayerResponse") as {
+    videoDetails?: {
+      title?: string;
+      author?: string;
+      shortDescription?: string;
+    };
+    microformat?: {
+      playerMicroformatRenderer?: {
+        title?: { simpleText?: string };
+        description?: { simpleText?: string };
+        ownerChannelName?: string;
+      };
+    };
+  } | null;
+  const micro = player?.microformat?.playerMicroformatRenderer;
+  let fallbackTitle = "";
+  let fallbackDesc = "";
+  if (!player?.videoDetails?.title || !player?.videoDetails?.shortDescription) {
+    const { document } = parseHTML(html);
+    fallbackTitle =
+      document
+        .querySelector('meta[property="og:title"],meta[name="title"]')
+        ?.getAttribute("content")
+        ?.trim() || "";
+    fallbackDesc =
+      document
+        .querySelector('meta[name="description"],meta[property="og:description"]')
+        ?.getAttribute("content") ?? "";
+  }
+  const rawTitle =
+    player?.videoDetails?.title?.trim() ||
+    micro?.title?.simpleText?.trim() ||
+    fallbackTitle;
+  const cleanTitle =
+    rawTitle && !/^(?:[-–—]\s*)?youtube(?:\s+video)?$/i.test(rawTitle)
+      ? rawTitle.replace(/\s+/g, " ").trim().slice(0, 300)
+      : undefined;
+  const author =
+    player?.videoDetails?.author?.trim() ||
+    micro?.ownerChannelName?.trim() ||
+    "";
+  const description = (
+    player?.videoDetails?.shortDescription ??
+    micro?.description?.simpleText ??
+    fallbackDesc
+  )
+    .replace(/\r/g, "")
+    .trim();
+  if (!cleanTitle || !description || isYouTubeBoilerplateText(description))
+    return null;
+  const parts = [
+    cleanTitle,
+    ...(author ? [`Channel: ${author}`] : []),
+    "",
+    description,
+  ];
+  return { title: cleanTitle, text: parts.join("\n").trim() };
+}
+
 export class HttpContentExtractor implements ContentExtractor {
   // One in-flight lookup per hostname, shared by concurrent callers. A second
   // caller for the same host awaits the same result instead of failing.
@@ -202,7 +326,11 @@ export class HttpContentExtractor implements ContentExtractor {
         ? AbortSignal.any([signal, AbortSignal.timeout(15_000)])
         : AbortSignal.timeout(15_000);
       let url = new URL(resolvedUrl(input));
+      if (isYouTubeShortUrl(url))
+        return { status: "unavailable", reason: "YouTube Short skipped" };
       for (let redirects = 0; redirects <= 5; redirects++) {
+        if (isYouTubeShortUrl(url))
+          return { status: "unavailable", reason: "YouTube Short skipped" };
         const host = url.hostname.replace(/^\[|\]$/g, "");
         let addresses: string[];
         if (isIP(host)) addresses = [host];
@@ -271,8 +399,22 @@ export class HttpContentExtractor implements ContentExtractor {
         let feedLinks: string[] | undefined;
         let interstitial = false;
         let pageTitle: string | undefined;
+        let method = "http";
         if (type === "text/html") {
+          if (isYouTubeUrl(url)) {
+            const yt = extractYouTubeMetadata(text);
+            if (!yt) throw new Error("YouTube video metadata unavailable");
+            return {
+              status: "extracted",
+              text: yt.text,
+              ...(yt.title ? { title: yt.title } : {}),
+              resolvedUrl: url.href,
+              method: "youtube-metadata",
+            };
+          }
           const { document } = parseHTML(text);
+          // Record feed declarations before any node removal mutates the tree.
+          feedLinks = captureFeedLinks(document, url.href);
           // Record the declared title before any node removal mutates the tree.
           const declared =
             document
@@ -282,8 +424,6 @@ export class HttpContentExtractor implements ContentExtractor {
             "";
           pageTitle =
             declared.replace(/\s+/g, " ").trim().slice(0, 300) || undefined;
-          // Record feed declarations before any node removal mutates the tree.
-          feedLinks = captureFeedLinks(document, url.href);
           const article = document.querySelector("article,main");
           const originalText = document.body?.textContent ?? "";
           interstitial =
@@ -317,6 +457,7 @@ export class HttpContentExtractor implements ContentExtractor {
         if (
           !text ||
           interstitial ||
+          isYouTubeBoilerplateText(text) ||
           /^(subscribe to continue|verify you are human|complete the captcha)[.!\s]*$/i.test(
             text,
           )
@@ -327,7 +468,7 @@ export class HttpContentExtractor implements ContentExtractor {
           text,
           ...(pageTitle ? { title: pageTitle } : {}),
           resolvedUrl: url.href,
-          method: "http",
+          method,
           ...(feedLinks && feedLinks.length > 0 ? { feedLinks } : {}),
         };
       }

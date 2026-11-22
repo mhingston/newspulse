@@ -90,6 +90,23 @@ function isProfileRoot(parsed: URL): boolean {
   );
 }
 
+function isBareRootUrl(parsed: URL): boolean {
+  return (
+    (parsed.pathname === "" || parsed.pathname === "/") &&
+    parsed.searchParams.size === 0
+  );
+}
+
+function isYouTubeShort(parsed: URL): boolean {
+  const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
+  return (
+    (host === "youtube.com" ||
+      host === "m.youtube.com" ||
+      host === "youtube-nocookie.com") &&
+    /^\/shorts(?:\/|$)/i.test(parsed.pathname)
+  );
+}
+
 function destination(
   raw: string,
 ): { sourceUrl: string; url: string } | undefined {
@@ -114,6 +131,8 @@ function destination(
       chromeUrl.test(decodeURIComponent(parsed.pathname)) ||
       platformChromeUrl.test(decodeURIComponent(parsed.pathname)) ||
       isProfileRoot(parsed) ||
+      isBareRootUrl(parsed) ||
+      isYouTubeShort(parsed) ||
       queryIsChrome(parsed)
     )
       return undefined;

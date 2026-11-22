@@ -33,7 +33,17 @@ export function analysisHandler(
     const parsed: { text?: string; sourceUrl?: string } = extracted
       ? JSON.parse(extracted)
       : {};
-    const text = parsed.text || item.text;
+    const rawText = parsed.text || item.text;
+    const titlePrefix = item.title?.trim();
+    const text =
+      rawText &&
+      titlePrefix &&
+      !rawText
+        .slice(0, Math.max(300, titlePrefix.length + 32))
+        .toLowerCase()
+        .includes(titlePrefix.toLowerCase())
+        ? `${titlePrefix}\n\n${rawText}`
+        : rawText;
     const ref = (
       item.references as {
         source_id: string;
@@ -144,11 +154,16 @@ export function analysisHandler(
       response = await client.analyse(text, source, signal, profiles);
     } catch (error) {
       if (
-        (error instanceof AnalysisHttpError &&
-          (error.status === 429 || error.status >= 500)) ||
-        error instanceof CompletedAnalysisError
+        error instanceof AnalysisHttpError &&
+        (error.status === 429 || error.status >= 500)
       )
         budget.reconcile(key);
+      else if (error instanceof CompletedAnalysisError) {
+        const used = error.usage
+          ? error.usage.inputTokens + error.usage.outputTokens
+          : null;
+        budget.reconcile(key, used);
+      }
       throw error;
     }
     const used = response.usage
