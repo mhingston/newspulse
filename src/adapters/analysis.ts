@@ -237,7 +237,9 @@ export class OpenAICompatibleAnalysis {
             .array(
               z.object({
                 finish_reason: z.string(),
-                message: z.object({ content: z.string().nullable().optional() }),
+                message: z.object({
+                  content: z.string().nullable().optional(),
+                }),
               }),
             )
             .min(1),

@@ -180,7 +180,9 @@ describe("digest quality improvements", () => {
           seenText = JSON.parse(body.messages[1].content).text;
           return new Response(
             JSON.stringify({
-              choices: [{ finish_reason: "length", message: { content: null } }],
+              choices: [
+                { finish_reason: "length", message: { content: null } },
+              ],
               usage: { prompt_tokens: 400, completion_tokens: 900 },
             }),
             { status: 200 },
@@ -267,7 +269,10 @@ describe("digest quality improvements", () => {
           <media:group><media:description>Deep dive on coding agent harnesses and token economics.</media:description></media:group>
         </entry>
       </feed>`;
-    const ytItems = parseFeed(ytAtom, "https://www.youtube.com/feeds/videos.xml");
+    const ytItems = parseFeed(
+      ytAtom,
+      "https://www.youtube.com/feeds/videos.xml",
+    );
     expect(ytItems).toHaveLength(1);
     expect(ytItems[0]!.title).toBe("Agent Harness Deep Dive");
     expect(ytItems[0]!.text).toContain("token economics");

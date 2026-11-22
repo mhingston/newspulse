@@ -275,7 +275,9 @@ function extractYouTubeMetadata(
         ?.trim() || "";
     fallbackDesc =
       document
-        .querySelector('meta[name="description"],meta[property="og:description"]')
+        .querySelector(
+          'meta[name="description"],meta[property="og:description"]',
+        )
         ?.getAttribute("content") ?? "";
   }
   const rawTitle =
