@@ -89,9 +89,10 @@ test("current scored item can be drafted and frozen without delivery, retaining 
     expect(draft.status).toBe("ready");
     if (draft.status !== "ready") throw new Error("missing draft");
     expect(draft.selected[0]!.itemId).toBe(itemId);
-    expect(draft.rendered!.text).toContain("msg-1");
-    expect(draft.rendered!.text).toContain("Unverified <claim>");
-    expect(draft.rendered!.html).toContain("Unverified &lt;claim&gt;");
+    expect(draft.rendered!.text).not.toContain("msg-1");
+    expect(draft.rendered!.text).toContain("Generated summary");
+    expect(draft.rendered!.text).not.toContain("Unverified <claim>");
+    expect(draft.rendered!.html).not.toContain("Unverified &lt;claim&gt;");
     expect(() =>
       draftDigest(store, { ...options, date: "2000-01-01" }),
     ).toThrow("local date");
@@ -125,8 +126,9 @@ test("current scored item can be drafted and frozen without delivery, retaining 
     const frozen = freezeDigest(store, options, preview.confirmation.hash);
     expect(frozen.items[0]!.item_id).toBe(itemId);
     expect(new DigestStore(store.sqlite).get(today)).toEqual(frozen);
-    expect(frozen.plain_text).toContain("msg-1");
-    expect(frozen.plain_text).toContain("Unverified <claim>");
+    expect(frozen.plain_text).not.toContain("msg-1");
+    expect(frozen.plain_text).toContain("Generated summary");
+    expect(frozen.plain_text).not.toContain("Unverified <claim>");
     const app = createApp(store, {
       token: "a-long-private-token-with-24-characters",
       allowedHosts: ["127.0.0.1"],
@@ -350,7 +352,7 @@ test("navigation link lines are not published as stories", async () => {
   }
 });
 
-test("a citation without a public link is labelled with the source name, not its id", async () => {
+test("a citation without a public link does not leak source identity into the email", async () => {
   const store = new Store(":memory:");
   try {
     new ProfileStore(store.sqlite).import([
@@ -400,8 +402,9 @@ test("a citation without a public link is labelled with the source name, not its
         "SELECT source_id FROM item_sources WHERE item_id=?",
       )
       .get(itemId)!.source_id;
-    expect(draft.rendered!.text).toContain("Example Robotics Feed (msg-7)");
+    expect(draft.rendered!.text).not.toContain("Example Robotics Feed (msg-7)");
     expect(draft.rendered!.text).not.toContain(`${sourceId} (`);
+    expect(draft.rendered!.text).not.toContain("Sources:");
   } finally {
     store.close();
   }

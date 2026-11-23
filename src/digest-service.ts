@@ -11,6 +11,8 @@ import { SCORING_CRITERIA_VERSION } from "./scoring";
 import { isYouTubeShortUrl } from "./adapters/rss";
 
 const MAX_CANDIDATES = 500;
+/** Fanned-out links per roundup parent that may be shown in an edition. */
+const MAX_ROUNDUP_CHILDREN = 12;
 export interface DigestOptions {
   date: string;
   timezone: string;
@@ -473,6 +475,19 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
       decisions: result.decisions,
       intake,
     };
+  const selectedIds = new Set(result.selected.map((item) => item.itemId));
+  const roundupChildIds = new Set(
+    store.sqlite
+      .query<{ child: string; parent: string }, [string]>(
+        "SELECT r.item_id AS child,r.parent_item_id AS parent FROM item_sources r WHERE r.parent_item_id IS NOT NULL AND r.item_id IN (SELECT value FROM json_each(?))",
+      )
+      .all(JSON.stringify([...selectedIds]))
+      .filter((row) => selectedIds.has(row.parent))
+      .map((row) => row.child),
+  );
+  result.selected = result.selected.filter(
+    (item) => !roundupChildIds.has(item.itemId),
+  );
   for (const item of result.selected) {
     const row = store.sqlite
       .query<{ provenance: string | null; size: number }, [string]>(
@@ -486,6 +501,14 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
       provenance: JSON.parse(row.provenance) as unknown,
     };
   }
+  const roundupFor = (itemId: string) =>
+    store.sqlite
+      .query<{ url: string | null; title: string }, [string, number]>(
+        `SELECT DISTINCT c.url,c.title FROM item_sources r JOIN items c ON c.id=r.item_id WHERE r.parent_item_id=? AND c.url IS NOT NULL ORDER BY c.id LIMIT ?`,
+      )
+      .all(itemId, MAX_ROUNDUP_CHILDREN)
+      .filter((child): child is { url: string; title: string } => !!child.url)
+      .map((child) => ({ url: child.url, title: child.title }));
   const rendered =
     result.status === "ready"
       ? renderDigest(
@@ -503,6 +526,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
               url: ref.url,
               title: ref.title,
             })),
+            roundup: roundupFor(item.itemId),
           })),
         )
       : null;

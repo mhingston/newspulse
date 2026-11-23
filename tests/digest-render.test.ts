@@ -23,17 +23,15 @@ test("digest escapes untrusted content, retains original citations and URL-less 
   expect(output.html).not.toContain("<script>");
   expect(output.html).not.toContain("<img");
   expect(output.html).not.toContain('href="javascript:');
-  expect(output.html).toContain("https://example.com/a?x=1&amp;y=2");
-  expect(output.html).toContain("Newsletter (message-2)");
-  expect(output.html).toContain("Caveats");
-  expect(output.html).toContain("&lt;script&gt;uncertain&lt;/script&gt;");
-  expect(output.text).toContain(
-    "Caveats:\n- <script>uncertain</script>\n- Evidence unavailable",
-  );
+  expect(output.html).toContain('href="https://example.com/a?x=1&amp;y=2"');
+  expect(output.html).not.toContain("Caveats");
+  expect(output.html).not.toContain("Sources");
+  expect(output.html).not.toContain("Evidence unavailable");
   expect(output.feedbackTargets).toEqual([
     { itemId: "item-1", actions: ["useful", "not_useful"] },
   ]);
-  expect(output.text).toContain("https://example.com/a?x=1&y=2");
+  expect(output.text).not.toContain("Caveats");
+  expect(output.text).not.toContain("Sources:");
 });
 
 test("digest links the title to the primary public source and labels readable sources", () => {
@@ -58,9 +56,8 @@ test("digest links the title to the primary public source and labels readable so
   expect(output.html).toContain(
     '<h3><a href="https://www.example.com/robotics/">Robotics update</a></h3>',
   );
-  expect(output.html).toContain(">example.com/robotics</a>");
-  expect(output.html).not.toContain("guid-123)</a>");
-  expect(output.html).toContain("<span>Newsletter (message-9)</span>");
+  expect(output.html).not.toContain("example.com/robotics</a>");
+  expect(output.html).not.toContain("Newsletter (message-9)");
   expect(output.html).not.toContain("Model summary");
   expect(output.html.match(/<p>First sentence/g)).toHaveLength(1);
   // The email keeps the first three sentences; the rest stays in the stored analysis.
@@ -118,25 +115,10 @@ test("digest turns internal interest reasons into a match note and hides raw IDs
   expect(output.html).not.toContain("Matched your interest");
   expect(output.html).not.toContain("interest:ai-coding-agents@1");
   expect(output.html).not.toContain("9c64c499-d0bb-40af-baed-47243e4e0ba7");
-  expect(output.html).toContain(">openai.com/index/agents</a>");
+  expect(output.html).toContain('href="https://openai.com/index/agents/"');
+  expect(output.html).not.toContain("9c64c499-d0bb-40af-baed-47243e4e0ba7");
   expect(output.text).not.toContain("Matched your interest");
-  expect(output.text).toContain("Sources: https://openai.com/index/agents/");
-});
-
-test("digest shows at most three trimmed uncertainty notes", () => {
-  const output = renderDigest("2026-11-17", [
-    {
-      itemId: "item-4",
-      title: "Verbose caveats",
-      why: "interest:x@1: y",
-      summary: "A summary.",
-      uncertainty: ["One", "  ", "Two", "Three", "Four", "Five"],
-      references: [],
-    },
-  ]);
-  expect(output.text).toContain("Caveats:\n- One\n- Two\n- Three");
-  expect(output.text).not.toContain("Four");
-  expect(output.html).not.toContain("<li>Four</li>");
+  expect(output.text).not.toContain("interest:ai-coding-agents@1");
 });
 
 test("digest lists key points and hides interest IDs for multi-interest matches", () => {
@@ -193,46 +175,12 @@ test("digest labels a cited source with its own title", () => {
       ],
     },
   ]);
-  expect(output.html).toContain(">Other coverage of the story</a>");
-  expect(output.text).toContain(
-    "Other coverage of the story — https://other.com/coverage",
+  // The heading links to the first public citation; the other sources are not listed.
+  expect(output.html).toContain(
+    '<h3><a href="https://example.com/main">Main story</a></h3>',
   );
-  // The story's own citation keeps the readable link label.
-  expect(output.text).toContain("Sources: https://example.com/main");
-});
-
-test("a metadata label is not used as link text and duplicate pages collapse", () => {
-  const output = renderDigest("2026-11-19", [
-    {
-      itemId: "item-8",
-      title: "Armory Castle exploits BeyondTrust",
-      why: "interest:security@1: self-hosted",
-      summary: null,
-      uncertainty: [],
-      references: [
-        {
-          source: "s1",
-          nativeId: "n1",
-          url: "https://cloud.google.com/blog/topics/armory-castle",
-          title: "published",
-        },
-        {
-          source: "s2",
-          nativeId: "n2",
-          url: "https://cloud.google.com/blog/topics/armory-castle?e=48754805#:~:text=Escalation",
-          title: "repeated",
-        },
-      ],
-    },
-  ]);
-  // The metadata labels are replaced by the readable URL, and the second
-  // citation of the same page is dropped.
-  expect(output.text).toContain(
-    "Sources: https://cloud.google.com/blog/topics/armory-castle",
-  );
-  expect(output.text).not.toContain("published —");
-  expect(output.text).not.toContain("repeated");
-  expect(output.text.match(/cloud\.google\.com/g)).toHaveLength(1);
+  expect(output.html).not.toContain("Other coverage of the story");
+  expect(output.text).not.toContain("Sources:");
 });
 
 test("story headings sit under the section heading and the match note stays short", () => {
@@ -269,7 +217,32 @@ test("a citation without a public link keeps its source name and native id", () 
       ],
     },
   ]);
-  expect(output.text).toBe(
-    "Newspulse — 2026-11-19\n\nEmail-only story\nSources: d6c299e0-b722-459d-90b6-9c943142dc95 (4c49e37a-8f3a-4b0f-b9fb-452e2124cca5)",
-  );
+  expect(output.text).toBe("Newspulse — 2026-11-19\n\nEmail-only story");
+  expect(output.html).not.toContain("d6c299e0-b722-459d-90b6-9c943142dc95");
+});
+
+test("a roundup parent lists its fanned-out public links without feedback targets for them", () => {
+  const output = renderDigest("2026-11-23", [
+    {
+      itemId: "parent-1",
+      title: "Weekly roundup",
+      why: "Roundup of tools",
+      summary: "Several tools this week.",
+      uncertainty: [],
+      references: [],
+      roundup: [
+        { url: "https://example.com/a", title: "Tool A" },
+        { url: "javascript:alert(1)", title: "Unsafe" },
+        { url: "https://example.com/a", title: "Tool A again" },
+      ],
+    },
+  ]);
+  expect(output.html).toContain("From this roundup");
+  expect(output.html).toContain('href="https://example.com/a">Tool A</a>');
+  expect(output.html).not.toContain("javascript:");
+  expect(output.text).toContain("From this roundup:");
+  expect(output.text).toContain("- Tool A — https://example.com/a");
+  expect(output.feedbackTargets.map((target) => target.itemId)).toEqual([
+    "parent-1",
+  ]);
 });

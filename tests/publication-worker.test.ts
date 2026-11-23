@@ -72,7 +72,7 @@ test("scheduler freezes and persists an outbox before sending in the configured 
     const date = localPublicationDate(now, "Pacific/Kiritimati");
     await publication.tick(now);
     expect(new DigestStore(store.sqlite).get(date)?.plain_text).toContain(
-      "msg-1",
+      "Robotics tool release",
     );
     expect(deliveries.list()).toHaveLength(1);
     expect(deliveries.list()[0]!.status).toBe("sent");

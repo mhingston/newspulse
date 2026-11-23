@@ -535,7 +535,7 @@ describe("digest quality improvements", () => {
         },
       ]);
       expect(rendered.html).not.toContain(">Sources</p>");
-      expect(rendered.html).toContain(">example.com/real</a>");
+      expect(rendered.html).toContain('href="https://example.com/real"');
     } finally {
       store.close();
     }

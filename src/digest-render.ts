@@ -13,6 +13,8 @@ export interface DigestRenderItem {
     /** Cited item's title, used as the link text when it differs from the story title. */
     title?: string;
   }[];
+  /** Links fanned out from a roundup parent, shown attributed beneath it. */
+  roundup?: { url: string; title: string }[];
 }
 export interface RenderedDigest {
   subject: string;
@@ -46,14 +48,8 @@ function publicUrl(value: string | null): string | null {
     return null;
   }
 }
-/** Show at most three uncertainty notes, each trimmed to a short line, so verbose model output stays readable. */
-function caveatNotes(values: string[]): string[] {
-  return values
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .slice(0, 3)
-    .map((value) => (value.length > 200 ? `${value.slice(0, 197)}...` : value));
-}
+/** Roundup links shown under a parent. Bounded so one roundup cannot flood the edition. */
+const MAX_ROUNDUP_LINKS = 12;
 /** Up to five claim statements, trimmed, so the email reads as a concise list of key points. */
 function keyPointList(values: string[] | undefined): string[] {
   return (values ?? [])
@@ -62,58 +58,26 @@ function keyPointList(values: string[] | undefined): string[] {
     .slice(0, 5)
     .map((value) => (value.length > 240 ? `${value.slice(0, 237)}...` : value));
 }
-/**
- * Link text captured from a page is often a label rather than a headline
- * ("published", "repeated", "read more"). Only a title that reads like one is
- * used as link text; anything else falls back to the readable URL.
- */
-function plausibleTitle(value: string | undefined): string | undefined {
-  const title = value?.trim();
-  if (!title || title.split(/\s+/).length < 2) return undefined;
-  return /^[A-Z0-9]/.test(title) ? title : undefined;
-}
-/** Link text for a cited source: its own title when distinct, else the readable URL label. */
-function referenceLabel(
-  ref: { title?: string; url: string },
-  storyTitle: string,
-): string {
-  const title = plausibleTitle(ref.title);
-  return title && title !== storyTitle ? title : linkLabel(ref.url);
-}
-/**
- * One entry per page. Grouped stories cite the same article through several
- * URLs that differ only by tracking parameters or an anchor, and repeating
- * them makes the source list look broken.
- */
-function uniqueReferences(
-  references: DigestRenderItem["references"],
-): DigestRenderItem["references"] {
+/** Public, distinct roundup links with readable labels; anything without a safe URL is dropped. */
+function roundupLinks(
+  values: DigestRenderItem["roundup"],
+): { url: string; label: string }[] {
   const seen = new Set<string>();
-  return references.filter((ref) => {
-    const url = publicUrl(ref.url);
-    if (!url) {
-      const key = `none:${ref.source}:${ref.nativeId}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    }
-    const parsed = new URL(url);
-    const key = `${parsed.hostname.replace(/^www\./, "")}${parsed.pathname.replace(/\/$/, "")}`;
-    if (seen.has(key)) return false;
+  const links: { url: string; label: string }[] = [];
+  for (const value of values ?? []) {
+    const url = publicUrl(value.url);
+    if (!url) continue;
+    const key = new URL(url).href;
+    if (seen.has(key)) continue;
     seen.add(key);
-    return true;
-  });
-}
-/** A citation with no public link keeps its source name and native id so it stays traceable. */
-function unlinkedLabel(ref: { source: string; nativeId: string }): string {
-  return `${ref.source} (${ref.nativeId})`;
-}
-/** Readable label for a public link: host plus path, without query noise. */
-function linkLabel(url: string): string {
-  const parsed = new URL(url);
-  const path =
-    parsed.pathname === "/" ? "" : parsed.pathname.replace(/\/$/, "");
-  return `${parsed.hostname.replace(/^www\./, "")}${path}`;
+    const title = value.title.replace(/\s+/g, " ").trim();
+    links.push({
+      url,
+      label: title || new URL(url).hostname.replace(/^www\./, ""),
+    });
+    if (links.length >= MAX_ROUNDUP_LINKS) break;
+  }
+  return links;
 }
 /** Keep the email summary to at most three sentences and roughly 600 characters. */
 function displaySummary(value: string): string {
@@ -158,11 +122,8 @@ export function renderDigest(
 ): RenderedDigest {
   const subject = `Newspulse — ${date}`;
   const renderHtml = (item: DigestRenderItem) => {
-    const links = uniqueReferences(item.references).map((ref) => ({
-      ref,
-      url: publicUrl(ref.url),
-    }));
-    const primary = links.find((link) => link.url)?.url ?? null;
+    const primary =
+      item.references.map((ref) => publicUrl(ref.url)).find(Boolean) ?? null;
     const heading = primary
       ? `<h3><a href="${escapeHtml(primary)}">${escapeHtml(item.title)}</a></h3>`
       : `<h3>${escapeHtml(item.title)}</h3>`;
@@ -175,40 +136,20 @@ export function renderDigest(
     const keyPoints = points.length
       ? `<ul>${points.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul>`
       : "";
-    const caveats = caveatNotes(item.uncertainty).length
-      ? `<p style="color:#666;font-size:13px;margin:8px 0 0">Caveats</p><ul style="color:#666;font-size:13px">${caveatNotes(
-          item.uncertainty,
-        )
-          .map((value) => `<li>${escapeHtml(value)}</li>`)
+    const roundup = roundupLinks(item.roundup);
+    const roundupHtml = roundup.length
+      ? `<p style="color:#666;font-size:13px;margin:8px 0 0">From this roundup</p><ul style="font-size:14px">${roundup
+          .map(
+            ({ url, label }) =>
+              `<li><a href="${escapeHtml(url)}">${escapeHtml(label)}</a></li>`,
+          )
           .join("")}</ul>`
       : "";
-    const singlePrimary =
-      links.length === 1 && links[0]!.url !== null && links[0]!.url === primary;
-    const sources = singlePrimary
-      ? `<p style="color:#666;font-size:13px;margin:6px 0 0"><a href="${escapeHtml(links[0]!.url!)}" style="color:#666">${escapeHtml(referenceLabel({ title: links[0]!.ref.title, url: links[0]!.url! }, item.title))}</a></p>`
-      : links.length
-        ? `<p style="color:#666;font-size:13px;margin:8px 0 0">Sources</p><ul style="font-size:13px">${links
-            .map(({ ref, url }) =>
-              url
-                ? `<li><a href="${escapeHtml(url)}">${escapeHtml(referenceLabel({ title: ref.title, url }, item.title))}</a></li>`
-                : `<li><span>${escapeHtml(unlinkedLabel(ref))}</span></li>`,
-            )
-            .join("")}</ul>`
-        : "";
     // Delivery injects scoped feedback links between these stable markers;
     // the frozen body itself never carries a token.
-    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${caveats}${sources}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
+    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${roundupHtml}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
   };
   const renderText = (item: DigestRenderItem) => {
-    const refs = uniqueReferences(item.references)
-      .map((ref) => {
-        const url = publicUrl(ref.url);
-        if (!url) return unlinkedLabel(ref);
-        const label = referenceLabel({ title: ref.title, url }, item.title);
-        // Only prefix a distinct title; a bare URL stays as it was.
-        return label === linkLabel(url) ? url : `${label} — ${url}`;
-      })
-      .join("; ");
     return [
       item.title,
       item.summary ? displaySummary(item.summary) : null,
@@ -217,12 +158,11 @@ export function renderDigest(
             .map((value) => `- ${value}`)
             .join("\n")
         : null,
-      caveatNotes(item.uncertainty).length
-        ? `Caveats:\n${caveatNotes(item.uncertainty)
-            .map((value) => `- ${value}`)
+      roundupLinks(item.roundup).length
+        ? `From this roundup:\n${roundupLinks(item.roundup)
+            .map(({ url, label }) => `- ${label} — ${url}`)
             .join("\n")}`
         : null,
-      `Sources: ${refs}`,
     ]
       .filter(Boolean)
       .join("\n");
