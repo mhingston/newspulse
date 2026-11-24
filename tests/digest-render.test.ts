@@ -175,12 +175,62 @@ test("digest labels a cited source with its own title", () => {
       ],
     },
   ]);
-  // The heading links to the first public citation; the other sources are not listed.
+  // The heading links to the first public citation; other citations are listed as sources.
   expect(output.html).toContain(
     '<h3><a href="https://example.com/main">Main story</a></h3>',
   );
-  expect(output.html).not.toContain("Other coverage of the story");
-  expect(output.text).not.toContain("Sources:");
+  expect(output.html).toContain(
+    '<a href="https://other.com/coverage">Other coverage of the story</a>',
+  );
+  expect(output.text).toContain("Sources:");
+  expect(output.text).toContain(
+    "- Other coverage of the story — https://other.com/coverage",
+  );
+});
+
+test("digest lists at most five other sources and drops non-public ones", () => {
+  const others = Array.from({ length: 7 }, (_, i) => ({
+    source: `s${i}`,
+    nativeId: `n${i}`,
+    url: `https://other${i}.com/story`,
+    title: `Other ${i}`,
+  }));
+  const output = renderDigest("2026-11-19", [
+    {
+      itemId: "item-cap",
+      title: "Capped",
+      why: "interest:x@1: y",
+      summary: "A summary.",
+      uncertainty: [],
+      references: [
+        {
+          source: "s9",
+          nativeId: "n9",
+          url: "https://example.com/main",
+          title: "Main",
+        },
+        {
+          source: "s10",
+          nativeId: "n10",
+          url: "ftp://example.com/file",
+          title: "Ftp",
+        },
+        {
+          source: "s11",
+          nativeId: "n11",
+          url: "https://example.com/main",
+          title: "Duplicate",
+        },
+        ...others,
+      ],
+    },
+  ]);
+  expect(output.text).not.toContain("Ftp");
+  expect(output.text).not.toContain("Duplicate");
+  expect(output.text).toContain("- Other 0 — https://other0.com/story");
+  expect(output.text).toContain("- Other 4 — https://other4.com/story");
+  expect(output.text).not.toContain("Other 5");
+  expect(output.html).not.toContain("ftp://");
 });
 
 test("story headings sit under the section heading and the match note stays short", () => {

@@ -48,6 +48,37 @@ function publicUrl(value: string | null): string | null {
     return null;
   }
 }
+/** The first public citation, used as the story heading link. */
+function primaryLink(
+  references: DigestRenderItem["references"],
+): string | null {
+  return references.map((ref) => publicUrl(ref.url)).find(Boolean) ?? null;
+}
+
+/** Other public citations of the same development, shown after the primary link. */
+const MAX_SOURCE_LINKS = 5;
+function sourceLinks(
+  references: DigestRenderItem["references"],
+  primary: string | null,
+): { url: string; label: string }[] {
+  const seen = new Set<string>(primary ? [new URL(primary).href] : []);
+  const links: { url: string; label: string }[] = [];
+  for (const ref of references) {
+    const url = publicUrl(ref.url);
+    if (!url) continue;
+    const key = new URL(url).href;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    const title = (ref.title ?? "").replace(/\s+/g, " ").trim();
+    links.push({
+      url,
+      label: title || new URL(url).hostname.replace(/^www\./, ""),
+    });
+    if (links.length >= MAX_SOURCE_LINKS) break;
+  }
+  return links;
+}
+
 /** Roundup links shown under a parent. Bounded so one roundup cannot flood the edition. */
 const MAX_ROUNDUP_LINKS = 12;
 /** Up to five claim statements, trimmed, so the email reads as a concise list of key points. */
@@ -154,8 +185,7 @@ export function renderDigest(
 ): RenderedDigest {
   const subject = `Newspulse — ${date}`;
   const renderHtml = (item: DigestRenderItem) => {
-    const primary =
-      item.references.map((ref) => publicUrl(ref.url)).find(Boolean) ?? null;
+    const primary = primaryLink(item.references);
     const title = readableTitle(item.title);
     const heading = primary
       ? `<h3><a href="${escapeHtml(primary)}">${escapeHtml(title)}</a></h3>`
@@ -169,6 +199,15 @@ export function renderDigest(
     const keyPoints = points.length
       ? `<ul>${points.map((value) => `<li>${escapeHtml(value)}</li>`).join("")}</ul>`
       : "";
+    const sources = sourceLinks(item.references, primary);
+    const sourcesHtml = sources.length
+      ? `<p style="color:#666;font-size:13px;margin:8px 0 0">Sources</p><ul style="font-size:14px">${sources
+          .map(
+            ({ url, label }) =>
+              `<li><a href="${escapeHtml(url)}">${escapeHtml(label)}</a></li>`,
+          )
+          .join("")}</ul>`
+      : "";
     const roundup = roundupLinks(item.roundup);
     const roundupHtml = roundup.length
       ? `<p style="color:#666;font-size:13px;margin:8px 0 0">From this roundup</p><ul style="font-size:14px">${roundup
@@ -180,7 +219,7 @@ export function renderDigest(
       : "";
     // Delivery injects scoped feedback links between these stable markers;
     // the frozen body itself never carries a token.
-    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${roundupHtml}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
+    return `<article data-item-id="${escapeHtml(item.itemId)}">${heading}${paragraphs}${keyPoints}${sourcesHtml}${roundupHtml}<!--np:feedback:${escapeHtml(item.itemId)}:start--><!--np:feedback:${escapeHtml(item.itemId)}:end--></article>`;
   };
   const renderText = (item: DigestRenderItem) => {
     return [
@@ -190,6 +229,14 @@ export function renderDigest(
         ? keyPointList(item.keyPoints)
             .map((value) => `- ${value}`)
             .join("\n")
+        : null,
+      sourceLinks(item.references, primaryLink(item.references)).length
+        ? `Sources:\n${sourceLinks(
+            item.references,
+            primaryLink(item.references),
+          )
+            .map(({ url, label }) => `- ${label} — ${url}`)
+            .join("\n")}`
         : null,
       roundupLinks(item.roundup).length
         ? `From this roundup:\n${roundupLinks(item.roundup)
