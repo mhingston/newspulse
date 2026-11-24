@@ -79,22 +79,36 @@ function roundupLinks(
   }
   return links;
 }
-/** Keep the email summary to at most three sentences and roughly 600 characters. */
+/**
+ * Bound the summary at paragraph boundaries so a long model answer stays
+ * readable without losing its opening facts. Paragraphs are kept whole until
+ * the limit; a single over-long paragraph is cut at a sentence end.
+ */
+const MAX_SUMMARY_CHARACTERS = 1200;
 function displaySummary(value: string): string {
-  const sentences = value
-    .trim()
-    .split(/(?<=[.!?])\s+/)
-    .map((sentence) => sentence.trim())
+  const trimmed = value.trim();
+  if (trimmed.length <= MAX_SUMMARY_CHARACTERS) return trimmed;
+  const paragraphs = trimmed
+    .split(/\r?\n\s*\r?\n/)
+    .map((part) => part.trim())
     .filter(Boolean);
   const kept: string[] = [];
   let length = 0;
-  for (const sentence of sentences) {
-    if (kept.length >= 3) break;
-    if (kept.length > 0 && length + sentence.length > 600) break;
-    kept.push(sentence);
-    length += sentence.length + 1;
+  for (const paragraph of paragraphs) {
+    if (kept.length > 0 && length + paragraph.length > MAX_SUMMARY_CHARACTERS)
+      break;
+    kept.push(paragraph);
+    length += paragraph.length + 2;
   }
-  return kept.join(" ") || value.trim();
+  const joined = kept.join("\n\n");
+  if (joined.length <= MAX_SUMMARY_CHARACTERS) return joined;
+  const cut = joined.slice(0, MAX_SUMMARY_CHARACTERS);
+  const end = Math.max(
+    cut.lastIndexOf(". "),
+    cut.lastIndexOf("! "),
+    cut.lastIndexOf("? "),
+  );
+  return end > 0 ? cut.slice(0, end + 1) : cut.trimEnd();
 }
 /**
  * A heading that is only a URL reads as a raw link. Show the host and path

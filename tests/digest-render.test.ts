@@ -60,11 +60,11 @@ test("digest links the title to the primary public source and labels readable so
   expect(output.html).not.toContain("Newsletter (message-9)");
   expect(output.html).not.toContain("Model summary");
   expect(output.html.match(/<p>First sentence/g)).toHaveLength(1);
-  // The email keeps the first three sentences; the rest stays in the stored analysis.
+  // A summary is shown whole, up to a bound, so the reader gets the full analysis.
   expect(output.html).toContain(
-    "First sentence. Second sentence. Third sentence.",
+    "<p>First sentence. Second sentence. Third sentence.</p>",
   );
-  expect(output.html).not.toContain("Fourth sentence about the result.");
+  expect(output.html).toContain("<p>Fourth sentence about the result.</p>");
 });
 
 test("a longer digest is split into top stories and more coverage", () => {
@@ -270,4 +270,37 @@ test("a URL-only title is shown as a readable source, never as a raw link", () =
   );
   expect(output.text).toContain("ExtremeProgramming — martinfowler.com");
   expect(output.text).not.toMatch(/^https:\/\//m);
+});
+
+test("a two-paragraph summary is shown in full and an over-long one is bounded at a sentence", () => {
+  const first = "The release adds a new evaluation harness for agents.";
+  const second = "It reports pass rates by task family and flags grader bias.";
+  const twoParagraphs = renderDigest("2026-11-24", [
+    {
+      itemId: "item-long",
+      title: "Two paragraphs",
+      why: "interest:x@1: y",
+      summary: `${first} It matters for teams.\n\n${second}`,
+      uncertainty: [],
+      references: [],
+    },
+  ]);
+  expect(twoParagraphs.html).toContain(`<p>${first} It matters for teams.</p>`);
+  expect(twoParagraphs.html).toContain(`<p>${second}</p>`);
+
+  const sentence =
+    "This sentence adds a fixed amount of detail to the summary. ";
+  const huge = renderDigest("2026-11-24", [
+    {
+      itemId: "item-huge",
+      title: "Huge",
+      why: "interest:x@1: y",
+      summary: sentence.repeat(60),
+      uncertainty: [],
+      references: [],
+    },
+  ]);
+  const paragraph = /<p>([\s\S]*?)<\/p>/.exec(huge.html)![1]!;
+  expect(paragraph.length).toBeLessThanOrEqual(1200);
+  expect(paragraph.endsWith(".")).toBe(true);
 });

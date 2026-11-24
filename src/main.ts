@@ -144,7 +144,7 @@ const scheduler = schedule(
             {
               provider: analysis.endpoint,
               model: analysis.model,
-              promptVersion: "2",
+              promptVersion: "3",
               reserveTokens: analysis.reserveTokens,
               reserveMicros: analysis.reserveMicros,
             },
