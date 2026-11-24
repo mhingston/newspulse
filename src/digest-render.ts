@@ -96,6 +96,24 @@ function displaySummary(value: string): string {
   }
   return kept.join(" ") || value.trim();
 }
+/**
+ * A heading that is only a URL reads as a raw link. Show the host and path
+ * instead, so the reader sees a source rather than an address.
+ */
+function readableTitle(title: string): string {
+  const value = title.replace(/\s+/g, " ").trim();
+  if (!/^(?:https?:\/\/|www\.)\S+$/i.test(value)) return value;
+  try {
+    const url = new URL(/^https?:/i.test(value) ? value : `https://${value}`);
+    const path = url.pathname.replace(/\/+$/, "").replace(/\.(html?)$/i, "");
+    const host = url.hostname.replace(/^www\./, "");
+    const segment = path.split("/").filter(Boolean).pop();
+    return segment ? `${segment.replace(/[-_]+/g, " ")} — ${host}` : host;
+  } catch {
+    return value;
+  }
+}
+
 /** Split a model summary into short paragraphs for reading, without changing its words. */
 function summaryParagraphs(value: string): string[] {
   const explicit = value
@@ -124,9 +142,10 @@ export function renderDigest(
   const renderHtml = (item: DigestRenderItem) => {
     const primary =
       item.references.map((ref) => publicUrl(ref.url)).find(Boolean) ?? null;
+    const title = readableTitle(item.title);
     const heading = primary
-      ? `<h3><a href="${escapeHtml(primary)}">${escapeHtml(item.title)}</a></h3>`
-      : `<h3>${escapeHtml(item.title)}</h3>`;
+      ? `<h3><a href="${escapeHtml(primary)}">${escapeHtml(title)}</a></h3>`
+      : `<h3>${escapeHtml(title)}</h3>`;
     const paragraphs = item.summary
       ? summaryParagraphs(displaySummary(item.summary))
           .map((p) => `<p>${escapeHtml(p)}</p>`)
@@ -151,7 +170,7 @@ export function renderDigest(
   };
   const renderText = (item: DigestRenderItem) => {
     return [
-      item.title,
+      readableTitle(item.title),
       item.summary ? displaySummary(item.summary) : null,
       keyPointList(item.keyPoints).length
         ? keyPointList(item.keyPoints)

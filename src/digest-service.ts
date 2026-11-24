@@ -54,12 +54,19 @@ function feedSummary(text: string | null): string | null {
   const end = cut.lastIndexOf(" ");
   return `${cut.slice(0, end > 200 ? end : 280).trimEnd()}…`;
 }
+/** A title that is only a URL is not a headline; it is a placeholder for one. */
+function isUrlTitle(value: string): boolean {
+  return /^(?:https?:\/\/|www\.)\S+$/i.test(value.trim());
+}
 function displayTitle(feedTitle: string, pageTitle: string | null): string {
   const feed = feedTitle.trim();
   const page = pageTitle?.replace(/\s+/g, " ").trim() ?? "";
   if (!page || page === feed) return feedTitle;
   const fragment =
-    !feed || /^[a-z]/.test(feed) || feed.split(/\s+/).length <= 2;
+    !feed ||
+    isUrlTitle(feed) ||
+    /^[a-z]/.test(feed) ||
+    feed.split(/\s+/).length <= 2;
   if (!fragment) return feedTitle;
   return page.split(/\s+/).length >= 3 && page.length > feed.length
     ? page

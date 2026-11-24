@@ -246,3 +246,28 @@ test("a roundup parent lists its fanned-out public links without feedback target
     "parent-1",
   ]);
 });
+
+test("a URL-only title is shown as a readable source, never as a raw link", () => {
+  const output = renderDigest("2026-11-24", [
+    {
+      itemId: "item-url",
+      title: "https://martinfowler.com/bliki/ExtremeProgramming.html",
+      why: "interest:x@1: y",
+      summary: "A summary.",
+      uncertainty: [],
+      references: [
+        {
+          source: "s1",
+          nativeId: "n1",
+          url: "https://martinfowler.com/bliki/ExtremeProgramming.html",
+        },
+      ],
+    },
+  ]);
+  expect(output.html).not.toContain(">https://");
+  expect(output.html).toContain(
+    '<h3><a href="https://martinfowler.com/bliki/ExtremeProgramming.html">ExtremeProgramming — martinfowler.com</a></h3>',
+  );
+  expect(output.text).toContain("ExtremeProgramming — martinfowler.com");
+  expect(output.text).not.toMatch(/^https:\/\//m);
+});
