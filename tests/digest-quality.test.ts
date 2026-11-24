@@ -490,6 +490,15 @@ describe("digest quality improvements", () => {
               ),
               publishedAt: now,
             },
+            {
+              nativeId: "listing-1",
+              url: "https://example.com/repos",
+              title: "Browse all the coding agent harness repos",
+              text: "Coding agent harness benchmark and practical workflow ".repeat(
+                20,
+              ),
+              publishedAt: now,
+            },
           ],
         },
         now,

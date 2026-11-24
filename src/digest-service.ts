@@ -85,6 +85,14 @@ function isNavigationTitle(title: string): boolean {
     value,
   );
 }
+/**
+ * A "Browse all …" directory link is a listing page, not a story. Kept to this
+ * one specific, observed form so ordinary articles are unaffected.
+ */
+function isListingTitle(title: string): boolean {
+  return /^browse (?:all|our|the)\b/i.test(title.trim());
+}
+
 /** Explicit sponsorship labels (e.g. "(Sponsored)", "Sponsored: ...") are excluded. */
 function isSponsoredTitle(title: string): boolean {
   const value = title.trim();
@@ -347,6 +355,7 @@ function draftDigestSnapshot(store: Store, options: DigestOptions) {
   const candidates: CurationCandidate[] = rows
     .filter((row) => !limitedIds.has(row.item_id))
     .filter((row) => !isNavigationTitle(row.title))
+    .filter((row) => !isListingTitle(row.title))
     .filter((row) => !isSponsoredTitle(row.title))
     .filter((row) => !isYouTubeShortUrl(row.url))
     .map((row) => {
